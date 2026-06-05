@@ -1831,8 +1831,8 @@ async function loadPermissoes() {
     ].map(u=>`
       <div class="perm-url-card">
         <div style="font-weight:600; font-family:var(--font-head); font-size:14px;">${u.perfil}</div>
-        <a href="http://${host}:${port}${u.url}" target="_blank" style="text-decoration:none;display:flex;align-items:center;gap:8px">
-          <span class="badge-url">http://${host}:${port}${u.url}</span>
+        <a href="${window.location.origin}${u.url}" target="_blank" style="text-decoration:none;display:flex;align-items:center;gap:8px">
+          <span class="badge-url">${window.location.origin}${u.url}</span>
           <span style="padding:8px 14px;font-size:12px;white-space:nowrap;background:var(--accent);color:#000;border-radius:6px;font-weight:bold;font-family:var(--font-head);cursor:pointer;transition:all 0.2s;">Acessar ↗</span>
         </a>
       </div>
