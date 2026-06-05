@@ -687,6 +687,8 @@ button:disabled.btn-loading {
   flex-direction: column;
   gap: 10px;
   transition: all 0.25s ease;
+  min-width: 0;
+  overflow: hidden;
 }
 .perm-url-card:hover {
   transform: translateY(-2px);
@@ -707,6 +709,7 @@ button:disabled.btn-loading {
   text-overflow: ellipsis;
   transition: all 0.25s ease;
   min-width: 0;
+  max-width: 100%;
 }
 .perm-url-card:hover .badge-url {
   border-color: rgba(240, 180, 41, 0.4);
@@ -800,12 +803,14 @@ button:disabled.btn-loading {
     width: 100%;
   }
   .topbar {
-    padding: 0 16px;
-    height: 70px !important;
-    min-height: 70px;
+    padding: 8px 12px;
+    height: auto !important;
+    min-height: 56px;
     flex-direction: row !important;
     align-items: center !important;
     justify-content: space-between !important;
+    flex-wrap: wrap !important;
+    gap: 6px;
   }
   .topbar > div:first-child {
     width: auto !important;
@@ -816,7 +821,9 @@ button:disabled.btn-loading {
   .setor-badge,
   #topbar-mes,
   .topbar button[onclick*="ajuda"],
-  .topbar button[onclick*="Ajuda"] {
+  .topbar button[onclick*="Ajuda"],
+  #topbar-user-name,
+  .sector-switcher {
     display: none !important;
   }
   .content {
@@ -990,6 +997,54 @@ button:disabled.btn-loading {
   }
 }
 
+/* ── MELHORIAS MOBILE ADICIONAIS ── */
+@media (max-width: 480px) {
+  .topbar {
+    padding: 6px 10px !important;
+  }
+  .cards-grid {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 10px;
+  }
+  .card-value {
+    font-size: 20px !important;
+  }
+  /* Botão de sair visível sempre */
+  .topbar button[onclick*="sair"],
+  .topbar button[onclick*="Sair"] {
+    display: inline-flex !important;
+    padding: 5px 10px !important;
+    font-size: 11px !important;
+  }
+  /* page-title menor */
+  .page-title {
+    font-size: 14px !important;
+    max-width: calc(100vw - 100px) !important;
+  }
+  /* Tabela scroll suave */
+  .table-wrap {
+    border-radius: 8px;
+  }
+}
+
+/* Botão sair sempre visível no mobile */
+@media (max-width: 768px) {
+  .topbar button[onclick*="sair"],
+  .topbar button[onclick*="Sair"] {
+    display: inline-flex !important;
+  }
+  /* Melhorar espaçamento cards mobile */
+  .cards-grid {
+    margin-bottom: 16px;
+  }
+  /* Topbar direita compacta */
+  .topbar > div:last-child {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+}
+
 /* TABS AND TAB BUTTONS */
 .tabs {
   display: flex;
@@ -1064,4 +1119,3 @@ button:disabled.btn-loading {
     display: none !important;
   }
 }
-

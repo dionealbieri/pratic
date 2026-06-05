@@ -1831,9 +1831,9 @@ async function loadPermissoes() {
     ].map(u=>`
       <div class="perm-url-card">
         <div style="font-weight:600; font-family:var(--font-head); font-size:14px;">${u.perfil}</div>
-        <a href="${window.location.origin}${u.url}" target="_blank" style="text-decoration:none;display:flex;align-items:center;gap:8px">
-          <span class="badge-url">${window.location.origin}${u.url}</span>
-          <span style="padding:8px 14px;font-size:12px;white-space:nowrap;background:var(--accent);color:#000;border-radius:6px;font-weight:bold;font-family:var(--font-head);cursor:pointer;transition:all 0.2s;">Acessar ↗</span>
+        <a href="${window.location.origin}${u.url}" target="_blank" style="text-decoration:none;display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden">
+          <span class="badge-url" style="min-width:0;overflow:hidden;text-overflow:ellipsis;">${window.location.origin}${u.url}</span>
+          <span style="padding:8px 14px;font-size:12px;white-space:nowrap;background:var(--accent);color:#000;border-radius:6px;font-weight:bold;font-family:var(--font-head);cursor:pointer;transition:all 0.2s;flex-shrink:0;">Acessar ↗</span>
         </a>
       </div>
     `).join('');
@@ -1843,9 +1843,9 @@ async function loadPermissoes() {
         <div style="font-weight:700;color:var(--accent2);margin-bottom:4px;display:flex;align-items:center;gap:6px">💡 Dica de Acesso Mobile:</div>
         <p>Para acessar o sistema de outro dispositivo (como celular ou tablet conectado na mesma rede Wi-Fi):</p>
         <ul style="margin-left:20px;margin-top:4px;color:var(--muted)">
-          <li>Use o endereço contendo o IP local da máquina: <strong>http://${host}:${port}/mobile</strong></li>
+          <li>Use o endereço contendo o IP local da máquina: <strong>${window.location.origin}/mobile</strong></li>
           <li>Certifique-se de que o computador e o dispositivo móvel estão conectados no <strong>mesmo Wi-Fi</strong>.</li>
-          <li>Caso não consiga conectar, garanta que a rede do Windows está configurada como <strong>Particular (Privada)</strong> ou que o <strong>Firewall do Windows</strong> possui uma regra de entrada liberando a porta <strong>${port}</strong>.</li>
+          <li>Caso não consiga conectar, garanta que a rede do Windows está configurada como <strong>Particular (Privada)</strong> ou que o <strong>Firewall do Windows</strong> possui uma regra de entrada liberando a porta necessária.</li>
         </ul>
       </div>
     `;
