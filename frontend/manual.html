@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Manual do Usuário — PRATIC</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+  <script>
+    (function() {
+      const savedTheme = localStorage.getItem('pratic-theme') || 'dark';
+      document.documentElement.setAttribute('data-theme', savedTheme);
+    })();
+  </script>
+  <link rel="stylesheet" href="css/common.css?v=2">
+  <style>
+    :root {
+      --accent-neon: #ff5500;
+      --info: #3b82f6;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      scroll-behavior: smooth;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-body);
+      min-height: 100vh;
+      display: flex;
+    }
+
+    /* SIDEBAR */
+    .sidebar {
+      width: 280px;
+      height: 100vh;
+      max-height: 100vh;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      position: fixed;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      z-index: 100;
+    }
+
+    .logo-container {
+      padding: 24px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .logo-title {
+      font-family: var(--font-head);
+      font-size: 24px;
+      font-weight: 800;
+      color: var(--accent);
+      letter-spacing: 2px;
+    }
+
+    .logo-sub {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    .search-box {
+      padding: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .search-input {
+      width: 100%;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: var(--text);
+      font-family: var(--font-body);
+      font-size: 13px;
+      outline: none;
+      transition: border .2s;
+    }
+
+    .search-input:focus {
+      border-color: var(--accent);
+    }
+
+    .nav-list {
+      padding: 16px 12px;
+      flex: 1;
+      overflow-y: auto;
+    }
+
+    .nav-group-title {
+      font-size: 10px;
+      color: var(--muted);
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      padding: 12px 12px 6px;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--muted);
+      transition: all .2s;
+      text-decoration: none;
+      margin-bottom: 2px;
+    }
+
+    .nav-item:hover {
+      background: var(--surface2);
+      color: var(--text);
+    }
+
+    .nav-item.active {
+      background: rgba(240, 180, 41, 0.12);
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .sidebar-footer {
+      padding: 16px;
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    /* MAIN CONTENT */
+    .main {
+      margin-left: 280px;
+      flex: 1;
+      min-height: 100vh;
+      padding: 40px 60px;
+      max-width: 1200px;
+    }
+
+    header {
+      margin-bottom: 40px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 24px;
+    }
+
+    .manual-title {
+      font-family: var(--font-head);
+      font-size: 36px;
+      font-weight: 800;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+
+    .manual-subtitle {
+      font-size: 16px;
+      color: var(--muted);
+    }
+
+    section {
+      margin-bottom: 60px;
+      scroll-margin-top: 40px;
+    }
+
+    .section-title {
+      font-family: var(--font-head);
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--accent);
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 10px;
+    }
+
+    p {
+      font-size: 15px;
+      line-height: 1.6;
+      color: #caced6;
+      margin-bottom: 16px;
+    }
+
+    /* BADGES */
+    .badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      margin-right: 6px;
+    }
+
+    .badge-gestor { background: rgba(240, 180, 41, 0.15); color: var(--accent); border: 1px solid rgba(240, 180, 41, 0.3); }
+    .badge-operador { background: rgba(59, 130, 246, 0.15); color: var(--info); border: 1px solid rgba(59, 130, 246, 0.3); }
+    .badge-estoque { background: rgba(16, 185, 129, 0.15); color: var(--success); border: 1px solid rgba(16, 185, 129, 0.3); }
+    .badge-comercial { background: rgba(167, 139, 250, 0.15); color: #a78bfa; border: 1px solid rgba(167, 139, 250, 0.3); }
+
+    /* CARDS */
+    .grid-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+      margin: 24px 0;
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      transition: transform .2s, border-color .2s;
+    }
+
+    .card:hover {
+      transform: translateY(-2px);
+      border-color: var(--accent);
+    }
+
+    .card-title {
+      font-family: var(--font-head);
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-text {
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    /* STEP BY STEP */
+    .step-list {
+      margin: 20px 0;
+      list-style: none;
+    }
+
+    .step-item {
+      display: flex;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+
+    .step-number {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--accent);
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+
+    .step-content {
+      padding-top: 4px;
+    }
+
+    .step-title {
+      font-weight: 700;
+      font-size: 15px;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+
+    /* ALERTS / TIPS */
+    .alert-box {
+      background: rgba(59, 130, 246, 0.08);
+      border-left: 4px solid var(--info);
+      border-radius: 0 8px 8px 0;
+      padding: 16px;
+      margin: 24px 0;
+    }
+
+    .alert-box.warning {
+      background: rgba(239, 68, 68, 0.08);
+      border-left-color: var(--danger);
+    }
+
+    .alert-box.success {
+      background: rgba(16, 185, 129, 0.08);
+      border-left-color: var(--success);
+    }
+
+    .alert-title {
+      font-weight: 700;
+      font-size: 14px;
+      color: var(--text);
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* GLOW BUTTON DEMO */
+    .btn-neon-demo {
+      display: inline-block;
+      background: #ff5500;
+      color: #000;
+      font-family: var(--font-head);
+      font-weight: 800;
+      font-size: 12px;
+      padding: 6px 14px;
+      border-radius: 6px;
+      text-transform: uppercase;
+      box-shadow: 0 0 8px rgba(255, 85, 0, 0.4);
+      margin-top: 5px;
+    }
+
+    /* EXPANDABLE COLLAPSE */
+    .collapse-container {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 12px;
+      overflow: hidden;
+    }
+
+    .collapse-header {
+      background: var(--surface);
+      padding: 14px 20px;
+      font-weight: 700;
+      font-size: 14px;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: background .2s;
+    }
+
+    .collapse-header:hover {
+      background: var(--surface2);
+    }
+
+    .collapse-content {
+      padding: 16px 20px;
+      background: var(--bg);
+      border-top: 1px solid var(--border);
+      display: none;
+    }
+
+    .code-span {
+      font-family: monospace;
+      background: var(--surface2);
+      color: var(--accent);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+
+    /* MEDIA QUERIES FOR MOBILE ADAPTATION */
+    @media (max-width: 768px) {
+      .sidebar {
+        left: -280px;
+        transition: left 0.3s ease;
+        box-shadow: 2px 0 12px rgba(0,0,0,0.5);
+        height: 100vh !important;
+        max-height: 100vh !important;
+      }
+      .sidebar.open {
+        left: 0;
+      }
+      .sidebar-mobile-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.5);
+        z-index: 95;
+      }
+      .main {
+        margin-left: 0;
+        padding: 20px 16px;
+        width: 100%;
+      }
+      .menu-toggle {
+        display: block !important;
+      }
+      header {
+        margin-bottom: 24px;
+      }
+      .manual-title {
+        font-size: 26px;
+      }
+      .manual-subtitle {
+        font-size: 14px;
+      }
+      .grid-cards {
+        grid-template-columns: 1fr !important;
+        gap: 16px;
+      }
+      .alert-box {
+        padding: 12px;
+      }
+      .step-item {
+        gap: 12px;
+      }
+      .collapse-header {
+        padding: 12px 16px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- SIDEBAR NAVIGATION -->
+  <aside class="sidebar">
+    <div class="logo-container">
+      <div class="logo-title">PRATIC</div>
+      <div class="logo-sub">Manual do Sistema</div>
+    </div>
+    
+    <div class="search-box">
+      <input type="text" class="search-input" id="search" placeholder="🔍 Buscar função..." onkeyup="filterMenu()">
+    </div>
+
+    <nav class="nav-list" id="nav-menu">
+      <div class="nav-group-title">Introdução</div>
+      <a href="#intro" class="nav-item active" onclick="activateLink(this)">📖 Visão Geral</a>
+      
+      <div class="nav-group-title">Módulos Administrativos</div>
+      <a href="#dashboard" class="nav-item" onclick="activateLink(this)">📊 Dashboard Decisão</a>
+      <a href="#comercial" class="nav-item" onclick="activateLink(this)">💼 Vendas & Comercial</a>
+      <a href="#producao" class="nav-item" onclick="activateLink(this)">🏭 Gestão de Produção</a>
+      <a href="#seguranca" class="nav-item" onclick="activateLink(this)">🛡️ Segurança (EPIs)</a>
+      
+      <div class="nav-group-title">Operação de Chão de Fábrica</div>
+      <a href="#mobile-op" class="nav-item" onclick="activateLink(this)">📱 Mobile Operador</a>
+      <a href="#mobile-est" class="nav-item" onclick="activateLink(this)">📦 Mobile Estoque</a>
+      
+      <div class="nav-group-title">Manutenção & Dados</div>
+      <a href="#backup" class="nav-item" onclick="activateLink(this)">💾 Backup & Restauro</a>
+      <a href="#conferencia" class="nav-item" onclick="activateLink(this)">🔄 Ajustes & Inventário</a>
+    </nav>
+
+    <div class="sidebar-footer">
+      PRATIC v1.0 © 2026
+    </div>
+  </aside>
+
+  <!-- MAIN VIEWPORT -->
+  <main class="main">
+    <header style="display:flex; align-items:center; justify-content:space-between; gap:16px;">
+      <div style="display:flex; align-items:center; gap:16px;">
+        <button class="menu-toggle" onclick="toggleSidebar()" style="display:none; background:none; border:none; color:var(--accent); font-size:28px; cursor:pointer; margin-right:8px; align-self:flex-start; margin-top:6px;">☰</button>
+        <div>
+          <h1 class="manual-title">Manual Oficial do Sistema PRATIC</h1>
+          <div class="manual-subtitle">Guia completo de recursos, telas, regras de negócio e procedimentos operacionais.</div>
+        </div>
+      </div>
+      <button class="btn btn-sm btn-secondary" onclick="toggleTheme()" title="Alternar Tema" style="font-size:14px; padding:6px 10px; flex-shrink: 0;">Alternar Tema 🌗</button>
+    </header>
+
+    <!-- INTRODUÇÃO -->
+    <section id="intro">
+      <h2 class="section-title">📖 Visão Geral do Sistema</h2>
+      <p>
+        O **PRATIC** é uma plataforma integrada de Planejamento e Controle de Produção (PCP), Gestão de Estoque e Vendas projetada para sincronizar a atividade de chão de fábrica com a tomada de decisões executivas de forma inteligente e em tempo real.
+      </p>
+      <p>
+        O sistema opera sob uma arquitetura de múltiplos módulos que atendem a diferentes perfis da empresa, desde os diretores (dashboard de análise) até os operadores de máquinas e estoquistas por meio de interfaces responsivas otimizadas para smartphones e tablets.
+      </p>
+
+      <div class="grid-cards">
+        <div class="card">
+          <div class="card-title">👨‍💼 Gestão & PCP</div>
+          <div class="card-text">Monitoramento de metas, análise de desperdícios financeiros, custos de perdas e ranking de colaboradores com base em eficiência real.</div>
+        </div>
+        <div class="card">
+          <div class="card-title">💼 Comercial</div>
+          <div class="card-text">Registro de clientes e pedidos, acompanhamento de prazos, controle de backlog e integração direta dos itens pedidos com a esteira de fabricação.</div>
+        </div>
+        <div class="card">
+          <div class="card-title">🏭 Chão de Fábrica</div>
+          <div class="card-text">Lançamento simplificado de produção, controle rígido de perdas por categorias e rastreamento de uso de EPIs.</div>
+        </div>
+      </div>
+
+      <div class="alert-box">
+        <div class="alert-title">🎨 Padronização da Interface (Topbar & Sidebar)</div>
+        O sistema adota uma barra superior unificada (**cabeçalho de 70px**) que fornece informações em tempo real:
+        <ul style="padding-left: 20px; margin-top: 8px; color: #caced6; font-size: 14px; line-height: 1.6;">
+          <li>📅 <strong>Data do Turno</strong>: data atual local formatada.</li>
+          <li>📍 <strong>Cidade e UF</strong>: identificação da filial ativa cadastrada nos Dados da Empresa.</li>
+          <li>🌡️ <strong>Clima em Tempo Real</strong>: temperatura local sincronizada dinamicamente com a API climática Open-Meteo com base na cidade cadastrada.</li>
+          <li>🏷️ <strong>Identificador de Setor (Badge)</strong>: tag colorida indicando o setor ativo no topo ao lado do mês (ex: <i>Setor Produção</i>, <i>Setor Comercial</i>, etc.).</li>
+          <li>📅 <strong>Mês de Referência</strong>: badge com o mês em vigor.</li>
+        </ul>
+        A barra lateral (<strong>sidebar</strong>) é simplificada, exibindo apenas as páginas liberadas conforme o controle de acessos do perfil ativo e o copyright, deixando a navegação limpa e despoluída.
+      </div>
+    </section>
+
+    <!-- DASHBOARD -->
+    <section id="dashboard">
+      <h2 class="section-title">📊 Dashboard Executivo & Decisão</h2>
+      <span class="badge badge-gestor">Gestor / Diretor</span>
+      <p>
+        A tela inicial do sistema funciona como o centro de inteligência de negócios. Ela fornece dados consolidados mensais focados em identificar ineficiências e apoiar o planejamento.
+      </p>
+
+      <div class="step-list">
+        <div class="step-item">
+          <div class="step-number">1</div>
+          <div class="step-content">
+            <div class="step-title">KPIs de Desempenho</div>
+            <div class="step-text">Consolida seis indicadores vitais: *Aderência à Meta* (taxa de sucesso diário), *Índice de Perdas*, *Custo Estimado das Perdas* (financeiro), *Pedidos Críticos* (prazos a vencer), *EPIs Vencidos* e *Insumos Críticos* (estoque de segurança atingido).</div>
+          </div>
+        </div>
+        <div class="step-item">
+          <div class="step-number">2</div>
+          <div class="step-content">
+            <div class="step-title">Análise Gráfica Avançada</div>
+            <div class="step-text">Exibe a linha temporal de produção contra a quantidade de perdas por dia e a distribuição categórica dos motivos de perda (quebra, defeito, descarte, etc.) em gráfico de rosca.</div>
+          </div>
+        </div>
+        <div class="step-item">
+          <div class="step-number">3</div>
+          <div class="step-content">
+            <div class="step-title">Widgets Dinâmicos</div>
+            <div class="step-text">Lista rápida de providências com barras de progresso de estoque de segurança, alertas de EPIs a vencer por colaborador e fila de pedidos com maior atraso relativo.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="alert-box">
+        <div class="alert-title">💡 Dica de Tomada de Decisão</div>
+        Ao alterar o **Mês de Referência** no topo da tela, todos os gráficos e KPIs se recalculam instantaneamente. Use o *Custo Estimado de Perdas* para justificar investimentos em manutenção de maquinário ou treinamento de equipe.
+      </div>
+    </section>
+
+    <!-- COMERCIAL -->
+    <section id="comercial">
+      <h2 class="section-title">💼 Gestão Comercial & Pedidos</h2>
+      <span class="badge badge-comercial">Equipe de Vendas</span>
+      <p>
+        O módulo comercial permite o controle de ponta a ponta da carteira de clientes e da fila de entrega de produtos.
+      </p>
+      
+      <div class="grid-cards">
+        <div class="card">
+          <div class="card-title">👥 Clientes</div>
+          <div class="card-text">Cadastro de novos clientes com CNPJ/CPF, e-mail, telefone e endereço. O histórico de compras do cliente fica arquivado.</div>
+        </div>
+        <div class="card">
+          <div class="card-title">📝 Pedidos de Venda</div>
+          <div class="card-text">Entrada de novos pedidos detalhando data limite de entrega, produtos selecionados do estoque e quantidades. Os pedidos geram alertas automáticos de prazo no Dashboard.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PRODUÇÃO -->
+    <section id="producao">
+      <h2 class="section-title">🏭 Planejamento e Controle de Produção (PCP)</h2>
+      <span class="badge badge-gestor">Gestor / Diretor</span>
+      <p>
+        Este módulo concentra o controle de máquinas, colaboradores fabris e lançamentos de turnos.
+      </p>
+
+      <div class="step-list">
+        <div class="step-item">
+          <div class="step-number">1</div>
+          <div class="step-content">
+            <div class="step-title">Lançamento Central de Produção</div>
+            <div class="step-text">Permite ao gestor registrar a produção diária de um colaborador vinculada a uma máquina e a um pedido do comercial. O botão <span class="btn-neon-demo">+ Adicionar Produto</span> permite cadastrar múltiplos produtos em um único lançamento diário. O layout conta com controle responsivo inteligente para evitar quebras de visualização.</div>
+          </div>
+        </div>
+        <div class="step-item">
+          <div class="step-number">2</div>
+          <div class="step-content">
+            <div class="step-title">Ranking de Produtividade & Premiações</div>
+            <div class="step-text">Calcula de forma justa a média diária dos operadores no mês, classificando-os com medalhas de ouro/prata e determinando bônus de performance baseados no atingimento da meta padrão de peças.</div>
+          </div>
+        </div>
+        <div class="step-item">
+          <div class="step-number">3</div>
+          <div class="step-content">
+            <div class="step-title">Gestão de Máquinas</div>
+            <div class="step-text">Cadastro de máquinas da fábrica com atribuição de metas específicas por equipamento e controle de ativação/inativação de equipamentos.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SEGURANÇA -->
+    <section id="seguranca">
+      <h2 class="section-title">🛡️ Controle de EPIs & Segurança</h2>
+      <span class="badge badge-gestor">Gestor / SESMT</span>
+      <p>
+        O PRATIC inclui controle de vencimento de Equipamentos de Proteção Individual (EPI), garantindo compliance legal e integridade física da equipe.
+      </p>
+      <p>
+        Você pode cadastrar fichas de EPIs por colaborador, registrando a data de entrega e a validade recomendada. O sistema gera alertas vermelhos na tela principal quando a validade expira e permite a exportação de relatórios consolidados em formatos **PDF** ou **Excel**.
+      </p>
+    </section>
+
+    <!-- MOBILE OPERADOR -->
+    <section id="mobile-op">
+      <h2 class="section-title">📱 Aplicativo do Operador (Mobile)</h2>
+      <span class="badge badge-operador">Operadores</span>
+      <p>
+        Interface ultra-simplificada, projetada para uso rápido em telas pequenas e tablets acoplados aos postos de trabalho no chão de fábrica.
+      </p>
+
+      <div class="step-list">
+        <div class="step-item">
+          <div class="step-number">1</div>
+          <div class="step-content">
+            <div class="step-title">Identificação do Operador</div>
+            <div class="step-text">Ao abrir a aplicação, o colaborador seleciona seu nome da lista de colaboradores ativos para carregar sua sessão de forma individualizada.</div>
+          </div>
+        </div>
+        <div class="step-item">
+          <div class="step-number">2</div>
+          <div class="step-content">
+            <div class="step-title">Registro do Turno</div>
+            <div class="step-text">O operador informa a quantidade de peças produzidas na máquina pré-selecionada. Ele também pode registrar se houve sobras de matéria-prima ou perdas específicas no dia de trabalho.</div>
+          </div>
+        </div>
+        <div class="step-item">
+          <div class="step-number">3</div>
+          <div class="step-content">
+            <div class="step-title">Feedback de Meta</div>
+            <div class="step-text">O aplicativo exibe imediatamente o percentual de alcance da meta diária do colaborador acumulado no mês através de barras de progresso coloridas.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- MOBILE ESTOQUE -->
+    <section id="mobile-est">
+      <h2 class="section-title">📦 Aplicativo do Estoque (Mobile)</h2>
+      <span class="badge badge-estoque">Almoxarifado / Estoque</span>
+      <p>
+        Focado na contabilidade física e nas movimentações rápidas no armazém.
+      </p>
+      <p>
+        Oferece filtros de busca em tempo real por produtos e a visualização rápida das quantidades atuais em estoque e níveis críticos de segurança. Na aba **Movimentar**, o usuário insere novos registros de **Entrada**, **Saída**, **Perdas** e **Ajustes** com vinculação de observações, custos unitários e fornecedores.
+      </p>
+    </section>
+
+    <!-- BACKUP -->
+    <section id="backup">
+      <h2 class="section-title">💾 Backup, Restauro & Administração</h2>
+      <span class="badge badge-gestor">Administrador do Sistema</span>
+      <p>
+        Rotinas automáticas e manuais para garantir a segurança dos dados operacionais.
+      </p>
+
+      <div class="grid-cards">
+        <div class="card">
+          <div class="card-title">📂 Exportação & Importação CSV</div>
+          <div class="card-text">Permite migrar dados rapidamente importando arquivos CSV de colaboradores, produtos e máquinas ou baixando o banco de dados atualizado em planilhas Excel.</div>
+        </div>
+        <div class="card">
+          <div class="card-title">🗄️ Backup Completo</div>
+          <div class="card-text">O sistema permite salvar um clone do arquivo de banco de dados SQLite com carimbo de data/hora a qualquer momento no servidor.</div>
+        </div>
+        <div class="card">
+          <div class="card-title">🔌 Restauração de Ponto</div>
+          <div class="card-text">Em caso de falha de hardware, um administrador pode selecionar um arquivo de backup histórico e restaurar o sistema exatamente ao estado daquele momento.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CONFERÊNCIA -->
+    <section id="conferencia">
+      <h2 class="section-title">🔄 Ajustes de Estoque & Inventário</h2>
+      <span class="badge badge-estoque">Estoque</span> <span class="badge badge-gestor">Gestor</span>
+      <p>
+        Um procedimento crítico no sistema é a **Conferência Física do Estoque (Inventário)**. Quando for necessário corrigir os saldos devido a perdas físicas não lançadas ou conferências anuais, o operador deve usar o fluxo de **Ajuste**.
+      </p>
+
+      <div class="alert-box success">
+        <div class="alert-title">Como funciona o cálculo de Ajuste de Estoque?</div>
+        Diferente de uma Entrada (+ soma) ou Saída (- subtrai), o tipo **Ajuste** simplesmente define a quantidade atual no sistema exatamente para a quantidade inserida.
+        <br><br>
+        *Fórmula:* <span class="code-span">Novo Saldo = Quantidade Informada</span>
+      </div>
+
+      <div class="step-list">
+        <div class="step-item">
+          <div class="step-number">1</div>
+          <div class="step-content">
+            <div class="step-title">Realize a contagem física</div>
+            <div class="step-text">Vá ao armazém e conte fisicamente a quantidade de itens de um produto. Ex: Contei exatamente 800 unidades do produto *Chapa Aço 2mm*.</div>
+          </div>
+        </div>
+        <div class="step-item">
+          <div class="step-number">2</div>
+          <div class="step-content">
+            <div class="step-title">Lance a movimentação do tipo Ajuste</div>
+            <div class="step-text">No aplicativo de Estoque ou no Painel Web, crie uma nova movimentação do tipo **Ajuste**, selecione o produto, defina o campo quantidade como **800** e escreva a justificativa (Ex: "Inventário Mensal").</div>
+          </div>
+        </div>
+        <div class="step-item">
+          <div class="step-number">3</div>
+          <div class="step-content">
+            <div class="step-title">Efeito cascata automático</div>
+            <div class="step-text">O sistema define o saldo atual como 800. A partir deste exato instante, qualquer novo lançamento de produção diária fará a baixa de peças consumindo deste novo saldo de 800, sem distorcer o histórico de auditoria passado.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- FAQ & COLLAPSE -->
+    <section id="faq">
+      <h2 class="section-title">❓ Dúvidas Frequentes (FAQ)</h2>
+      
+      <div class="collapse-container">
+        <div class="collapse-header" onclick="toggleCollapse(this)">
+          Como o sistema calcula o Custo de Perdas?
+          <span>▼</span>
+        </div>
+        <div class="collapse-content">
+          O sistema multiplica o total de perdas do produto pelo *Custo Unitário* cadastrado na última movimentação de entrada/compra desse insumo. Se não houver valor cadastrado, utiliza o valor padrão estipulado nas configurações.
+        </div>
+      </div>
+
+      <div class="collapse-container">
+        <div class="collapse-header" onclick="toggleCollapse(this)">
+          O que acontece ao excluir um lançamento de produção antigo?
+          <span>▼</span>
+        </div>
+        <div class="collapse-content">
+          Graças à função de integridade do sistema, ao excluir um lançamento de produção diária, a baixa de estoque que foi feita automaticamente na época é **revertida** (o saldo do produto é devolvido ao estoque), e a movimentação é apagada para evitar saldos fantasmas.
+        </div>
+      </div>
+
+      <div class="collapse-container">
+        <div class="collapse-header" onclick="toggleCollapse(this)">
+          O que é um "Insumo Crítico"?
+          <span>▼</span>
+        </div>
+        <div class="collapse-content">
+          É qualquer produto ativo no estoque cujo saldo atual seja menor ou igual ao *Estoque Mínimo* estipulado no seu cadastro. Esses produtos aparecem destacados na cor vermelha no aplicativo de estoque e em alertas no Dashboard principal.
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    // ACTIVATE SIDEBAR LINK ON CLICK
+    function activateLink(element) {
+      document.querySelectorAll('.nav-item').forEach(item => {
+        item.classList.remove('active');
+      });
+      element.classList.add('active');
+    }
+
+    // TOGGLE FAQ COLLAPSIBLE PANELS
+    function toggleCollapse(header) {
+      const content = header.nextElementSibling;
+      const arrow = header.querySelector('span');
+      if (content.style.display === 'block') {
+        content.style.display = 'none';
+        arrow.textContent = '▼';
+      } else {
+        content.style.display = 'block';
+        arrow.textContent = '▲';
+      }
+    }
+
+    // SIDEBAR FILTER MENU
+    function filterMenu() {
+      const query = document.getElementById('search').value.toLowerCase();
+      const navItems = document.querySelectorAll('.nav-item');
+      
+      navItems.forEach(item => {
+        const text = item.textContent.toLowerCase();
+        if (text.includes(query)) {
+          item.style.display = 'flex';
+        } else {
+          item.style.display = 'none';
+        }
+      });
+    }
+
+    // ACCORDING ACTIVE NAV ITEM ON SCROLL
+    window.addEventListener('scroll', () => {
+      const sections = document.querySelectorAll('section');
+      const navItems = document.querySelectorAll('.nav-item');
+      
+      let currentSectionId = '';
+      sections.forEach(sec => {
+        const secTop = sec.offsetTop;
+        const secHeight = sec.clientHeight;
+        if (window.scrollY >= secTop - 100) {
+          currentSectionId = sec.getAttribute('id');
+        }
+      });
+
+      if (currentSectionId) {
+        navItems.forEach(item => {
+          item.classList.remove('active');
+          if (item.getAttribute('href') === '#' + currentSectionId) {
+            item.classList.add('active');
+          }
+        });
+      }
+    });
+
+    function toggleSidebar() {
+      const sb = document.querySelector('.sidebar');
+      sb.classList.toggle('open');
+      let overlay = document.querySelector('.sidebar-mobile-overlay');
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.className = 'sidebar-mobile-overlay';
+        overlay.addEventListener('click', () => {
+          sb.classList.remove('open');
+          overlay.style.display = 'none';
+        });
+        document.body.appendChild(overlay);
+      }
+      overlay.style.display = sb.classList.contains('open') ? 'block' : 'none';
+    }
+
+    document.querySelectorAll('.nav-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const sb = document.querySelector('.sidebar');
+        if (sb.classList.contains('open')) {
+          sb.classList.remove('open');
+          const overlay = document.querySelector('.sidebar-mobile-overlay');
+          if (overlay) overlay.style.display = 'none';
+        }
+      });
+    });
+
+    function toggleTheme() {
+      const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+      const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', newTheme);
+      localStorage.setItem('pratic-theme', newTheme);
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,483 @@
+import sqlite3
+import os
+from datetime import datetime
+
+DB_PATH = os.path.join(os.path.dirname(__file__), "..", "banco", "pratic.db")
+
+def get_conn():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+def init_db():
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    conn = get_conn()
+    c = conn.cursor()
+
+    c.executescript("""
+        CREATE TABLE IF NOT EXISTS maquinas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT NOT NULL,
+            setor TEXT,
+            meta_padrao REAL DEFAULT 8000,
+            ativa INTEGER DEFAULT 1,
+            criado_em TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS colaboradores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT NOT NULL,
+            tipo TEXT NOT NULL CHECK(tipo IN ('operador','auxiliar')),
+            maquina_id INTEGER,
+            ativo INTEGER DEFAULT 1,
+            criado_em TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (maquina_id) REFERENCES maquinas(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS producao_diaria (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            colaborador_id INTEGER NOT NULL,
+            maquina_id INTEGER NOT NULL,
+            data TEXT NOT NULL,
+            mes_referencia TEXT NOT NULL,
+            meta REAL NOT NULL,
+            producao REAL NOT NULL,
+            excedente REAL,
+            produto_estoque_id INTEGER DEFAULT NULL,
+            perda_quantidade REAL DEFAULT 0,
+            sobra_quantidade REAL DEFAULT 0,
+            pedido_numero TEXT,
+            criado_em TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (colaborador_id) REFERENCES colaboradores(id),
+            FOREIGN KEY (maquina_id) REFERENCES maquinas(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS premiacao_operador (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            colaborador_id INTEGER NOT NULL,
+            mes_referencia TEXT NOT NULL,
+            total_producao REAL,
+            dias_trabalhados INTEGER,
+            media_diaria REAL,
+            meta REAL,
+            excedente_total REAL,
+            elegivel INTEGER DEFAULT 0,
+            valor_premio REAL DEFAULT 0,
+            ranking INTEGER,
+            fechado INTEGER DEFAULT 0,
+            criado_em TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (colaborador_id) REFERENCES colaboradores(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS premiacao_auxiliar (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            colaborador_id INTEGER NOT NULL,
+            mes_referencia TEXT NOT NULL,
+            posicao INTEGER,
+            valor_bonus REAL DEFAULT 0,
+            observacao TEXT,
+            criado_em TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (colaborador_id) REFERENCES colaboradores(id)
+        );
+
+
+
+        CREATE TABLE IF NOT EXISTS epis (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT NOT NULL,
+            categoria TEXT,
+            descricao TEXT,
+            ativo INTEGER DEFAULT 1,
+            criado_em TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS funcao_epis (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            funcao TEXT NOT NULL,
+            epi_id INTEGER NOT NULL,
+            FOREIGN KEY (epi_id) REFERENCES epis(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS epi_entregas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            colaborador_id INTEGER NOT NULL,
+            epi_id INTEGER NOT NULL,
+            data_entrega TEXT NOT NULL,
+            data_validade TEXT NOT NULL,
+            motivo TEXT,
+            responsavel TEXT,
+            observacao TEXT,
+            status TEXT DEFAULT 'ativo',
+            criado_em TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (colaborador_id) REFERENCES colaboradores(id),
+            FOREIGN KEY (epi_id) REFERENCES epis(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS estoque_categorias (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT NOT NULL,
+            descricao TEXT,
+            criado_em TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS estoque_produtos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            codigo TEXT,
+            categoria_id INTEGER,
+            nome TEXT NOT NULL,
+            marca TEXT,
+            unidade TEXT DEFAULT 'unidade',
+            estoque_minimo REAL DEFAULT 0,
+            ativo INTEGER DEFAULT 1,
+            criado_em TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (categoria_id) REFERENCES estoque_categorias(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS estoque_saldo (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            produto_id INTEGER UNIQUE,
+            quantidade REAL DEFAULT 0,
+            ultima_atualizacao TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (produto_id) REFERENCES estoque_produtos(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS estoque_movimentacoes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            produto_id INTEGER NOT NULL,
+            tipo TEXT NOT NULL,
+            quantidade REAL NOT NULL,
+            saldo_anterior REAL,
+            saldo_posterior REAL,
+            motivo TEXT,
+            tipo_perda TEXT,
+            responsavel TEXT,
+            fornecedor TEXT,
+            custo_unitario REAL,
+            observacao TEXT,
+            data TEXT NOT NULL,
+            criado_em TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (produto_id) REFERENCES estoque_produtos(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS configuracoes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chave TEXT UNIQUE NOT NULL,
+            valor TEXT NOT NULL,
+            descricao TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS pedidos_clientes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cnpj TEXT,
+            razao_social TEXT NOT NULL,
+            nome_fantasia TEXT,
+            ie TEXT,
+            email TEXT,
+            telefone TEXT,
+            cep TEXT,
+            logradouro TEXT,
+            numero TEXT,
+            complemento TEXT,
+            bairro TEXT,
+            cidade TEXT,
+            uf TEXT,
+            observacoes TEXT,
+            ativo INTEGER DEFAULT 1,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS pedidos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            numero_pedido TEXT NOT NULL,
+            cliente_id INTEGER NOT NULL,
+            prazo_entrega TEXT NOT NULL,
+            vendedor TEXT,
+            observacoes TEXT,
+            status TEXT DEFAULT 'aberto',
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (cliente_id) REFERENCES pedidos_clientes(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS pedidos_itens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pedido_id INTEGER NOT NULL,
+            produto_id INTEGER,
+            descricao TEXT NOT NULL,
+            quantidade REAL NOT NULL,
+            unidade TEXT DEFAULT 'unidade',
+            qtd_produzida REAL DEFAULT 0,
+            status TEXT DEFAULT 'aberto',
+            created_at TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (pedido_id) REFERENCES pedidos(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS auditoria (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            usuario TEXT DEFAULT 'sistema',
+            acao TEXT NOT NULL,
+            entidade TEXT NOT NULL,
+            entidade_id INTEGER,
+            descricao TEXT,
+            valor_anterior TEXT,
+            valor_novo TEXT,
+            criado_em TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS app_backups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            arquivo TEXT NOT NULL,
+            caminho TEXT NOT NULL,
+            tamanho_bytes INTEGER DEFAULT 0,
+            motivo TEXT,
+            criado_em TEXT DEFAULT (datetime('now','localtime'))
+        );
+    """)
+
+    # Tabelas de segurança para controle de acesso e sessões
+    c.executescript("""
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('gestor', 'producao', 'comercial', 'estoque')),
+            nome TEXT NOT NULL,
+            ativo INTEGER DEFAULT 1,
+            criado_em TEXT DEFAULT (datetime('now', 'localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS sessoes (
+            session_id TEXT PRIMARY KEY,
+            usuario_id INTEGER NOT NULL,
+            expira_em TEXT NOT NULL,
+            criado_em TEXT DEFAULT (datetime('now', 'localtime')),
+            FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE
+        );
+    """)
+
+    # Seed de usuários padrão se a tabela de usuários estiver vazia
+    c.execute("SELECT COUNT(*) FROM usuarios")
+    if c.fetchone()[0] == 0:
+        import hashlib
+        import secrets
+        
+        def _hash_pass(password: str) -> str:
+            salt = secrets.token_bytes(16)
+            key = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
+            return salt.hex() + "." + key.hex()
+            
+        default_users = [
+            ("admin", _hash_pass("admin"), "gestor", "Administrador"),
+            ("producao", _hash_pass("producao123"), "producao", "Produção"),
+            ("comercial", _hash_pass("comercial123"), "comercial", "Comercial"),
+            ("estoque", _hash_pass("estoque123"), "estoque", "Almoxarifado")
+        ]
+        c.executemany("""
+            INSERT INTO usuarios (username, password_hash, role, nome)
+            VALUES (?, ?, ?, ?)
+        """, default_users)
+
+
+    # Migrações leves para bancos já existentes
+    cols = [row[1] for row in conn.execute("PRAGMA table_info(estoque_produtos)").fetchall()]
+    if "codigo" not in cols:
+        conn.execute("ALTER TABLE estoque_produtos ADD COLUMN codigo TEXT")
+
+    cols_prod = [row[1] for row in conn.execute("PRAGMA table_info(producao_diaria)").fetchall()]
+    if "pedido_numero" not in cols_prod:
+        conn.execute("ALTER TABLE producao_diaria ADD COLUMN pedido_numero TEXT")
+
+    # Migração do campo Código/ID:
+    # A versão anterior criou um índice UNIQUE apenas em codigo. Isso gerava erro 500
+    # ao editar um produto quando existia o mesmo código em produto inativo/excluído.
+    # A validação de duplicidade ativa fica no backend, retornando erro amigável 400.
+    conn.execute("DROP INDEX IF EXISTS idx_estoque_produtos_codigo")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_estoque_produtos_codigo_lookup ON estoque_produtos(codigo)")
+
+    # Garante que todas as chaves de Dados da Empresa existam em bancos antigos.
+    # INSERT OR IGNORE preserva os dados já preenchidos pelo usuário.
+    default_configs = [
+        ("empresa_nome", "PRATIC", "Nome da empresa"),
+        ("empresa_cnpj", "", "CNPJ da empresa"),
+        ("empresa_telefone", "", "Telefone da empresa"),
+        ("empresa_email", "", "E-mail da empresa"),
+        ("empresa_cep", "", "CEP da empresa"),
+        ("empresa_logradouro", "", "Logradouro da empresa"),
+        ("empresa_numero", "", "Número da empresa"),
+        ("empresa_bairro", "", "Bairro da empresa"),
+        ("empresa_complemento", "", "Complemento da empresa"),
+        ("empresa_cidade", "", "Cidade da empresa"),
+        ("empresa_uf", "", "UF da empresa"),
+        ("empresa_logo", "", "Logo da empresa em base64"),
+        ("perm_gestor", "dashboard,producao,premiacao,colaboradores,maquinas,pedidos,estoque,epi,graficos,relatorios,configuracoes,backup,permissoes,empresa,mobile,estoque_mobile", "Permissões do perfil Gestor"),
+        ("perm_producao", "dashboard,producao,premiacao,colaboradores,maquinas,epi,relatorios", "Permissões do perfil Produção"),
+        ("perm_comercial", "dashboard,pedidos,relatorios", "Permissões do perfil Comercial"),
+        ("perm_estoque", "dashboard,estoque,relatorios,estoque_mobile", "Permissões do perfil Estoque"),
+    ]
+    for chave, valor, descricao in default_configs:
+        conn.execute(
+            "INSERT OR IGNORE INTO configuracoes (chave, valor, descricao) VALUES (?, ?, ?)",
+            (chave, valor, descricao)
+        )
+
+    conn.commit()
+    conn.close()
+
+def seed_data():
+    conn = get_conn()
+    c = conn.cursor()
+
+    # Só faz seed se banco estiver vazio
+    c.execute("SELECT COUNT(*) FROM maquinas")
+    if c.fetchone()[0] > 0:
+        conn.close()
+        return
+
+    # Máquina
+    c.execute("INSERT INTO maquinas (nome, setor, meta_padrao) VALUES (?, ?, ?)",
+              ("CNC 30", "Produção", 8000))
+    maquina_id = c.lastrowid
+
+    # Colaboradores
+    c.execute("INSERT INTO colaboradores (nome, tipo, maquina_id) VALUES (?, ?, ?)",
+              ("Hyngrisson", "operador", maquina_id))
+    hyn_id = c.lastrowid
+
+    c.execute("INSERT INTO colaboradores (nome, tipo, maquina_id) VALUES (?, ?, ?)",
+              ("Talita", "operador", maquina_id))
+    tal_id = c.lastrowid
+
+    c.execute("INSERT INTO colaboradores (nome, tipo, maquina_id) VALUES (?, ?, ?)",
+              ("Hyngrid", "auxiliar", None))
+    c.execute("INSERT INTO colaboradores (nome, tipo, maquina_id) VALUES (?, ?, ?)",
+              ("Sofia", "auxiliar", None))
+
+    # Dados de Abril (datas seriais Excel convertidas)
+    # 46127 = 2026-04-01, etc.
+    abril_dados = [
+        # (colaborador_id, data, producao)
+        (hyn_id, "2026-04-01", 10000),
+        (tal_id, "2026-04-01", 9850),
+        (hyn_id, "2026-04-02", 10100),
+        (tal_id, "2026-04-02", 7150),
+        (hyn_id, "2026-04-03", 11200),
+        (tal_id, "2026-04-03", 8000),
+        (hyn_id, "2026-04-07", 10000),
+        (tal_id, "2026-04-07", 8000),
+        (hyn_id, "2026-04-09", 6050),
+        (tal_id, "2026-04-09", 8000),
+        (hyn_id, "2026-04-10", 8000),
+        (tal_id, "2026-04-10", 10000),
+        (hyn_id, "2026-04-11", 9500),
+        (tal_id, "2026-04-11", 7000),
+        (hyn_id, "2026-04-14", 9000),
+        (tal_id, "2026-04-14", 8000),
+        (hyn_id, "2026-04-15", 9500),
+        (tal_id, "2026-04-15", 8500),
+        (hyn_id, "2026-04-16", 8250),
+        (tal_id, "2026-04-16", 6650),
+        (hyn_id, "2026-04-17", 7000),
+        (tal_id, "2026-04-17", 7000),
+    ]
+
+    for col_id, data, producao in abril_dados:
+        meta = 8000
+        excedente = (producao - meta) if producao > 0 else 0
+        mes = "2026-04"
+        c.execute("""INSERT INTO producao_diaria 
+                     (colaborador_id, maquina_id, data, mes_referencia, meta, producao, excedente)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                  (col_id, maquina_id, data, mes, meta, producao, excedente))
+
+    # Dados de Maio (Planilha4)
+    maio_dados = [
+        (hyn_id, "2026-05-05", 6300),
+        (tal_id, "2026-05-05", 7250),
+        (hyn_id, "2026-05-06", 10000),
+        (tal_id, "2026-05-06", 8950),
+        (hyn_id, "2026-05-07", 10500),
+        (tal_id, "2026-05-07", 8200),
+        (hyn_id, "2026-05-08", 12000),
+        (tal_id, "2026-05-08", 9400),
+        (hyn_id, "2026-05-09", 11600),
+        (tal_id, "2026-05-09", 8300),
+        (hyn_id, "2026-05-12", 10900),
+        (tal_id, "2026-05-12", 8300),
+        (hyn_id, "2026-05-13", 7300),
+        (tal_id, "2026-05-13", 8700),
+        (hyn_id, "2026-05-14", 8000),
+        (tal_id, "2026-05-14", 7800),
+        (hyn_id, "2026-05-15", 7700),
+        (tal_id, "2026-05-15", 8800),
+        (hyn_id, "2026-05-16", 8300),
+        (tal_id, "2026-05-16", 8000),
+        (hyn_id, "2026-05-19", 8000),
+        (tal_id, "2026-05-19", 8300),
+        (hyn_id, "2026-05-20", 5864),
+        (tal_id, "2026-05-20", 9700),
+        (hyn_id, "2026-05-21", 7200),
+        (tal_id, "2026-05-21", 10700),
+        (hyn_id, "2026-05-22", 8800),
+        (tal_id, "2026-05-22", 10300),
+        (hyn_id, "2026-05-23", 8600),
+        (tal_id, "2026-05-23", 7500),
+        (hyn_id, "2026-05-26", 10300),
+        (tal_id, "2026-05-26", 8700),
+        (hyn_id, "2026-05-27", 10400),
+        (tal_id, "2026-05-27", 8600),
+        (hyn_id, "2026-05-28", 0),
+        (tal_id, "2026-05-28", 7800),
+        (hyn_id, "2026-05-29", 0),
+        (tal_id, "2026-05-29", 7800),
+    ]
+
+    for col_id, data, producao in maio_dados:
+        meta = 8000
+        excedente = (producao - meta) if producao > 0 else 0
+        mes = "2026-05"
+        c.execute("""INSERT INTO producao_diaria 
+                     (colaborador_id, maquina_id, data, mes_referencia, meta, producao, excedente)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                  (col_id, maquina_id, data, mes, meta, producao, excedente))
+
+    # Premiação auxiliares Abril
+    c.execute("SELECT id FROM colaboradores WHERE nome = 'Hyngrid'")
+    hyngrid_id = c.fetchone()[0]
+    c.execute("SELECT id FROM colaboradores WHERE nome = 'Sofia'")
+    sofia_id = c.fetchone()[0]
+
+    c.execute("INSERT INTO premiacao_auxiliar (colaborador_id, mes_referencia, posicao, valor_bonus) VALUES (?, ?, ?, ?)",
+              (sofia_id, "2026-04", 1, 200))
+    c.execute("INSERT INTO premiacao_auxiliar (colaborador_id, mes_referencia, posicao, valor_bonus) VALUES (?, ?, ?, ?)",
+              (hyngrid_id, "2026-04", 2, 100))
+
+    # Configurações padrão
+    configs = [
+        ("meta_padrao", "8000", "Meta diária padrão de produção (peças)"),
+        ("empresa_nome", "PRATIC", "Nome da empresa"),
+        ("empresa_cnpj", "", "CNPJ da empresa"),
+        ("empresa_endereco", "", "Endereço da empresa"),
+        ("empresa_cep", "", "CEP da empresa"),
+        ("empresa_numero", "", "Número da empresa"),
+        ("empresa_logradouro", "", "Logradouro da empresa"),
+        ("empresa_bairro", "", "Bairro da empresa"),
+        ("empresa_complemento", "", "Complemento da empresa"),
+        ("empresa_cidade", "", "Cidade da empresa"),
+        ("empresa_uf", "", "UF da empresa"),
+        ("empresa_telefone", "", "Telefone da empresa"),
+        ("empresa_email", "", "E-mail da empresa"),
+        ("empresa_logo", "", "Logo da empresa em base64"),
+        ("valor_premio_operador", "300", "Valor do prêmio para operador que bater a média"),
+        ("valor_premio_operador_1", "300", "Valor do prêmio para o 1º colocado operador"),
+        ("valor_premio_operador_2", "200", "Valor do prêmio para o 2º colocado operador"),
+        ("qtd_auxiliares_premiados", "2", "Quantidade de auxiliares premiados por mês"),
+        ("bonus_auxiliar_1", "200", "Valor do bônus para o 1º auxiliar destaque"),
+        ("bonus_auxiliar_2", "100", "Valor do bônus para o 2º auxiliar destaque"),
+        ("bonus_auxiliar_3", "50", "Valor do bônus para o 3º auxiliar destaque"),
+    ]
+    for chave, valor, descricao in configs:
+        c.execute("INSERT OR IGNORE INTO configuracoes (chave, valor, descricao) VALUES (?, ?, ?)",
+                  (chave, valor, descricao))
+
+    conn.commit()
+    conn.close()

@@ -1,0 +1,1296 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PRATIC — Produção</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+  (function() {
+    const savedTheme = localStorage.getItem('pratic-theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+  })();
+</script>
+<link rel="stylesheet" href="css/common.css?v=2">
+</head>
+<body class="has-sidebar">
+
+<aside class="sidebar">
+  <div class="logo">
+    <div class="logo-title">PRATIC</div>
+    <div class="logo-sub">Sistema de Produção</div>
+  </div>
+  <nav id="sidebar-nav">
+    <!-- Gerado dinamicamente conforme permissões -->
+  </nav>
+  <div class="sidebar-footer">
+    v1.0 — PRATIC © 2026<br>
+    <a href="/" style="color:var(--accent);font-size:11px;text-decoration:none">← Sistema Principal</a>
+  </div>
+</aside>
+
+<main class="main">
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:24px;flex-wrap:wrap">
+      <button class="menu-toggle" onclick="toggleSidebar()" style="display:none; background:none; border:none; color:var(--text); font-size:24px; cursor:pointer; margin-right:8px;">☰</button>
+      <div class="page-title" id="topbar-title" style="font-size: 20px;">Carregando...</div>
+      <div id="topbar-info-widgets" style="display:flex;align-items:center;gap:24px;font-size:14px;color:var(--muted);border-left:1px solid var(--border);padding-left:24px;flex-wrap:wrap;font-weight:500">
+        <span id="topbar-date" style="display:flex;align-items:center;gap:6px">📅 <span style="color:var(--text)">—</span></span>
+        <span id="topbar-city" style="display:flex;align-items:center;gap:6px">📍 <span style="color:var(--text)">—</span></span>
+        <span id="topbar-temp" style="display:flex;align-items:center;gap:6px">🌡️ <span style="color:var(--accent);font-weight:700">—°C</span></span>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px">
+      <!-- Seletor de Setores Dropdown -->
+      <div class="sector-switcher">
+        <button class="btn btn-sm btn-secondary" onclick="toggleSectorMenu(event)">🌐 Portais ▾</button>
+        <div class="sector-switcher-menu" id="sector-menu">
+          <a class="sector-switcher-item" onclick="location.href='/'">🖥️ Gestor / Dashboard</a>
+          <a class="sector-switcher-item" onclick="location.href='/producao-setor'">🏭 Setor Produção</a>
+          <a class="sector-switcher-item" onclick="location.href='/comercial'">🏢 Comercial</a>
+          <a class="sector-switcher-item" href="/manual.html" target="_blank">📖 Manual do Usuário</a>
+        </div>
+      </div>
+      <!-- Alternar Tema Button -->
+      <button class="btn btn-sm btn-secondary" onclick="toggleTheme()" title="Alternar Tema" style="font-size:14px;padding:6px 10px;">🌗</button>
+
+      <span id="topbar-user-name" style="font-size:13px;font-weight:600;margin-right:8px;color:var(--text);display:flex;align-items:center;gap:4px">👤 <span id="topbar-user-name-txt">—</span></span>
+      <span class="setor-badge">🏭 Setor Produção</span>
+      <span class="badge" id="topbar-mes" style="font-size:12px;padding:4px 10px;">—</span>
+      <button class="btn btn-sm btn-secondary" onclick="openModal('modal-ajuda-producao')" style="padding: 6px 12px; font-size: 12px;">❓ Ajuda</button>
+      <button class="btn btn-sm btn-danger" onclick="sairSistema()" style="padding: 6px 12px; font-size: 12px;">🚪 Sair</button>
+    </div>
+  </div>
+  <div class="content">
+    <div id="alert-prod"></div>
+
+    <!-- DASHBOARD -->
+    <div class="page" id="page-dashboard">
+      <div class="month-bar">
+        <label>Mês:</label>
+        <input type="month" id="dash-mes" onchange="loadDashboard()">
+      </div>
+      <div class="cards-grid" id="dash-cards"></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+        <div>
+          <div class="section-title">Ranking Operadores</div>
+          <div id="dash-ranking"></div>
+        </div>
+        <div>
+          <div class="section-title">Produção por Operador</div>
+          <div id="dash-operadores" style="display:grid;gap:14px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PRODUÇÃO DIÁRIA -->
+    <div class="page" id="page-producao">
+      <div class="flex items-center justify-between mb-4">
+        <div class="flex gap-2 items-center">
+          <input type="month" id="prod-mes" onchange="loadProducao()">
+          <select id="prod-filtro-col" onchange="loadProducao()" style="min-width:150px">
+            <option value="">Todos os operadores</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" onclick="openModalProducao()">+ Registrar Produção</button>
+      </div>
+      <div class="table-wrap">
+        <div class="table-head"><span class="table-head-title">Registros de Produção</span></div>
+        <table>
+          <thead><tr><th>Data</th><th>Colaborador</th><th>Máquina</th><th>Meta</th><th>Produção</th><th>Excedente</th><th>Perda</th><th></th></tr></thead>
+          <tbody id="prod-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- PREMIAÇÃO -->
+    <div class="page" id="page-premiacao">
+      <div class="month-bar">
+        <label>Mês:</label>
+        <input type="month" id="prem-mes" onchange="loadPremiacao()">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px">
+        <div>
+          <div class="section-title">Operadores</div>
+          <div id="prem-operadores"></div>
+        </div>
+        <div>
+          <div class="section-title">Auxiliares</div>
+          <div id="prem-auxiliares"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- COLABORADORES -->
+    <div class="page" id="page-colaboradores">
+      <div class="flex items-center justify-between mb-4">
+        <div></div>
+        <button class="btn btn-primary" onclick="openModalColabProd()">+ Novo Colaborador</button>
+      </div>
+      <div class="table-wrap">
+        <div class="table-head"><span class="table-head-title">Colaboradores</span></div>
+        <table>
+          <thead><tr><th>Nome</th><th>Tipo</th><th>Máquina</th><th>Status</th><th></th></tr></thead>
+          <tbody id="prod-col-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- MÁQUINAS -->
+    <div class="page" id="page-maquinas">
+      <div class="flex items-center justify-between mb-4">
+        <div></div>
+        <button class="btn btn-primary" onclick="openModalMaqProd()">+ Nova Máquina</button>
+      </div>
+      <div class="table-wrap">
+        <div class="table-head"><span class="table-head-title">Máquinas</span></div>
+        <table>
+          <thead><tr><th>Nome</th><th>Setor</th><th>Meta Padrão</th><th>Status</th><th></th></tr></thead>
+          <tbody id="prod-maq-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- RELATÓRIOS -->
+    <div class="page" id="page-relatorios">
+      <div class="month-bar">
+        <label>Mês:</label>
+        <input type="month" id="rel-mes" onchange="loadRelatorios()">
+      </div>
+      <div class="section-title">Ranking Histórico</div>
+      <div id="rel-ranking" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin-bottom:28px"></div>
+      <div class="section-title">Evolução Mensal</div>
+      <div class="card" style="padding:24px;margin-bottom:24px"><canvas id="chart-evolucao" height="100"></canvas></div>
+      <div class="section-title">Produção Diária do Mês</div>
+      <div class="card" style="padding:24px"><canvas id="chart-diario" height="100"></canvas></div>
+    </div>
+
+  </div>
+</main>
+
+<!-- MODAL PRODUÇÃO -->
+<div class="modal-overlay" id="modal-producao">
+  <div class="modal" style="max-width:700px;width:96vw">
+    <div class="modal-title" id="modal-prod-title">Registrar Produção</div>
+    <input type="hidden" id="prod-edit-id">
+    <div class="form-grid" style="margin-bottom:16px">
+      <div class="form-group"><label>Data</label><input type="date" id="prod-data"></div>
+      <div class="form-group"><label>Colaborador</label><select id="prod-colaborador"></select></div>
+      <div class="form-group"><label>Máquina</label><select id="prod-maquina"></select></div>
+      <div class="form-group"><label>Meta do dia</label><input type="number" id="prod-meta" value="8000"></div>
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Nº Pedido <span style="color:var(--muted);font-size:11px">(opcional)</span></label>
+        <div class="flex gap-2">
+          <select id="prod-pedido" style="flex:1"><option value="">— Sem pedido —</option></select>
+          <input type="text" id="prod-pedido-manual" placeholder="Ou número manual" style="flex:1">
+        </div>
+      </div>
+    </div>
+    <!-- Toggle Lançamento Simplificado -->
+    <div id="prod-toggle-container" style="margin-bottom:14px;display:none">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600">
+        <input type="checkbox" id="prod-toggle-simplificado" style="width:16px;height:16px;accent-color:var(--accent)" onchange="toggleFormSimplificado()">
+        ⚡ Lançamento Simplificado (Informar apenas a quantidade total sem detalhar produtos)
+      </label>
+    </div>
+
+    <!-- Seção Simplificada -->
+    <div id="prod-secao-simplificada" class="form-grid" style="display:none;margin-top:12px;margin-bottom:12px">
+      <div class="form-group">
+        <label>Quantidade Produzida</label>
+        <input type="number" id="prod-simples-qtd" placeholder="0" min="0" oninput="atualizarSimplificadoData()">
+      </div>
+      <div class="form-group">
+        <label>Quantidade de Perda</label>
+        <input type="number" id="prod-simples-perda" placeholder="0" min="0" oninput="atualizarSimplificadoData()">
+      </div>
+      <div class="form-group">
+        <label>Quantidade de Sobra</label>
+        <input type="number" id="prod-simples-sobra" placeholder="0" min="0" oninput="atualizarSimplificadoData()">
+      </div>
+      <div class="form-group">
+        <label>Motivo da Perda</label>
+        <select id="prod-simples-tipo-perda" onchange="atualizarSimplificadoData()">
+          <option value="Quebra">Quebra</option>
+          <option value="Defeito">Defeito</option>
+          <option value="Contaminação">Contaminação</option>
+          <option value="Transporte">Transporte</option>
+          <option value="Outros">Outros</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Seção Detalhada -->
+    <div id="prod-secao-detalhada">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div style="font-family:var(--fh);font-weight:700;font-size:14px">Produtos Produzidos</div>
+        <button class="btn btn-sm btn-neon" onclick="addItemProducao()">+ Adicionar Produto</button>
+      </div>
+      <div class="prod-header-row" style="display:grid;grid-template-columns:minmax(0, 2fr) 80px 80px 80px 95px 28px;gap:6px;margin-bottom:6px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">
+        <span>Produto do Estoque</span><span style="text-align:center">Produção</span>
+        <span style="text-align:center">Perda</span><span style="text-align:center">Sobra</span>
+        <span style="text-align:center">Tipo Perda</span><span></span>
+      </div>
+      <div id="prod-itens-list"></div>
+    </div>
+
+    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-top:12px;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-size:13px;color:var(--muted)">Total produzido no dia:</span>
+      <span style="font-family:var(--fh);font-size:20px;font-weight:800;color:var(--accent)" id="prod-total-label">0</span>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-producao')">Cancelar</button>
+      <button class="btn btn-primary" id="prod-save-btn" onclick="salvarProducao()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL AJUDA PCP PRODUCAO -->
+<div class="modal-overlay" id="modal-ajuda-producao">
+  <div class="modal" style="max-width:550px">
+    <div class="modal-title">❓ Ajuda - Planejamento e Controle de Produção (PCP)</div>
+    <div style="max-height:60vh; overflow-y:auto; padding-right:8px; font-size:14px; line-height:1.6; color:#caced6">
+      <p style="margin-bottom:12px">Este painel gerencia a linha de produção diária, análise de perdas e ranking de produtividade. Veja como usar cada função:</p>
+      
+      <strong style="color:var(--accent); display:block; margin:14px 0 6px">🏭 Como Lançar Produção Diária (Gestor):</strong>
+      <ol style="padding-left:20px; margin-bottom:12px">
+        <li>Vá para a tela <strong>Produção Diária</strong> no menu.</li>
+        <li>Clique no botão <strong>+ Lançar Produção</strong>.</li>
+        <li>Insira a data, selecione o operador/colaborador, a máquina e a meta diária (padrão 8000).</li>
+        <li>(Opcional) Vincule a um pedido comercial ou insira um número manual.</li>
+        <li>Na tabela de itens, selecione o produto fabricado, a quantidade produzida, perdas (selecione o motivo) ou sobras. Use o botão laranja <span style="color:#ff5500; font-weight:bold">+ Adicionar Produto</span> para escolher o item e registrar a quantidade de peças produzidas, perdas (especificando tipo) ou sobras.</li>
+        <li>Clique em <strong>Salvar</strong>.</li>
+      </ol>
+
+      <strong style="color:var(--accent); display:block; margin:14px 0 6px">🥇 Ranking de Eficiência & Premiação:</strong>
+      <ul style="padding-left:20px; margin-bottom:12px">
+        <li>O sistema calcula automaticamente a média diária de produção de cada operador no mês de referência selecionado.</li>
+        <li>Operadores com média diária acima ou igual à meta do mês recebem a medalha de <strong>Ouro</strong>.</li>
+        <li>Operadores com média entre 80% e 99% da meta recebem a medalha de <strong>Prata</strong>.</li>
+        <li>O bônus financeiro de performance é calculado proporcionalmente com base nesses índices.</li>
+      </ul>
+
+      <strong style="color:var(--accent); display:block; margin:14px 0 6px">⚙️ Gestão de Máquinas:</strong>
+      <ul style="padding-left:20px; margin-bottom:12px">
+        <li>Na aba de <strong>Máquinas</strong>, você pode cadastrar equipamentos de fabricação, definir suas metas de produção diária padrão e ativar/inativar seu uso no sistema.</li>
+      </ul>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="closeModal('modal-ajuda-producao')">Entendi</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function toggleTheme() {
+  const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+  const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', newTheme);
+  localStorage.setItem('pratic-theme', newTheme);
+}
+function toggleSectorMenu(event) {
+  event.stopPropagation();
+  const menu = document.getElementById('sector-menu');
+  if (menu) menu.classList.toggle('show');
+}
+document.addEventListener('click', function() {
+  const menu = document.getElementById('sector-menu');
+  if (menu) menu.classList.remove('show');
+});
+
+function toggleSidebar() {
+  const sb = document.querySelector('.sidebar');
+  sb.classList.toggle('open');
+  let overlay = document.querySelector('.sidebar-mobile-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.className = 'sidebar-mobile-overlay';
+    overlay.addEventListener('click', () => {
+      sb.classList.remove('open');
+      overlay.style.display = 'none';
+    });
+    document.body.appendChild(overlay);
+  }
+  overlay.style.display = sb.classList.contains('open') ? 'block' : 'none';
+}
+document.addEventListener('click', (e) => {
+  const target = e.target.closest('.nav-item');
+  if (target) {
+    const sb = document.querySelector('.sidebar');
+    if (sb && sb.classList.contains('open')) {
+      sb.classList.remove('open');
+      const overlay = document.querySelector('.sidebar-mobile-overlay');
+      if (overlay) overlay.style.display = 'none';
+    }
+  }
+});
+const API = window.location.origin + '/api';
+const PERFIL = 'producao'; // perfil desta página
+
+const PAGES_CONFIG = {
+  dashboard:     { icon:'📊', label:'Dashboard',         section:'Visão Geral',  local:true },
+  producao:      { icon:'🏭', label:'Produção Diária',   section:'Lançamentos',  local:true },
+  premiacao:     { icon:'🏆', label:'Premiação',          section:'Lançamentos',  local:true },
+  colaboradores: { icon:'👥', label:'Colaboradores',      section:'Cadastros',    local:true },
+  maquinas:      { icon:'⚙️', label:'Máquinas',           section:'Cadastros',    local:true },
+  pedidos:       { icon:'🧾', label:'Pedidos',            section:'Operações',    url:'/?perfil=producao&page=pedidos' },
+  estoque:       { icon:'📦', label:'Estoque',            section:'Operações',    url:'/?perfil=producao&page=estoque' },
+  epi:           { icon:'🦺', label:'EPI',                section:'Operações',    url:'/?perfil=producao&page=epi' },
+  graficos:      { icon:'📈', label:'Gráficos',           section:'Análises',     url:'/?perfil=producao&page=graficos' },
+  relatorios:    { icon:'📋', label:'Relatórios',         section:'Análises',     local:true },
+  configuracoes: { icon:'🔧', label:'Configurações',      section:'Sistema',      url:'/?perfil=producao&page=configuracoes' },
+  backup:        { icon:'💾', label:'Backup',             section:'Sistema',      url:'/?perfil=producao&page=backup' },
+  permissoes:    { icon:'🔐', label:'Controle de Acesso', section:'Sistema',      url:'/?perfil=producao&page=permissoes' },
+  empresa:       { icon:'🏢', label:'Dados da Empresa',   section:'Sistema',      url:'/?perfil=producao&page=empresa' },
+  mobile:        { icon:'📱', label:'Mobile Operador',    section:'Portais',      url:'/mobile' },
+  estoque_mobile:{ icon:'📦', label:'Mobile Estoque',     section:'Portais',      url:'/estoque-mobile' },
+};
+
+const STATUS_LABEL = { aberto:'📋 Aberto', em_producao:'🏭 Em produção', produzido:'✅ Produzido', entregue:'📦 Entregue' };
+const STATUS_PILL  = { aberto:'pill-info', em_producao:'pill-warn', produzido:'pill-success', entregue:'pill-success' };
+const CORES = ['#f0b429','#3b82f6','#10b981','#f43f5e','#a855f7'];
+
+let paginasPermitidas = [];
+let charts = {};
+
+async function req(path, method='GET', body=null) {
+  const opts = { method, headers:{'Content-Type':'application/json'} };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(API + path, opts);
+  if (r.status === 401) {
+    window.location.href = '/login?redirect=' + encodeURIComponent(window.location.pathname + window.location.search);
+    return;
+  }
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.detail || 'Erro');
+  return d;
+}
+
+async function sairSistema() {
+  if (!confirm('Deseja realmente sair?')) return;
+  try {
+    await fetch('/api/auth/logout', { method: 'POST' });
+  } catch (e) {
+    console.error(e);
+  }
+  localStorage.removeItem('user_nome');
+  localStorage.removeItem('user_role');
+  localStorage.removeItem('user_username');
+  window.location.href = '/login';
+}
+
+function fmtNum(n) { return Number(n||0).toLocaleString('pt-BR'); }
+function fmtBRL(n) { return Number(n||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); }
+function fmtDate(s) { if(!s) return '—'; const [y,m,d]=s.split('-'); return `${d}/${m}/${y}`; }
+function mesLabel(mes) { if(!mes) return '—'; const [y,m]=mes.split('-'); return ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][+m-1]+' '+y; }
+function mesLabel2(mes) { if(!mes) return ''; const [y,m]=mes.split('-'); return ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][+m-1]+'/'+y.slice(2); }
+function currentMonth() { const d=new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; }
+
+function showAlert(msg, type='success') {
+  const el = document.getElementById('alert-prod');
+  el.innerHTML = `<div class="alert alert-${type}">${msg}</div>`;
+  setTimeout(() => el.innerHTML='', 3500);
+}
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+document.querySelectorAll('.modal-overlay').forEach(m => m.addEventListener('click', e => { if(e.target===m) m.classList.remove('open'); }));
+
+// ── PERMISSÕES
+async function loadTopbarWidgets() {
+  const dateEl = document.querySelector('#topbar-date span');
+  if (dateEl) {
+    const hoje = new Date();
+    const dia = String(hoje.getDate()).padStart(2, '0');
+    const mes = String(hoje.getMonth() + 1).padStart(2, '0');
+    const ano = hoje.getFullYear();
+    dateEl.textContent = `${dia}/${mes}/${ano}`;
+  }
+
+  let cidade = '';
+  let uf = '';
+  try {
+    const r = await fetch(API + '/configuracoes/empresa', { cache: 'no-store' });
+    if (r.ok) {
+      const dados = await r.json();
+      cidade = dados.cidade || '';
+      uf = dados.uf || '';
+    }
+  } catch (e) {
+    console.error('Erro ao buscar dados da empresa para topbar:', e);
+  }
+
+  const cityEl = document.querySelector('#topbar-city span');
+  if (cityEl) {
+    if (cidade) {
+      cityEl.textContent = uf ? `${cidade} - ${uf.toUpperCase()}` : cidade;
+    } else {
+      cityEl.textContent = 'Sem cidade';
+    }
+  }
+
+  const tempEl = document.querySelector('#topbar-temp span');
+  if (tempEl && cidade) {
+    try {
+      const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cidade)}&count=1&language=pt&format=json`;
+      const geoRes = await fetch(geoUrl);
+      if (geoRes.ok) {
+        const geoData = await geoRes.json();
+        if (geoData.results && geoData.results.length > 0) {
+          const { latitude, longitude } = geoData.results[0];
+          const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`;
+          const weatherRes = await fetch(weatherUrl);
+          if (weatherRes.ok) {
+            const weatherData = await weatherRes.json();
+            if (weatherData.current_weather && typeof weatherData.current_weather.temperature !== 'undefined') {
+              const temp = Math.round(weatherData.current_weather.temperature);
+              tempEl.textContent = `${temp}°C`;
+              return;
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Erro ao obter temperatura:', err);
+    }
+  }
+  
+  if (tempEl) {
+    tempEl.textContent = '—°C';
+  }
+
+  const topbarMesEl = document.getElementById('topbar-mes');
+  if (topbarMesEl && (topbarMesEl.textContent === '—' || !topbarMesEl.textContent)) {
+    const mesAtual = new Date().toISOString().slice(0, 7);
+    topbarMesEl.textContent = mesLabel(mesAtual);
+  }
+}
+
+async function inicializar() {
+  // Valida autenticação
+  let me;
+  try {
+    me = await req('/auth/me');
+    if (me) {
+      const elNome = document.getElementById('topbar-user-name-txt');
+      if (elNome) elNome.textContent = me.nome;
+    }
+  } catch (e) {
+    window.location.href = '/login?redirect=' + encodeURIComponent(window.location.pathname + window.location.search);
+    return;
+  }
+
+  const mesAtual = new Date().toISOString().slice(0, 7);
+  const topbarMesEl = document.getElementById('topbar-mes');
+  if (topbarMesEl) topbarMesEl.textContent = mesLabel(mesAtual);
+
+  try {
+    const r = await fetch(API + '/configuracoes/permissoes/all');
+    const perms = await r.json();
+    const chave = 'perm_' + PERFIL;
+    const val = perms[chave] || 'dashboard,producao,premiacao,relatorios';
+    paginasPermitidas = val.split(',').map(p => p.trim()).filter(p => PAGES_CONFIG[p]);
+    temAcessoSimplificado = val.split(',').map(p => p.trim()).includes('producao_simplificada');
+  } catch(e) {
+    paginasPermitidas = Object.keys(PAGES_CONFIG);
+    temAcessoSimplificado = false;
+  }
+  
+  buildSidebar();
+  loadTopbarWidgets();
+  const primeiraLocal = paginasPermitidas.find(p => PAGES_CONFIG[p]?.local) || paginasPermitidas[0];
+  if (primeiraLocal) showPage(primeiraLocal);
+}
+
+function buildSidebar() {
+  const nav = document.getElementById('sidebar-nav');
+  const sections = {};
+  paginasPermitidas.forEach(p => {
+    const cfg = PAGES_CONFIG[p];
+    if (!cfg) return;
+    if (!sections[cfg.section]) sections[cfg.section] = [];
+    sections[cfg.section].push({ key: p, ...cfg });
+  });
+
+  nav.innerHTML = Object.entries(sections).map(([sec, items]) => `
+    <div class="nav-section">${sec}</div>
+    ${items.map(item => `
+      <div class="nav-item" id="nav-${item.key}" onclick="showPage('${item.key}')">
+        <span>${item.icon}</span> ${item.label}${item.local ? '' : ' <span style="margin-left:auto;font-size:10px;color:var(--muted)">↗</span>'}
+      </div>`).join('')}
+  `).join('');
+}
+
+function showPage(name) {
+  if (!paginasPermitidas.includes(name)) return;
+  const cfg = PAGES_CONFIG[name];
+  if (cfg && !cfg.local && cfg.url) {
+    window.location.href = cfg.url;
+    return;
+  }
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  const el = document.getElementById('page-' + name);
+  if (el) el.classList.add('active');
+  const nav = document.getElementById('nav-' + name);
+  if (nav) nav.classList.add('active');
+  document.getElementById('topbar-title').textContent = PAGES_CONFIG[name]?.label || name;
+  const handlers = { dashboard:loadDashboard, producao:loadProducao, premiacao:loadPremiacao, relatorios:loadRelatorios, colaboradores:loadColabProd, maquinas:loadMaqProd };
+  if (handlers[name]) handlers[name]();
+}
+
+// ── DASHBOARD
+async function loadDashboard() {
+  const mesEl = document.getElementById('dash-mes');
+  if (!mesEl.value) { const m = await getMesRecente(); mesEl.value = m; }
+  const mes = mesEl.value;
+  document.getElementById('topbar-mes').textContent = mesLabel(mes);
+
+  const data = await req('/premiacao/dashboard/' + mes);
+  const totalProd = data.operadores.reduce((s,o) => s+(o.total_producao||0), 0);
+  const elegiveis = data.operadores.filter(o => o.elegivel).length;
+
+  document.getElementById('dash-cards').innerHTML = `
+    <div class="card"><div class="card-label">Total Produzido</div><div class="card-value accent">${fmtNum(totalProd)} K</div><div class="card-sub">${mesLabel(mes)}</div></div>
+    <div class="card"><div class="card-label">Dias Registrados</div><div class="card-value info">${data.total_dias_registrados}</div><div class="card-sub">dias com lançamento</div></div>
+    <div class="card"><div class="card-label">Média Diária Geral</div><div class="card-value info">${fmtNum(data.media_geral)} K</div><div class="card-sub">total ÷ dias</div></div>
+    <div class="card"><div class="card-label">Operadores Premiados</div><div class="card-value success">${elegiveis}/${data.operadores.length}</div><div class="card-sub">acima da meta</div></div>
+    <div class="card"><div class="card-label">Total em Prêmios</div><div class="card-value accent">${fmtBRL(data.total_premios)}</div><div class="card-sub">operadores + auxiliares</div></div>
+  `;
+
+  document.getElementById('dash-ranking').innerHTML = data.operadores.map((op,i) => `
+    <div class="rank-card">
+      <div class="rank-num ${i===0?'gold':i===1?'silver':''}">${i+1}º</div>
+      <div class="rank-info">
+        <div class="rank-name">${op.colaborador}</div>
+        <div class="rank-detail">Média: ${fmtNum(Math.round(op.media_diaria||0))} | Total: ${fmtNum(op.total_producao)} | Dias: ${op.dias_trabalhados}</div>
+      </div>
+      <div class="rank-premio">
+        ${op.elegivel ? `<div class="rank-valor">${fmtBRL(op.valor_premio)}</div><span class="pill pill-success" style="font-size:11px">✓ Premiado</span>` : `<span class="pill pill-danger">Abaixo da meta</span>`}
+      </div>
+    </div>`).join('');
+
+  document.getElementById('dash-operadores').innerHTML = data.operadores.map(op => `
+    <div class="card" style="border-left:3px solid ${op.elegivel?'var(--success)':'var(--danger)'}">
+      <div class="flex justify-between items-center" style="margin-bottom:10px">
+        <div style="font-family:var(--fh);font-size:15px;font-weight:700">${op.colaborador}</div>
+        ${op.elegivel ? '<span class="pill pill-success">✓ Premiado</span>' : '<span class="pill pill-danger">Abaixo da meta</span>'}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div><div class="card-label">Total</div><div style="font-family:var(--fh);font-size:18px;font-weight:800;color:var(--accent)">${fmtNum(op.total_producao)}</div></div>
+        <div><div class="card-label">Média/dia</div><div style="font-family:var(--fh);font-size:18px;font-weight:800;color:var(--accent2)">${fmtNum(Math.round(op.media_diaria||0))}</div></div>
+        <div><div class="card-label">Dias trab.</div><div style="font-family:var(--fh);font-size:18px;font-weight:800">${op.dias_trabalhados}</div></div>
+        <div><div class="card-label">Prêmio</div><div style="font-family:var(--fh);font-size:18px;font-weight:800;color:var(--success)">${fmtBRL(op.valor_premio)}</div></div>
+      </div>
+    </div>`).join('');
+}
+
+// ── PRODUÇÃO
+async function loadProducao() {
+  const mesEl = document.getElementById('prod-mes');
+  if (!mesEl.value) { const m = await getMesRecente(); mesEl.value = m; }
+  const mes = mesEl.value;
+  const topbarMesEl = document.getElementById('topbar-mes');
+  if (topbarMesEl) topbarMesEl.textContent = mesLabel(mes);
+
+  const filtroEl = document.getElementById('prod-filtro-col');
+  if (filtroEl.options.length <= 1) {
+    const cols = await req('/colaboradores/?tipo=operador');
+    cols.forEach(c => { const o = document.createElement('option'); o.value=c.id; o.textContent=c.nome; filtroEl.appendChild(o); });
+  }
+  const colId = filtroEl.value;
+  let url = '/producao/?mes=' + mes;
+  if (colId) url += '&colaborador_id=' + colId;
+
+  const rows = await req(url);
+  const tbody = document.getElementById('prod-tbody');
+  if (!rows.length) { tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:28px">Nenhum registro</td></tr>'; return; }
+  tbody.innerHTML = rows.map(r => {
+    const exc = r.excedente||0;
+    const cls = exc>0?'positive':exc<0?'negative':'neutral';
+    const sig = exc>0?'+':'';
+    return `<tr>
+      <td>${fmtDate(r.data)}</td>
+      <td><strong>${r.colaborador_nome}</strong></td>
+      <td>${r.maquina_nome}</td>
+      <td>${fmtNum(r.meta)}</td>
+      <td>${fmtNum(r.producao)}</td>
+      <td class="${cls}">${sig}${fmtNum(exc)}</td>
+      <td style="color:var(--danger)">${r.perda_quantidade>0?fmtNum(r.perda_quantidade):'—'}</td>
+      <td class="flex gap-2">
+        <button class="btn btn-sm btn-secondary" onclick="editarProducao(${r.id},${r.colaborador_id},${r.maquina_id},'${r.data}',${r.meta},${r.producao},${r.produto_estoque_id || 'null'},${r.perda_quantidade || 0},${r.sobra_quantidade || 0},'${r.pedido_numero || ''}')">✏️</button>
+        <button class="btn btn-sm btn-danger" onclick="deletarProducao(${r.id})">✕</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+let prodItens = [];
+let prodEstoqueCache = [];
+let temAcessoSimplificado = false;
+const TIPOS_PERDA_MOD = ['Quebra','Defeito','Contaminação','Transporte','Outros'];
+
+async function openModalProducao() {
+  const [mqs, cols, prods, pedidos] = await Promise.all([
+    req('/maquinas/'), req('/colaboradores/?tipo=operador'),
+    req('/estoque/produtos').catch(()=>[]),
+    req('/pedidos/').catch(()=>[])
+  ]);
+  prodEstoqueCache = prods;
+  document.getElementById('prod-colaborador').innerHTML = cols.map(c=>`<option value="${c.id}">${c.nome}</option>`).join('');
+  document.getElementById('prod-maquina').innerHTML = mqs.filter(m=>m.ativa).map(m=>`<option value="${m.id}">${m.nome}</option>`).join('');
+  document.getElementById('prod-data').value = new Date().toISOString().split('T')[0];
+  document.getElementById('prod-meta').value = '8000';
+  document.getElementById('prod-edit-id').value = '';
+  document.getElementById('prod-pedido-manual').value = '';
+  const pedSel = document.getElementById('prod-pedido');
+  if(pedSel) pedSel.innerHTML = '<option value="">— Sem pedido —</option>' + pedidos.filter(p=>p.status!=='entregue').map(p=>`<option value="${p.id}">${p.numero_pedido} — ${p.cliente_nome}</option>`).join('');
+  document.getElementById('modal-prod-title').textContent = 'Registrar Produção';
+  document.getElementById('prod-save-btn').textContent = 'Salvar';
+
+  // Toggle Visibility Check
+  let me;
+  try { me = await req('/auth/me'); } catch(e){}
+  const allowed = (me && me.role === 'gestor') || temAcessoSimplificado;
+  const toggleContainer = document.getElementById('prod-toggle-container');
+  if (toggleContainer) toggleContainer.style.display = allowed ? 'block' : 'none';
+
+  const checkbox = document.getElementById('prod-toggle-simplificado');
+  if (checkbox) {
+    if (allowed) {
+      checkbox.checked = true;
+      checkbox.disabled = (me && me.role !== 'gestor');
+    } else {
+      checkbox.checked = false;
+      checkbox.disabled = false;
+    }
+  }
+
+  prodItens = [{ produto_id: null, producao: 0, perda: 0, sobra: 0, tipo_perda: 'Quebra' }];
+  
+  // Clean simple inputs
+  document.getElementById('prod-simples-qtd').value = '';
+  document.getElementById('prod-simples-perda').value = '';
+  document.getElementById('prod-simples-sobra').value = '';
+  document.getElementById('prod-simples-tipo-perda').value = 'Quebra';
+
+  toggleFormSimplificado();
+  openModal('modal-producao');
+}
+
+function toggleFormSimplificado() {
+  const checkbox = document.getElementById('prod-toggle-simplificado');
+  const isSimplificado = checkbox && checkbox.checked;
+  
+  const secaoSimplificada = document.getElementById('prod-secao-simplificada');
+  const secaoDetalhada = document.getElementById('prod-secao-detalhada');
+  
+  if (secaoSimplificada) secaoSimplificada.style.display = isSimplificado ? 'grid' : 'none';
+  if (secaoDetalhada) secaoDetalhada.style.display = isSimplificado ? 'none' : 'block';
+  
+  if (checkbox) {
+    localStorage.setItem('prod-simplificado', isSimplificado ? 'true' : 'false');
+  }
+  
+  if (isSimplificado) {
+    atualizarSimplificadoData();
+  } else {
+    renderProdItens();
+    atualizarTotalProd();
+  }
+}
+
+function atualizarSimplificadoData() {
+  const qtd = +document.getElementById('prod-simples-qtd').value || 0;
+  const perda = +document.getElementById('prod-simples-perda').value || 0;
+  const sobra = +document.getElementById('prod-simples-sobra').value || 0;
+  const tipo = document.getElementById('prod-simples-tipo-perda').value || 'Quebra';
+  
+  prodItens = [{
+    produto_id: null,
+    producao: qtd,
+    perda: perda,
+    sobra: sobra,
+    tipo_perda: tipo
+  }];
+  atualizarTotalProd();
+}
+
+function renderProdItens() {
+  const el = document.getElementById('prod-itens-list');
+  if(!el) return;
+  el.innerHTML = prodItens.map((item, idx) => `
+    <div class="prod-item-row">
+      <div class="prod-field-col prod-field-produto">
+        <label class="prod-field-label">Produto do Estoque</label>
+        <select onchange="prodItens[${idx}].produto_id=+this.value||null" style="font-size:13px;padding:8px 10px;width:100%;min-width:0">
+          <option value="">— Sem produto —</option>
+          ${prodEstoqueCache.map(p=>`<option value="${p.id}" ${item.produto_id===p.id?'selected':''}>${p.codigo?'['+p.codigo+'] ':''}${p.nome}${p.marca?' '+p.marca:''} (${fmtNum(p.quantidade_atual)} ${p.unidade})</option>`).join('')}
+        </select>
+      </div>
+      <div class="prod-field-col prod-field-producao">
+        <label class="prod-field-label">Produção</label>
+        <input type="number" value="${item.producao||''}" min="0" placeholder="0"
+               oninput="prodItens[${idx}].producao=+this.value;atualizarTotalProd()"
+               style="font-size:13px;text-align:center;padding:8px 4px;width:100%;min-width:0">
+      </div>
+      <div class="prod-field-col prod-field-perda">
+        <label class="prod-field-label">Perda</label>
+        <input type="number" value="${item.perda||''}" min="0" placeholder="0"
+               oninput="prodItens[${idx}].perda=+this.value"
+               style="font-size:13px;text-align:center;padding:8px 4px;border-color:rgba(239,68,68,.35);width:100%;min-width:0">
+      </div>
+      <div class="prod-field-col prod-field-sobra">
+        <label class="prod-field-label">Sobra</label>
+        <input type="number" value="${item.sobra||''}" min="0" placeholder="0"
+               oninput="prodItens[${idx}].sobra=+this.value"
+               style="font-size:13px;text-align:center;padding:8px 4px;border-color:rgba(16,185,129,.35);width:100%;min-width:0">
+      </div>
+      <div class="prod-field-col prod-field-tipoperda">
+        <label class="prod-field-label">Tipo Perda</label>
+        <select onchange="prodItens[${idx}].tipo_perda=this.value" style="font-size:12px;padding:8px 4px;width:100%;min-width:0">
+          ${TIPOS_PERDA_MOD.map(t=>`<option value="${t}" ${item.tipo_perda===t?'selected':''}>${t}</option>`).join('')}
+        </select>
+      </div>
+      <div class="prod-field-col prod-field-acoes">
+        <button class="btn btn-sm btn-danger" onclick="prodItens.splice(${idx},1);renderProdItens()" ${prodItens.length===1?'disabled':''} style="padding:6px 8px;width:100%">✕</button>
+      </div>
+    </div>`).join('');
+}
+
+function addItemProducao() {
+  prodItens.push({ produto_id:null, producao:0, perda:0, sobra:0, tipo_perda:'Quebra' });
+  renderProdItens();
+}
+
+function atualizarTotalProd() {
+  const total = prodItens.reduce((s,i)=>s+(i.producao||0),0);
+  const el = document.getElementById('prod-total-label');
+  if(el) el.textContent = fmtNum(total);
+}
+
+async function editarProducao(id, colId, maqId, data, meta, producao, produtoEstoqueId = null, perdaQtd = 0, sobraQtd = 0, pedidoNumero = '') {
+  await openModalProducao();
+  document.getElementById('prod-edit-id').value = id;
+  document.getElementById('prod-colaborador').value = colId;
+  document.getElementById('prod-maquina').value = maqId;
+  document.getElementById('prod-data').value = data;
+  document.getElementById('prod-meta').value = meta;
+  document.getElementById('prod-pedido-manual').value = pedidoNumero || '';
+  document.getElementById('modal-prod-title').textContent = 'Editar Produção';
+  document.getElementById('prod-save-btn').textContent = 'Atualizar';
+
+  const isSimplificado = !produtoEstoqueId;
+  const checkbox = document.getElementById('prod-toggle-simplificado');
+  if (checkbox) {
+    checkbox.checked = isSimplificado;
+  }
+  
+  if (isSimplificado) {
+    document.getElementById('prod-simples-qtd').value = producao || '';
+    document.getElementById('prod-simples-perda').value = perdaQtd || '';
+    document.getElementById('prod-simples-sobra').value = sobraQtd || '';
+    document.getElementById('prod-simples-tipo-perda').value = 'Quebra';
+    prodItens = [{ produto_id: null, producao: producao, perda: perdaQtd, sobra: sobraQtd, tipo_perda: 'Quebra' }];
+  } else {
+    prodItens = [{ produto_id: produtoEstoqueId, producao: producao, perda: perdaQtd, sobra: sobraQtd, tipo_perda: 'Quebra' }];
+  }
+
+  toggleFormSimplificado();
+  atualizarTotalProd();
+}
+
+async function salvarProducao() {
+  const editId = document.getElementById('prod-edit-id').value;
+  const colId = +document.getElementById('prod-colaborador').value;
+  const maqId = +document.getElementById('prod-maquina').value;
+  const data = document.getElementById('prod-data').value;
+  const meta = +document.getElementById('prod-meta').value;
+  const pedidoManual = document.getElementById('prod-pedido-manual')?.value.trim()||'';
+  const totalProducao = prodItens.reduce((s,i)=>s+(i.producao||0),0);
+  if(!data){showAlertProd('Informe a data','danger');return;}
+  try {
+    if(editId) {
+      const item=prodItens[0];
+      await req('/producao/'+editId,'PUT',{colaborador_id:colId,maquina_id:maqId,data,meta,producao:item.producao||0,produto_estoque_id:item.produto_id,perda_quantidade:item.perda||0,sobra_quantidade:item.sobra||0});
+      showAlertProd('Produção atualizada!');
+    } else {
+      const itensValidos=prodItens.filter(i=>(i.producao||0)>0||(i.perda||0)>0);
+      if(!itensValidos.length){showAlertProd('Informe pelo menos uma produção','danger');return;}
+      const primItem=itensValidos[0];
+      await req('/producao/','POST',{colaborador_id:colId,maquina_id:maqId,data,meta,producao:totalProducao,produto_estoque_id:primItem.produto_id,perda_quantidade:primItem.perda||0,perda_tipo:primItem.tipo_perda,sobra_quantidade:primItem.sobra||0,pedido_numero:pedidoManual||null});
+      for(let i=1;i<itensValidos.length;i++){
+        const item=itensValidos[i];
+        if(item.produto_id&&(item.producao>0||item.perda>0)){
+          if(item.producao>0) await req('/estoque/movimentacoes','POST',{produto_id:item.produto_id,tipo:'saida',quantidade:item.producao,motivo:'Produção diária — '+data,data});
+          if(item.perda>0) await req('/estoque/movimentacoes','POST',{produto_id:item.produto_id,tipo:'perda',quantidade:item.perda,motivo:'Perda na produção',tipo_perda:item.tipo_perda,data});
+          if(item.sobra>0) await req('/estoque/movimentacoes','POST',{produto_id:item.produto_id,tipo:'sobra',quantidade:item.sobra,motivo:'Sobra de produção',data});
+        }
+      }
+      showAlertProd('Produção registrada! Total: '+fmtNum(totalProducao)+' peças');
+    }
+    closeModal('modal-producao');
+    loadProducao();
+  } catch(e){showAlertProd(e.message,'danger');}
+}
+async function deletarProducao(id) {
+  if (!confirm('Remover este registro?')) return;
+  await req('/producao/'+id, 'DELETE');
+  showAlert('Registro removido');
+  loadProducao();
+  loadDashboard();
+}
+
+// ── PREMIAÇÃO
+async function loadPremiacao() {
+  const mesEl = document.getElementById('prem-mes');
+  if (!mesEl.value) { const m = await getMesRecente(); mesEl.value = m; }
+  const mes = mesEl.value;
+  const topbarMesEl = document.getElementById('topbar-mes');
+  if (topbarMesEl) topbarMesEl.textContent = mesLabel(mes);
+  const [ops, auxs] = await Promise.all([req('/premiacao/operadores/'+mes), req('/premiacao/auxiliares/'+mes)]);
+
+  document.getElementById('prem-operadores').innerHTML = ops.length
+    ? ops.map((op,i) => `<div class="rank-card">
+        <div class="rank-num ${i===0?'gold':i===1?'silver':''}">${i+1}º</div>
+        <div class="rank-info"><div class="rank-name">${op.colaborador}</div>
+        <div class="rank-detail">Média: ${fmtNum(Math.round(op.media_diaria||0))} pçs/dia | ${op.dias_trabalhados} dias</div></div>
+        <div class="rank-premio">${op.elegivel
+          ? `<div class="rank-valor">${fmtBRL(op.valor_premio)}</div><span class="pill pill-success" style="font-size:11px">✓ Elegível</span>`
+          : `<span class="pill pill-danger">Abaixo da meta</span>`}</div>
+      </div>`).join('')
+    : '<p style="color:var(--muted)">Sem dados para este mês.</p>';
+
+  document.getElementById('prem-auxiliares').innerHTML = auxs.length
+    ? auxs.map(a => `<div class="rank-card">
+        <div class="rank-num ${a.posicao===1?'gold':'silver'}">${a.posicao}º</div>
+        <div class="rank-info"><div class="rank-name">${a.colaborador_nome}</div><div class="rank-detail">${a.observacao||'—'}</div></div>
+        <div class="rank-premio"><div class="rank-valor">${fmtBRL(a.valor_bonus)}</div></div>
+      </div>`).join('')
+    : '<p style="color:var(--muted)">Nenhum auxiliar premiado.</p>';
+}
+
+// ── RELATÓRIOS
+function destroyChart(id) { if(charts[id]){charts[id].destroy();delete charts[id];} }
+
+async function loadRelatorios() {
+  const mesEl = document.getElementById('rel-mes');
+  if (!mesEl.value) { const m = await getMesRecente(); mesEl.value = m; }
+  const mes = mesEl.value;
+  const topbarMesEl = document.getElementById('topbar-mes');
+  if (topbarMesEl) topbarMesEl.textContent = mesLabel(mes);
+
+  const [evolucao, diario, ranking] = await Promise.all([
+    req('/relatorios/evolucao-mensal'),
+    req('/relatorios/producao-diaria/'+mes),
+    req('/relatorios/ranking-historico')
+  ]);
+
+  document.getElementById('rel-ranking').innerHTML = ranking.map((r,i) => `
+    <div class="card" style="border-left:3px solid ${CORES[i%CORES.length]}">
+      <div class="flex justify-between items-center" style="margin-bottom:10px">
+        <div style="font-family:var(--fh);font-size:15px;font-weight:800">${r.colaborador}</div>
+        <span style="font-family:var(--fh);font-size:20px;font-weight:800;color:${CORES[i%CORES.length]}">${i+1}º</span>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div><div class="card-label">Média Geral</div><div style="font-size:16px;font-weight:700;color:var(--accent)">${fmtNum(Math.round(r.media_geral))} K</div></div>
+        <div><div class="card-label">Total</div><div style="font-size:16px;font-weight:700">${fmtNum(r.total_geral)} K</div></div>
+        <div><div class="card-label">Meses Ativos</div><div style="font-size:16px;font-weight:700;color:var(--accent2)">${r.meses_trabalhados}</div></div>
+        <div><div class="card-label">Acima da Meta</div><div style="font-size:16px;font-weight:700;color:var(--success)">${r.pct_acima_meta}%</div></div>
+      </div>
+    </div>`).join('');
+
+  // Gráfico evolução
+  destroyChart('evolucao');
+  const ops = [...new Set(evolucao.map(r=>r.colaborador))];
+  const mesesEv = [...new Set(evolucao.map(r=>r.mes_referencia))].sort();
+  charts['evolucao'] = new Chart(document.getElementById('chart-evolucao'), {
+    type:'line',
+    data:{ labels:mesesEv.map(mesLabel2), datasets:ops.map((op,i)=>({
+      label:op, borderColor:CORES[i%CORES.length], backgroundColor:CORES[i%CORES.length]+'22',
+      data:mesesEv.map(m=>{ const r=evolucao.find(r=>r.colaborador===op&&r.mes_referencia===m); return r?Math.round(r.media_diaria||0):null; }),
+      tension:0.4, fill:true, pointRadius:5, spanGaps:true
+    }))},
+    options:{ responsive:true, plugins:{legend:{labels:{color:'#e8eaf0'}}}, scales:{x:{ticks:{color:'#6b7280'},grid:{color:'#2a2f3f'}},y:{ticks:{color:'#6b7280',callback:v=>fmtNum(v)},grid:{color:'#2a2f3f'}}} }
+  });
+
+  // Gráfico diário
+  destroyChart('diario');
+  const dias = [...new Set(diario.map(r=>r.data))].sort();
+  const opsD = [...new Set(diario.map(r=>r.colaborador))];
+  const meta = diario[0]?.meta||8000;
+  const dsets = opsD.map((op,i)=>({
+    label:op, data:dias.map(d=>{ const r=diario.find(r=>r.colaborador===op&&r.data===d); return r?r.producao:0; }),
+    backgroundColor:CORES[i%CORES.length]+'cc', borderColor:CORES[i%CORES.length], borderWidth:1, borderRadius:4
+  }));
+  dsets.push({ label:`Meta (${fmtNum(meta)})`, data:dias.map(()=>meta), type:'line', borderColor:'#ef4444', borderDash:[6,3], borderWidth:2, pointRadius:0, fill:false });
+  charts['diario'] = new Chart(document.getElementById('chart-diario'), {
+    type:'bar', data:{ labels:dias.map(fmtDate), datasets:dsets },
+    options:{ responsive:true, plugins:{legend:{labels:{color:'#e8eaf0'}}}, scales:{x:{ticks:{color:'#6b7280',maxRotation:45},grid:{color:'#2a2f3f'}},y:{ticks:{color:'#6b7280',callback:v=>fmtNum(v)},grid:{color:'#2a2f3f'}}} }
+  });
+}
+
+function openModalProd(id) { document.getElementById(id).classList.add('open'); }
+function closeModalProd(id) { document.getElementById(id).classList.remove('open'); }
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.modal-overlay').forEach(m => m.addEventListener('click', e => { if(e.target===m) m.classList.remove('open'); }));
+});
+
+// ── COLABORADORES
+async function loadColabProd() {
+  const rows = await req('/colaboradores/');
+  const tbody = document.getElementById('prod-col-tbody');
+  if (!rows.length) { tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px">Nenhum colaborador</td></tr>'; return; }
+  tbody.innerHTML = rows.map(c => `
+    <tr>
+      <td><strong>${c.nome}</strong></td>
+      <td><span class="pill ${c.tipo === 'operador' ? 'pill-info' : 'pill-warn'}">${c.tipo}</span></td>
+      <td>${c.maquina_nome || '—'}</td>
+      <td><span class="pill pill-success">Ativo</span></td>
+      <td class="flex gap-2">
+        <button class="btn btn-sm btn-secondary" onclick="editColabProd(${c.id})">✏️</button>
+        <button class="btn btn-sm btn-danger" onclick="deletarColabProd(${c.id})">✕</button>
+      </td>
+    </tr>`).join('');
+}
+
+async function openModalColabProd() {
+  document.getElementById('colab-prod-id').value = '';
+  document.getElementById('colab-prod-nome').value = '';
+  document.getElementById('colab-prod-tipo').value = 'operador';
+  const mqs = await req('/maquinas/');
+  document.getElementById('colab-prod-maquina').innerHTML = mqs.filter(m=>m.ativa).map(m=>`<option value="${m.id}">${m.nome}</option>`).join('');
+  toggleMaqProd();
+  openModalProd('modal-colab-prod');
+}
+
+function toggleMaqProd() {
+  const tipo = document.getElementById('colab-prod-tipo').value;
+  document.getElementById('colab-prod-maq-group').style.display = tipo === 'operador' ? '' : 'none';
+}
+
+async function editColabProd(id) {
+  const c = await req('/colaboradores/' + id);
+  const mqs = await req('/maquinas/');
+  document.getElementById('colab-prod-id').value = c.id;
+  document.getElementById('colab-prod-nome').value = c.nome;
+  document.getElementById('colab-prod-tipo').value = c.tipo;
+  document.getElementById('colab-prod-maquina').innerHTML = mqs.filter(m=>m.ativa).map(m=>`<option value="${m.id}" ${m.id===c.maquina_id?'selected':''}>${m.nome}</option>`).join('');
+  toggleMaqProd();
+  document.getElementById('modal-colab-prod-title').textContent = 'Editar Colaborador';
+  openModalProd('modal-colab-prod');
+}
+
+async function salvarColabProd() {
+  const id = document.getElementById('colab-prod-id').value;
+  const tipo = document.getElementById('colab-prod-tipo').value;
+  const body = {
+    nome: document.getElementById('colab-prod-nome').value,
+    tipo,
+    maquina_id: tipo === 'operador' ? +document.getElementById('colab-prod-maquina').value : null,
+    ativo: 1
+  };
+  try {
+    if (id) await req('/colaboradores/' + id, 'PUT', body);
+    else await req('/colaboradores/', 'POST', body);
+    showAlertProd('Colaborador salvo!');
+    closeModalProd('modal-colab-prod');
+    loadColabProd();
+  } catch(e) { showAlertProd(e.message, 'danger'); }
+}
+
+async function deletarColabProd(id) {
+  if (!confirm('Desativar colaborador?')) return;
+  await req('/colaboradores/' + id, 'DELETE');
+  loadColabProd();
+}
+
+// ── MÁQUINAS
+async function loadMaqProd() {
+  const rows = await req('/maquinas/');
+  const tbody = document.getElementById('prod-maq-tbody');
+  if (!rows.length) { tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px">Nenhuma máquina</td></tr>'; return; }
+  tbody.innerHTML = rows.map(m => `
+    <tr>
+      <td><strong>${m.nome}</strong></td>
+      <td>${m.setor || '—'}</td>
+      <td>${fmtNum(m.meta_padrao)} pçs/dia</td>
+      <td><span class="pill ${m.ativa ? 'pill-success' : 'pill-danger'}">${m.ativa ? 'Ativa' : 'Inativa'}</span></td>
+      <td class="flex gap-2">
+        <button class="btn btn-sm btn-secondary" onclick="editMaqProd(${m.id})">✏️</button>
+        <button class="btn btn-sm btn-danger" onclick="deletarMaqProd(${m.id})">✕</button>
+      </td>
+    </tr>`).join('');
+}
+
+async function openModalMaqProd() {
+  document.getElementById('maq-prod-id').value = '';
+  document.getElementById('maq-prod-nome').value = '';
+  document.getElementById('maq-prod-setor').value = '';
+  document.getElementById('maq-prod-meta').value = '8000';
+  document.getElementById('modal-maq-prod-title').textContent = 'Cadastrar Máquina';
+  openModalProd('modal-maq-prod');
+}
+
+async function editMaqProd(id) {
+  const m = await req('/maquinas/' + id);
+  document.getElementById('maq-prod-id').value = m.id;
+  document.getElementById('maq-prod-nome').value = m.nome;
+  document.getElementById('maq-prod-setor').value = m.setor || '';
+  document.getElementById('maq-prod-meta').value = m.meta_padrao;
+  document.getElementById('modal-maq-prod-title').textContent = 'Editar Máquina';
+  openModalProd('modal-maq-prod');
+}
+
+async function salvarMaqProd() {
+  const id = document.getElementById('maq-prod-id').value;
+  const body = {
+    nome: document.getElementById('maq-prod-nome').value,
+    setor: document.getElementById('maq-prod-setor').value,
+    meta_padrao: +document.getElementById('maq-prod-meta').value,
+    ativa: 1
+  };
+  try {
+    if (id) await req('/maquinas/' + id, 'PUT', body);
+    else await req('/maquinas/', 'POST', body);
+    showAlertProd('Máquina salva!');
+    closeModalProd('modal-maq-prod');
+    loadMaqProd();
+  } catch(e) { showAlertProd(e.message, 'danger'); }
+}
+
+async function deletarMaqProd(id) {
+  if (!confirm('Desativar máquina?')) return;
+  await req('/maquinas/' + id, 'DELETE');
+  loadMaqProd();
+}
+
+function showAlertProd(msg, type='success') {
+  const el = document.getElementById('alert-prod');
+  el.innerHTML = `<div class="alert alert-${type}">${msg}</div>`;
+  setTimeout(() => el.innerHTML='', 3000);
+}
+
+async function getMesRecente() {
+  try { const m = await req('/producao/meses'); return m[0] || currentMonth(); } catch(e) { return currentMonth(); }
+}
+
+inicializar();
+
+
+/* =========================================================
+   Proteção contra duplo clique em botões de salvar/confirmar
+   ========================================================= */
+(function () {
+  if (window.PRATIC_SAVE_GUARD_INSTALLED) return;
+  window.PRATIC_SAVE_GUARD_INSTALLED = true;
+
+  const actionWords = ['salvar', 'registrar', 'confirmar', 'importar', 'baixar backup'];
+  let currentActionButton = null;
+
+  function normalizeText(value) {
+    return String(value || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function isProtectedButton(btn) {
+    if (!btn || btn.tagName !== 'BUTTON') return false;
+    if (btn.dataset.noGuard === 'true') return false;
+    const onclick = normalizeText(btn.getAttribute('onclick') || '');
+    const label = normalizeText(btn.textContent || btn.innerText || '');
+    return actionWords.some(w => label.includes(w)) ||
+      /salvar|confirmar|registrar|importar|restore|backup/i.test(onclick);
+  }
+
+  function getButton() {
+    if (currentActionButton && document.contains(currentActionButton)) return currentActionButton;
+    const active = document.activeElement;
+    if (active && active.tagName === 'BUTTON') return active;
+    return null;
+  }
+
+  function setLoadingText(btn) {
+    if (!btn || btn.dataset.originalHtml) return;
+    btn.dataset.originalHtml = btn.innerHTML;
+    const text = normalizeText(btn.textContent || btn.innerText || '');
+    if (text.includes('importar')) btn.innerHTML = 'Importando...';
+    else if (text.includes('confirmar')) btn.innerHTML = 'Confirmando...';
+    else if (text.includes('registrar')) btn.innerHTML = 'Registrando...';
+    else if (text.includes('backup') || text.includes('baixar')) btn.innerHTML = 'Processando...';
+    else btn.innerHTML = 'Salvando...';
+  }
+
+  function lock(btn) {
+    if (!btn || !isProtectedButton(btn)) return true;
+    if (btn.dataset.guardBusy === '1') return false;
+    btn.dataset.guardBusy = '1';
+    btn.disabled = true;
+    btn.classList.add('btn-loading');
+    setLoadingText(btn);
+    return true;
+  }
+
+  function unlock(btn) {
+    if (!btn || !document.contains(btn)) return;
+    delete btn.dataset.guardBusy;
+    btn.disabled = false;
+    btn.classList.remove('btn-loading');
+    if (btn.dataset.originalHtml) {
+      btn.innerHTML = btn.dataset.originalHtml;
+      delete btn.dataset.originalHtml;
+    }
+  }
+
+  document.addEventListener('click', function (event) {
+    const btn = event.target.closest && event.target.closest('button');
+    if (!btn || !isProtectedButton(btn)) return;
+    if (btn.dataset.guardBusy === '1') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return false;
+    }
+    currentActionButton = btn;
+    setTimeout(() => {
+      if (currentActionButton === btn) currentActionButton = null;
+    }, 1000);
+  }, true);
+
+  function guardFunction(name) {
+    const original = window[name];
+    if (typeof original !== 'function' || original.__praticGuarded) return;
+    const guarded = async function (...args) {
+      const btn = getButton();
+      if (btn && !lock(btn)) return;
+      try {
+        return await original.apply(this, args);
+      } finally {
+        if (btn) unlock(btn);
+      }
+    };
+    guarded.__praticGuarded = true;
+    window[name] = guarded;
+  }
+
+  function installFunctionGuards() {
+    [
+      'salvarProducao', 'salvarColaborador', 'salvarMaquina', 'salvarAuxiliar',
+      'salvarConfig', 'salvarProduto', 'salvarProdutoEstoque', 'salvarMovimentacao',
+      'salvarPerda', 'salvarCategoria', 'salvarPedido', 'salvarCliente',
+      'salvarEmpresa', 'salvarPermissoes', 'salvarEPI', 'salvarEntrega',
+      'salvarFuncaoEPI', 'salvarNovoPedido', 'salvarNovoCliente', 'salvarMobile',
+      'salvarColabProd', 'salvarMaqProd', 'confirmarImportCSV', 'confirmarImportacao',
+      'confirmarRestore', 'confirmarMovimentacao', 'confirmarMovRapida', 'fazerBackup'
+    ].forEach(guardFunction);
+  }
+
+  installFunctionGuards();
+  document.addEventListener('DOMContentLoaded', installFunctionGuards);
+  setTimeout(installFunctionGuards, 300);
+})();
+
+function toggleSidebar() {
+  const sb = document.querySelector('.sidebar');
+  if (sb) {
+    sb.classList.toggle('open');
+    let overlay = document.querySelector('.sidebar-mobile-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.className = 'sidebar-mobile-overlay';
+      overlay.addEventListener('click', () => {
+        sb.classList.remove('open');
+        overlay.style.display = 'none';
+      });
+      document.body.appendChild(overlay);
+    }
+    overlay.style.display = sb.classList.contains('open') ? 'block' : 'none';
+  }
+}
+document.addEventListener('click', (e) => {
+  const target = e.target.closest('.nav-item');
+  if (target) {
+    const sb = document.querySelector('.sidebar');
+    if (sb && sb.classList.contains('open')) {
+      sb.classList.remove('open');
+      const overlay = document.querySelector('.sidebar-mobile-overlay');
+      if (overlay) overlay.style.display = 'none';
+    }
+  }
+});
+
+function toggleTheme() {
+  const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+  const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', newTheme);
+  localStorage.setItem('pratic-theme', newTheme);
+}
+function toggleSectorMenu(event) {
+  event.stopPropagation();
+  const menu = document.getElementById('sector-menu');
+  if (menu) menu.classList.toggle('show');
+}
+document.addEventListener('click', function() {
+  const menu = document.getElementById('sector-menu');
+  if (menu) menu.classList.remove('show');
+});
+</script>
+
+<!-- MODAL COLABORADOR PROD -->
+<div class="modal-overlay" id="modal-colab-prod">
+  <div class="modal">
+    <div class="modal-title" id="modal-colab-prod-title">Cadastrar Colaborador</div>
+    <input type="hidden" id="colab-prod-id">
+    <div class="form-grid">
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Nome</label>
+        <input type="text" id="colab-prod-nome">
+      </div>
+      <div class="form-group">
+        <label>Tipo</label>
+        <select id="colab-prod-tipo" onchange="toggleMaqProd()">
+          <option value="operador">Operador</option>
+          <option value="auxiliar">Auxiliar</option>
+        </select>
+      </div>
+      <div class="form-group" id="colab-prod-maq-group">
+        <label>Máquina</label>
+        <select id="colab-prod-maquina"></select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModalProd('modal-colab-prod')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarColabProd()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL MÁQUINA PROD -->
+<div class="modal-overlay" id="modal-maq-prod">
+  <div class="modal">
+    <div class="modal-title" id="modal-maq-prod-title">Cadastrar Máquina</div>
+    <input type="hidden" id="maq-prod-id">
+    <div class="form-grid">
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Nome</label>
+        <input type="text" id="maq-prod-nome">
+      </div>
+      <div class="form-group">
+        <label>Setor</label>
+        <input type="text" id="maq-prod-setor">
+      </div>
+      <div class="form-group">
+        <label>Meta Padrão (peças/dia)</label>
+        <input type="number" id="maq-prod-meta" value="8000">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModalProd('modal-maq-prod')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarMaqProd()">Salvar</button>
+    </div>
+  </div>
+</div>
+</body>
+</html>

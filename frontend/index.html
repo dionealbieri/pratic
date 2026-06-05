@@ -1,0 +1,1643 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PRATIC — Sistema de Produção</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<script>
+  (function() {
+    const savedTheme = localStorage.getItem('pratic-theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+  })();
+</script>
+<link rel="stylesheet" href="css/common.css?v=2">
+</head>
+<body class="has-sidebar">
+
+<!-- SIDEBAR -->
+<aside class="sidebar">
+  <div class="logo">
+    <div class="logo-title">PRATIC</div>
+    <div class="logo-sub">Sistema de Produção</div>
+  </div>
+  <nav>
+    <div class="nav-section">Visão Geral</div>
+    <a class="nav-item active" onclick="showPage('dashboard')" style="cursor:pointer">
+      <span class="icon">📊</span> Dashboard
+    </a>
+    <div class="nav-section">Lançamentos</div>
+    <a class="nav-item" onclick="showPage('producao')" style="cursor:pointer">
+      <span class="icon">🏭</span> Produção Diária
+    </a>
+    <a class="nav-item" onclick="showPage('premiacao')" style="cursor:pointer">
+      <span class="icon">🏆</span> Premiação
+    </a>
+    <div class="nav-section">Cadastros</div>
+    <a class="nav-item" onclick="showPage('colaboradores')" style="cursor:pointer">
+      <span class="icon">👥</span> Colaboradores
+    </a>
+    <a class="nav-item" onclick="showPage('maquinas')" style="cursor:pointer">
+      <span class="icon">⚙️</span> Máquinas
+    </a>
+    <div class="nav-section">Operações</div>
+    <a class="nav-item" onclick="showPage('pedidos')" style="cursor:pointer">
+      <span class="icon">🧾</span> Pedidos <span id="nav-pedidos-badge" style="display:none;background:var(--danger);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">!</span>
+    </a>
+    <a class="nav-item" onclick="showPage('estoque')" style="cursor:pointer">
+      <span class="icon">📦</span> Estoque <span id="nav-alerta-badge" style="display:none;background:var(--danger);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">!</span>
+    </a>
+    <a class="nav-item" onclick="showPage('epi')" style="cursor:pointer">
+      <span class="icon">🦺</span> EPI <span id="nav-epi-badge" style="display:none;background:var(--danger);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">!</span>
+    </a>
+    <div class="nav-section">Análises</div>
+    <a class="nav-item" onclick="showPage('graficos')" style="cursor:pointer">
+      <span class="icon">📈</span> Gráficos
+    </a>
+    <a class="nav-item" onclick="showPage('relatorios')" style="cursor:pointer">
+      <span class="icon">📋</span> Relatórios
+    </a>
+    <div class="nav-section">Sistema</div>
+    <a class="nav-item" onclick="showPage('configuracoes')" style="cursor:pointer">
+      <span class="icon">🔧</span> Configurações
+    </a>
+    <a class="nav-item" onclick="showPage('backup')" style="cursor:pointer">
+      <span class="icon">💾</span> Backup
+    </a>
+    <a class="nav-item" onclick="showPage('permissoes')" style="cursor:pointer">
+      <span class="icon">🔐</span> Controle de Acesso
+    </a>
+    <a class="nav-item" onclick="showPage('empresa')" style="cursor:pointer">
+      <span class="icon">🏢</span> Dados da Empresa
+    </a>
+  </nav>
+  <div class="sidebar-footer">
+    <div style="font-size:10px;color:var(--muted);text-align:center">v1.0 — PRATIC © 2026</div>
+  </div>
+</aside>
+
+<!-- MAIN -->
+<main class="main">
+  <div class="topbar">
+    <div style="display:flex;align-items:center;gap:24px;flex-wrap:wrap">
+      <button class="menu-toggle" onclick="toggleSidebar()" style="display:none; background:none; border:none; color:var(--text); font-size:24px; cursor:pointer; margin-right:8px;">☰</button>
+      <div class="page-title" id="topbar-title" style="font-size: 20px;">Dashboard</div>
+      <div id="topbar-info-widgets" style="display:flex;align-items:center;gap:24px;font-size:14px;color:var(--muted);border-left:1px solid var(--border);padding-left:24px;flex-wrap:wrap;font-weight:500">
+        <span id="topbar-date" style="display:flex;align-items:center;gap:6px">📅 <span style="color:var(--text)">—</span></span>
+        <span id="topbar-city" style="display:flex;align-items:center;gap:6px">📍 <span style="color:var(--text)">—</span></span>
+        <span id="topbar-temp" style="display:flex;align-items:center;gap:6px">🌡️ <span style="color:var(--accent);font-weight:700">—°C</span></span>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:12px">
+      <!-- Seletor de Setores Dropdown -->
+      <div class="sector-switcher">
+        <button class="btn btn-sm btn-secondary" onclick="toggleSectorMenu(event)">🌐 Portais ▾</button>
+        <div class="sector-switcher-menu" id="sector-menu">
+          <a class="sector-switcher-item" onclick="location.href='/'">🖥️ Gestor / Dashboard</a>
+          <a class="sector-switcher-item" onclick="location.href='/producao-setor'">🏭 Setor Produção</a>
+          <a class="sector-switcher-item" onclick="location.href='/comercial'">🏢 Comercial</a>
+          <a class="sector-switcher-item" href="/manual.html" target="_blank">📖 Manual do Usuário</a>
+        </div>
+      </div>
+      <!-- Alternar Tema Button -->
+      <button class="btn btn-sm btn-secondary" onclick="toggleTheme()" title="Alternar Tema" style="font-size:14px;padding:6px 10px;">🌗</button>
+
+      <span id="topbar-user-name" style="font-size:13px;font-weight:600;margin-right:8px;color:var(--text);display:flex;align-items:center;gap:4px">👤 <span id="topbar-user-name-txt">—</span></span>
+      <span class="setor-badge" id="topbar-setor" style="display:none"></span>
+      <span class="badge" id="topbar-mes" style="font-size:12px;padding:4px 10px;">—</span>
+      <button class="btn btn-sm btn-secondary" onclick="openModal('modal-ajuda-geral')" style="padding: 6px 12px; font-size: 12px;">❓ Ajuda</button>
+      <button class="btn btn-sm btn-danger" onclick="sairSistema()" style="padding: 6px 12px; font-size: 12px;">🚪 Sair</button>
+    </div>
+  </div>
+
+  <div class="content">
+    <div id="alert-global"></div>
+
+    <!-- DASHBOARD -->
+    <div class="page active" id="page-dashboard">
+      <div id="dash-alerta-estoque"></div>
+      <div class="month-bar">
+        <label>Mês de referência:</label>
+        <input type="month" id="dash-mes" onchange="loadDashboard()">
+      </div>
+      <div class="cards-grid" id="dash-cards"></div>
+
+      <!-- GRAFICOS DO DASHBOARD -->
+      <div style="display:grid;grid-template-columns: 2fr 1fr; gap:24px; margin-bottom:32px; flex-wrap:wrap;">
+        <div class="card" style="padding:20px">
+          <div class="section-title" style="margin-top:0">📈 Evolução Diária da Produção vs Perdas</div>
+          <div style="height:250px; position:relative;">
+            <canvas id="chart-dash-evolucao"></canvas>
+          </div>
+        </div>
+        <div class="card" style="padding:20px">
+          <div class="section-title" style="margin-top:0">🍩 Distribuição de Perdas</div>
+          <div style="height:250px; position:relative;">
+            <canvas id="chart-dash-perdas-tipo"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:32px">
+        <div>
+          <div class="section-title">Ranking Operadores</div>
+          <div id="dash-ranking"></div>
+        </div>
+        <div>
+          <div class="section-title">Premiação Auxiliares</div>
+          <div id="dash-auxiliares"></div>
+        </div>
+      </div>
+
+      <div class="section-title">Produção por Operador</div>
+      <div id="dash-detalhe-operadores" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;margin-bottom:32px"></div>
+
+      <!-- WIDGETS DE TOMADA DE DECISÃO -->
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:24px; margin-bottom:32px;">
+        <!-- Insumos Críticos -->
+        <div class="card" style="padding:20px">
+          <div class="section-title" style="margin-top:0">📦 Insumos Críticos (Estoque Mínimo)</div>
+          <div id="dash-insumos-criticos" style="display:flex; flex-direction:column; gap:12px"></div>
+        </div>
+        <!-- EPIs Pendentes -->
+        <div class="card" style="padding:20px">
+          <div class="section-title" style="margin-top:0">🦺 Pendências de EPI</div>
+          <div id="dash-epi-pendentes" style="display:flex; flex-direction:column; gap:12px"></div>
+        </div>
+        <!-- Pedidos Críticos / Atrasados -->
+        <div class="card" style="padding:20px">
+          <div class="section-title" style="margin-top:0">🧾 Pedidos Críticos / Atrasados</div>
+          <div id="dash-pedidos-criticos" style="display:flex; flex-direction:column; gap:12px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PRODUÇÃO -->
+    <div class="page" id="page-producao">
+      <div class="flex items-center justify-between mb-4">
+        <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+          <div class="month-bar" style="margin-bottom:0">
+            <label>Mês:</label>
+            <input type="month" id="prod-mes" onchange="loadProducao()">
+          </div>
+          <div class="month-bar" style="margin-bottom:0">
+            <label>Operador:</label>
+            <select id="prod-filtro-colaborador" onchange="loadProducao()" style="min-width:160px">
+              <option value="">Todos</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="openModalProducao()">+ Registrar Produção</button>
+      </div>
+      <div class="table-wrap">
+        <div class="table-head">
+          <span class="table-head-title">Registros de Produção</span>
+        </div>
+        <table>
+          <thead><tr>
+            <th>Data</th><th>Colaborador</th><th>Máquina</th>
+            <th>Meta</th><th>Produção</th><th>Excedente</th><th></th>
+          </tr></thead>
+          <tbody id="prod-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- PREMIAÇÃO -->
+    <div class="page" id="page-premiacao">
+      <div class="month-bar">
+        <label>Mês:</label>
+        <input type="month" id="prem-mes" onchange="loadPremiacao()">
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
+        <div>
+          <div class="section-title">Operadores</div>
+          <div id="prem-operadores"></div>
+        </div>
+        <div>
+          <div class="section-title">Auxiliares <button class="btn btn-sm btn-secondary" onclick="openModalAuxiliar()" style="font-size:11px;margin-left:8px">+ Adicionar</button></div>
+          <div id="prem-auxiliares"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- COLABORADORES -->
+    <div class="page" id="page-colaboradores">
+      <div class="flex items-center justify-between mb-4">
+        <div></div>
+        <button class="btn btn-primary" onclick="openModalColaborador()">+ Novo Colaborador</button>
+      </div>
+      <div class="table-wrap">
+        <div class="table-head"><span class="table-head-title">Colaboradores</span></div>
+        <table>
+          <thead><tr><th>Nome</th><th>Tipo</th><th>Máquina</th><th>Status</th><th></th></tr></thead>
+          <tbody id="col-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- MÁQUINAS -->
+    <div class="page" id="page-maquinas">
+      <div class="flex items-center justify-between mb-4">
+        <div></div>
+        <button class="btn btn-primary" onclick="openModalMaquina()">+ Nova Máquina</button>
+      </div>
+      <div class="table-wrap">
+        <div class="table-head"><span class="table-head-title">Máquinas</span></div>
+        <table>
+          <thead><tr><th>Nome</th><th>Setor</th><th>Meta Padrão</th><th>Status</th><th></th></tr></thead>
+          <tbody id="maq-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- PEDIDOS -->
+    <div class="page" id="page-pedidos">
+      <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap">
+        <button class="btn btn-secondary" id="ptab-fila" onclick="switchPedidosTab('fila')" style="border-color:var(--accent);color:var(--accent)">🏭 Fila de Produção</button>
+        <button class="btn btn-secondary" id="ptab-pedidos" onclick="switchPedidosTab('pedidos')">🧾 Pedidos</button>
+        <button class="btn btn-secondary" id="ptab-clientes" onclick="switchPedidosTab('clientes')">👥 Clientes</button>
+      </div>
+
+      <!-- FILA DE PRODUÇÃO -->
+      <div id="ped-tab-fila">
+        <div id="ped-alertas-banner"></div>
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex gap-2 items-center">
+            <label>Status:</label>
+            <select id="ped-fila-status" onchange="loadFila()" style="min-width:150px">
+              <option value="">Todos</option>
+              <option value="aberto">Aberto</option>
+              <option value="em_producao">Em produção</option>
+              <option value="produzido">Produzido</option>
+            </select>
+          </div>
+        </div>
+        <div id="ped-fila-cards"></div>
+      </div>
+
+      <!-- PEDIDOS -->
+      <div id="ped-tab-pedidos" style="display:none">
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex gap-2 items-center">
+            <select id="ped-status-filtro" onchange="loadPedidos()" style="min-width:150px">
+              <option value="">Todos os status</option>
+              <option value="aberto">Aberto</option>
+              <option value="em_producao">Em produção</option>
+              <option value="produzido">Produzido</option>
+              <option value="entregue">Entregue</option>
+            </select>
+          </div>
+          <button class="btn btn-primary" onclick="openModalPedido()">+ Novo Pedido</button>
+        </div>
+        <div class="table-wrap">
+          <div class="table-head"><span class="table-head-title">Pedidos</span></div>
+          <table>
+            <thead><tr><th>Nº Pedido</th><th>Cliente</th><th>Prazo</th><th>Dias</th><th>Itens</th><th>Status</th><th></th></tr></thead>
+            <tbody id="ped-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- CLIENTES -->
+      <div id="ped-tab-clientes" style="display:none">
+        <div class="flex items-center justify-between mb-4">
+          <input type="text" id="ped-busca-cliente" placeholder="Buscar por nome ou CNPJ..." onkeyup="loadClientes()" style="max-width:300px">
+          <button class="btn btn-primary" onclick="openModalCliente()">+ Novo Cliente</button>
+        </div>
+        <div class="table-wrap">
+          <div class="table-head"><span class="table-head-title">Clientes</span></div>
+          <table>
+            <thead><tr><th>Razão Social</th><th>Nome Fantasia</th><th>CNPJ</th><th>Cidade/UF</th><th>Pedidos</th><th></th></tr></thead>
+            <tbody id="ped-clientes-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ESTOQUE -->
+    <div class="page" id="page-estoque">
+      <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap">
+        <button class="btn btn-secondary" id="tab-produtos" onclick="switchEstoqueTab('produtos')" style="border-color:var(--accent);color:var(--accent)">📦 Produtos</button>
+        <button class="btn btn-secondary" id="tab-movimentacoes" onclick="switchEstoqueTab('movimentacoes')">📋 Movimentações</button>
+        <button class="btn btn-secondary" id="tab-perdas" onclick="switchEstoqueTab('perdas')">⚠️ Perdas</button>
+        <button class="btn btn-secondary" id="tab-categorias" onclick="switchEstoqueTab('categorias')">🏷️ Categorias</button>
+      </div>
+
+      <!-- PRODUTOS -->
+      <div id="est-tab-produtos">
+        <div class="flex items-center justify-between mb-4">
+          <select id="est-filtro-cat" onchange="loadProdutos()" style="min-width:180px">
+            <option value="">Todas as categorias</option>
+          </select>
+          <div class="flex gap-2">
+            <button class="btn btn-secondary" onclick="openModalImportCSV()">📥 Importar CSV</button>
+            <button class="btn btn-primary" onclick="openModalProduto()">+ Novo Produto</button>
+          </div>
+        </div>
+        <div id="est-alertas-banner"></div>
+        <div class="table-wrap">
+          <div class="table-head"><span class="table-head-title">Produtos em Estoque</span></div>
+          <table>
+            <thead><tr><th>Código/ID</th><th>Produto</th><th>Categoria</th><th>Marca</th><th>Unidade</th><th>Qtd. Atual</th><th>Mínimo</th><th>Status</th><th></th></tr></thead>
+            <tbody id="est-produtos-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- MOVIMENTAÇÕES -->
+      <div id="est-tab-movimentacoes" style="display:none">
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex gap-2 items-center">
+            <select id="est-filtro-tipo" onchange="loadMovimentacoes()" style="min-width:140px">
+              <option value="">Todos os tipos</option>
+              <option value="entrada">Entradas</option>
+              <option value="saida">Saídas</option>
+              <option value="perda">Perdas</option>
+              <option value="ajuste">Ajustes</option>
+            </select>
+          </div>
+          <button class="btn btn-primary" onclick="openModalMovimentacao()">+ Nova Movimentação</button>
+        </div>
+        <div class="table-wrap">
+          <div class="table-head"><span class="table-head-title">Histórico de Movimentações</span></div>
+          <table>
+            <thead><tr><th>Data</th><th>Código/ID</th><th>Produto</th><th>Tipo</th><th>Quantidade</th><th>Saldo Anterior</th><th>Saldo Atual</th><th>Responsável</th><th></th></tr></thead>
+            <tbody id="est-movs-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- PERDAS -->
+      <div id="est-tab-perdas" style="display:none">
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex gap-2 items-center">
+            <label>Mês:</label>
+            <input type="month" id="est-perdas-mes" onchange="loadPerdas()">
+          </div>
+          <button class="btn btn-primary" onclick="openModalPerda()">+ Registrar Perda</button>
+        </div>
+        <div class="table-wrap">
+          <div class="table-head"><span class="table-head-title">Registro de Perdas</span></div>
+          <table>
+            <thead><tr><th>Data</th><th>Código/ID</th><th>Produto</th><th>Categoria</th><th>Tipo de Perda</th><th>Quantidade</th><th>Responsável</th><th>Observação</th></tr></thead>
+            <tbody id="est-perdas-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- CATEGORIAS -->
+      <div id="est-tab-categorias" style="display:none">
+        <div class="flex items-center justify-between mb-4">
+          <div></div>
+          <button class="btn btn-primary" onclick="openModalCategoria()">+ Nova Categoria</button>
+        </div>
+        <div class="table-wrap">
+          <div class="table-head"><span class="table-head-title">Categorias</span></div>
+          <table>
+            <thead><tr><th>Nome</th><th>Descrição</th><th></th></tr></thead>
+            <tbody id="est-cat-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- BACKUP -->
+    <div class="page" id="page-backup">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;max-width:800px">
+
+        <div class="card">
+          <div class="section-title" style="margin-top:0">💾 Fazer Backup</div>
+          <p style="font-size:13px;color:var(--muted);margin-bottom:20px;line-height:1.6">
+            Gera um arquivo <strong style="color:var(--text)">.db</strong> com todos os dados do sistema.
+            Guarde em local seguro — armazena clientes, pedidos, produção, estoque e configurações.
+          </p>
+          <button class="btn btn-primary" onclick="fazerBackup()" style="width:100%">⬇ Baixar Backup Agora</button>
+          <div style="margin-top:12px;font-size:12px;color:var(--muted)">
+            💡 Recomendado: faça backup diariamente ou antes de grandes atualizações.
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="section-title" style="margin-top:0">📂 Restaurar Backup</div>
+          <p style="font-size:13px;color:var(--muted);margin-bottom:20px;line-height:1.6">
+            Restaura o banco de dados a partir de um arquivo <strong style="color:var(--text)">.db</strong> de backup.
+            <strong style="color:var(--danger)">Atenção:</strong> os dados atuais serão substituídos.
+          </p>
+          <div style="border:2px dashed var(--border);border-radius:10px;padding:24px;text-align:center;cursor:pointer;margin-bottom:12px"
+               onclick="document.getElementById('restore-file').click()"
+               ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
+               ondragleave="this.style.borderColor='var(--border)'"
+               ondrop="handleRestoreDrop(event)">
+            <div style="font-size:28px;margin-bottom:8px">📁</div>
+            <div style="font-size:13px;color:var(--muted)">Arraste o arquivo .db ou clique para selecionar</div>
+            <input type="file" id="restore-file" accept=".db" style="display:none" onchange="confirmarRestore(this.files[0])">
+          </div>
+          <div id="backup-alert"></div>
+        </div>
+
+      </div>
+
+      <div class="card" style="margin-top:24px;max-width:800px">
+        <div class="section-title" style="margin-top:0">📋 Boas práticas</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;font-size:13px;color:var(--muted)">
+          <div>✅ Faça backup antes de atualizar o sistema</div>
+          <div>✅ Guarde os backups em pasta diferente do sistema</div>
+          <div>✅ Nomeie os backups com a data para controle</div>
+          <div>✅ Teste a restauração periodicamente</div>
+          <div>⚠️ Após restaurar, reinicie o servidor</div>
+          <div>⚠️ A restauração substitui todos os dados atuais</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- EPI -->
+    <div class="page" id="page-epi">
+      <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap">
+        <button class="btn btn-secondary" id="epi-tab-entregas" onclick="switchEpiTab('entregas')" style="border-color:var(--accent);color:var(--accent)">👷 Por Funcionário</button>
+        <button class="btn btn-secondary" id="epi-tab-cadastro" onclick="switchEpiTab('cadastro')">🦺 Cadastro de EPIs</button>
+        <button class="btn btn-secondary" id="epi-tab-funcoes" onclick="switchEpiTab('funcoes')">⚙️ EPIs por Função</button>
+        <button class="btn btn-secondary" id="epi-tab-alertas" onclick="switchEpiTab('alertas')">⚠️ Alertas</button>
+      </div>
+
+      <!-- ENTREGAS POR FUNCIONÁRIO -->
+      <div id="epi-content-entregas">
+        <div id="epi-alerta-banner"></div>
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex gap-2 items-center">
+            <select id="epi-filtro-col" onchange="loadEntregas()" style="min-width:200px">
+              <option value="">Todos os funcionários</option>
+            </select>
+            <select id="epi-filtro-status" onchange="loadEntregas()" style="min-width:160px">
+              <option value="">Todos os status</option>
+              <option value="ativo">Ativo</option>
+              <option value="vencendo">Vencendo</option>
+              <option value="vencido">Vencido</option>
+              <option value="devolvido">Devolvido</option>
+            </select>
+          </div>
+          <div class="flex gap-2">
+            <button class="btn btn-secondary" onclick="gerarComprovante()">🖨️ Comprovante</button>
+            <button class="btn btn-primary" onclick="openModalEntrega()">+ Registrar Entrega</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <div class="table-head"><span class="table-head-title">Entregas de EPI</span></div>
+          <table>
+            <thead><tr><th>Funcionário</th><th>EPI</th><th>Categoria</th><th>Entregue em</th><th>Validade</th><th>Dias</th><th>Status</th><th></th></tr></thead>
+            <tbody id="epi-entregas-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- CADASTRO DE EPIs -->
+      <div id="epi-content-cadastro" style="display:none">
+        <div class="flex items-center justify-between mb-4">
+          <div></div>
+          <button class="btn btn-primary" onclick="openModalEPI()">+ Novo EPI</button>
+        </div>
+        <div class="table-wrap">
+          <div class="table-head"><span class="table-head-title">EPIs Cadastrados</span></div>
+          <table>
+            <thead><tr><th>Nome</th><th>Categoria</th><th>Descrição</th><th>Status</th><th></th></tr></thead>
+            <tbody id="epi-lista-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- EPIs POR FUNÇÃO -->
+      <div id="epi-content-funcoes" style="display:none">
+        <div class="section-title">Configurar EPIs obrigatórios por função</div>
+        <p style="color:var(--muted);font-size:13px;margin-bottom:20px">Defina quais EPIs são obrigatórios para cada função. Ao registrar uma entrega, o sistema sugerirá automaticamente.</p>
+        <div id="epi-funcoes-grid"></div>
+      </div>
+
+      <!-- ALERTAS -->
+      <div id="epi-content-alertas" style="display:none">
+        <div id="epi-alertas-content"></div>
+      </div>
+    </div>
+
+    <!-- EMPRESA -->
+    <div class="page" id="page-empresa">
+      <div style="max-width:600px">
+        <div class="section-title">🏢 Dados da Empresa</div>
+        <p style="color:var(--muted);font-size:13px;margin-bottom:24px">Estas informações aparecem nos relatórios e comprovantes de entrega de EPI.</p>
+
+        <!-- Logo -->
+        <div class="card" style="margin-bottom:20px">
+          <div class="card-label" style="margin-bottom:12px">Logo da Empresa</div>
+          <div style="display:flex;align-items:center;gap:20px">
+            <div id="empresa-logo-preview" style="width:120px;height:80px;background:var(--surface2);border:2px dashed var(--border);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--muted);overflow:hidden">
+              Sem logo
+            </div>
+            <div>
+              <button class="btn btn-secondary" onclick="document.getElementById('logo-file').click()">📁 Selecionar Logo</button>
+              <input type="file" id="logo-file" accept="image/*" style="display:none" onchange="uploadLogo(this)">
+              <div style="font-size:12px;color:var(--muted);margin-top:8px">PNG, JPG ou SVG. Recomendado: 300×100px</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-label" style="margin-bottom:16px">Informações da Empresa</div>
+          <div class="form-grid">
+            <div class="form-group" style="grid-column:1/-1">
+              <label>Razão Social / Nome da Empresa</label>
+              <input type="text" id="emp-nome">
+            </div>
+            <div class="form-group">
+              <label>CNPJ</label>
+              <input type="text" id="emp-cnpj" placeholder="00.000.000/0000-00">
+            </div>
+            <div class="form-group">
+              <label>Telefone</label>
+              <input type="text" id="emp-telefone" placeholder="(00) 00000-0000">
+            </div>
+            <div class="form-group" style="grid-column:1/-1">
+              <label>E-mail</label>
+              <input type="email" id="emp-email">
+            </div>
+          </div>
+
+          <div class="section-title" style="margin-top:20px">Endereço</div>
+          <div class="form-grid">
+            <div class="form-group">
+              <label>CEP <span style="color:var(--muted);font-size:11px">(busca automática)</span></label>
+              <div class="flex gap-2">
+                <input type="text" id="emp-cep" placeholder="00000-000" style="flex:1" oninput="formatCEPEmp(this)">
+                <button class="btn btn-secondary" onclick="buscarCEPEmpresa()">Buscar</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Número</label>
+              <input type="text" id="emp-numero">
+            </div>
+            <div class="form-group" style="grid-column:1/-1">
+              <label>Logradouro</label>
+              <input type="text" id="emp-logradouro">
+            </div>
+            <div class="form-group">
+              <label>Bairro</label>
+              <input type="text" id="emp-bairro">
+            </div>
+            <div class="form-group">
+              <label>Complemento</label>
+              <input type="text" id="emp-complemento">
+            </div>
+            <div class="form-group">
+              <label>Cidade</label>
+              <input type="text" id="emp-cidade">
+            </div>
+            <div class="form-group">
+              <label>UF</label>
+              <input type="text" id="emp-uf" maxlength="2" style="text-transform:uppercase">
+            </div>
+          </div>
+
+          <div style="margin-top:20px">
+            <button class="btn btn-primary" onclick="salvarEmpresa()">💾 Salvar Dados</button>
+          </div>
+          <div id="empresa-alert" style="margin-top:12px"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PERMISSÕES -->
+    <div class="page" id="page-permissoes">
+      <div style="max-width:900px">
+        <!-- Sub-abas -->
+        <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap">
+          <button class="btn btn-secondary" id="perm-tab-config" onclick="switchPermissoesTab('config')" style="border-color:var(--accent);color:var(--accent)">🔐 Controle de Perfis</button>
+          <button class="btn btn-secondary" id="perm-tab-usuarios" onclick="switchPermissoesTab('usuarios')">👥 Usuários Cadastrados</button>
+        </div>
+
+        <!-- ABA: CONTROLE DE PERFIS -->
+        <div id="perm-content-config">
+          <div class="section-title" style="margin-bottom:20px;margin-top:0">🔐 Controle de Acesso por Perfil</div>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:24px;line-height:1.6">
+            Defina quais páginas cada perfil pode acessar. As alterações são aplicadas imediatamente — 
+            basta o usuário recarregar a página do setor.
+          </p>
+
+          <div id="perm-alert"></div>
+
+          <div class="table-wrap">
+            <div class="table-head">
+              <span class="table-head-title">Páginas × Perfis</span>
+              <button class="btn btn-primary btn-sm" onclick="salvarPermissoes()">💾 Salvar Permissões</button>
+            </div>
+            <table id="perm-table">
+              <thead>
+                <tr>
+                  <th style="min-width:180px">Página</th>
+                  <th style="text-align:center">🖥️ Gestor</th>
+                  <th style="text-align:center">🏭 Produção</th>
+                  <th style="text-align:center">🏢 Comercial</th>
+                  <th style="text-align:center">📦 Estoque</th>
+                </tr>
+              </thead>
+              <tbody id="perm-tbody"></tbody>
+            </table>
+          </div>
+
+          <div class="card" style="margin-top:24px">
+            <div class="section-title" style="margin-top:0">URLs de acesso por setor</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:13px" id="perm-urls"></div>
+          </div>
+        </div>
+
+        <!-- ABA: USUÁRIOS CADASTRADOS -->
+        <div id="perm-content-usuarios" style="display:none">
+          <div class="flex items-center justify-between mb-4">
+            <div class="section-title" style="margin-top:0">👥 Gerenciamento de Usuários do Sistema</div>
+            <button class="btn btn-primary" onclick="openModalUsuario()">+ Novo Usuário</button>
+          </div>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:24px">
+            Gerencie as credenciais e perfis dos setores que acessam os portais e painéis da empresa.
+          </p>
+          <div id="usuarios-alert"></div>
+          <div class="table-wrap">
+            <div class="table-head">
+              <span class="table-head-title">Usuários Registrados</span>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Nome Completo</th>
+                  <th>Nome de Usuário</th>
+                  <th>Perfil de Acesso</th>
+                  <th>Status</th>
+                  <th>Ações</th>
+                </tr>
+              </thead>
+              <tbody id="usuarios-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- GRÁFICOS -->
+    <div class="page" id="page-graficos">
+      <!-- Filtros -->
+      <div class="flex items-center justify-between mb-4" style="flex-wrap:wrap;gap:10px">
+        <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+          <label style="color:var(--muted);font-size:13px">Período:</label>
+          <input type="month" id="graf-mes-ini" style="min-width:140px">
+          <span style="color:var(--muted)">até</span>
+          <input type="month" id="graf-mes-fim" style="min-width:140px">
+          <button class="btn btn-secondary" onclick="loadGraficos()">↻ Atualizar</button>
+        </div>
+        <button class="btn btn-secondary" onclick="exportarGraficoPDF()">⬇ Exportar PDF</button>
+      </div>
+
+      <!-- KPI Cards -->
+      <div class="cards-grid" id="graf-kpi-cards" style="margin-bottom:24px"></div>
+
+      <div id="graf-content">
+
+        <!-- LINHA 0: Visão Anual completa -->
+        <div class="card" style="padding:20px;margin-bottom:20px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px">
+            <div style="font-family:var(--font-head);font-weight:700">📆 Visão Anual — Produção, Perdas e Sobras por Mês</div>
+            <div class="flex gap-2 items-center">
+              <label style="font-size:12px;color:var(--muted)">Ano:</label>
+              <select id="graf-ano" onchange="loadGraficoAnual()" style="min-width:100px"></select>
+            </div>
+          </div>
+          <div id="graf-kpi-anual" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px"></div>
+          <canvas id="chart-anual" height="100"></canvas>
+        </div>
+
+        <!-- LINHA 1: Total anual + Média diária -->
+        <div class="card" style="padding:20px;margin-bottom:20px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+            <div style="font-family:var(--font-head);font-weight:700">🏭 Total Produzido por Mês — Comparativo Operadores</div>
+            <span style="font-size:12px;color:var(--muted)">Barras empilhadas por operador</span>
+          </div>
+          <canvas id="chart-total-mes" height="110"></canvas>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
+          <div class="card" style="padding:20px">
+            <div style="font-family:var(--font-head);font-weight:700;margin-bottom:16px">📈 Evolução da Média Diária</div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Média ponderada por dias trabalhados</div>
+            <canvas id="chart-evolucao-graf" height="180"></canvas>
+          </div>
+          <div class="card" style="padding:20px">
+            <div style="font-family:var(--font-head);font-weight:700;margin-bottom:16px">👥 Comparativo por Operador</div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Média diária × meta</div>
+            <canvas id="chart-comparativo" height="180"></canvas>
+          </div>
+        </div>
+
+        <!-- LINHA 2: Indicadores de desempenho -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-bottom:20px">
+          <div class="card" style="padding:20px">
+            <div style="font-family:var(--font-head);font-weight:700;margin-bottom:4px">⚠️ Índice de Perda</div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:12px">% perda / produção total por mês</div>
+            <canvas id="chart-perda-idx" height="200"></canvas>
+          </div>
+          <div class="card" style="padding:20px">
+            <div style="font-family:var(--font-head);font-weight:700;margin-bottom:4px">📉 Dias Abaixo da Meta</div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Por operador no período</div>
+            <canvas id="chart-dias-meta" height="200"></canvas>
+          </div>
+          <div class="card" style="padding:20px">
+            <div style="font-family:var(--font-head);font-weight:700;margin-bottom:4px">📊 Excedente Acumulado</div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Saldo positivo/negativo vs meta</div>
+            <canvas id="chart-excedente" height="200"></canvas>
+          </div>
+        </div>
+
+        <!-- LINHA 3: Produção diária + Ranking -->
+        <div style="display:grid;grid-template-columns:2fr 1fr;gap:20px;margin-bottom:20px">
+          <div class="card" style="padding:20px">
+            <div style="font-family:var(--font-head);font-weight:700;margin-bottom:4px">📅 Produção Diária do Mês</div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Comparada com a linha de meta</div>
+            <canvas id="chart-diario-graf" height="130"></canvas>
+          </div>
+          <div class="card" style="padding:20px">
+            <div style="font-family:var(--font-head);font-weight:700;margin-bottom:4px">🏆 Ranking Histórico</div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Média geral por operador</div>
+            <canvas id="chart-ranking-graf" height="130"></canvas>
+          </div>
+        </div>
+
+        <!-- LINHA 4: Pedidos -->
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:20px;margin-bottom:20px">
+          <div class="card" style="padding:20px">
+            <div style="font-family:var(--font-head);font-weight:700;margin-bottom:4px">🧾 Pedidos por Status</div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Distribuição atual</div>
+            <canvas id="chart-pedidos-status" height="200"></canvas>
+          </div>
+          <div class="card" style="padding:20px">
+            <div style="font-family:var(--font-head);font-weight:700;margin-bottom:4px">⏱️ Prazo de Entrega</div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:12px">No prazo vs atrasados</div>
+            <canvas id="chart-prazo" height="200"></canvas>
+          </div>
+          <div class="card" style="padding:20px">
+            <div style="font-family:var(--font-head);font-weight:700;margin-bottom:4px">📦 Estoque por Categoria</div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Saldo atual</div>
+            <canvas id="chart-estoque-cat" height="200"></canvas>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- RELATÓRIOS -->
+    <div class="page" id="page-relatorios">
+      <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap">
+        <button class="btn btn-secondary" id="rtab-producao" onclick="switchRelTab('producao')" style="border-color:var(--accent);color:var(--accent)">🏭 Produção</button>
+        <button class="btn btn-secondary" id="rtab-premiacao" onclick="switchRelTab('premiacao')">🏆 Premiação</button>
+        <button class="btn btn-secondary" id="rtab-estoque" onclick="switchRelTab('estoque')">📦 Estoque</button>
+        <button class="btn btn-secondary" id="rtab-pedidos" onclick="switchRelTab('pedidos')">🧾 Pedidos</button>
+        <button class="btn btn-secondary" id="rtab-epi" onclick="switchRelTab('epi')">🦺 EPI</button>
+      </div>
+
+      <div id="rel-content-producao">
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex gap-2 items-center">
+            <input type="month" id="rel-prod-mes-ini">
+            <span style="color:var(--muted)">até</span>
+            <input type="month" id="rel-prod-mes-fim">
+            <select id="rel-prod-col" style="min-width:160px"><option value="">Todos</option></select>
+            <button class="btn btn-secondary" onclick="loadRelProducao()">Filtrar</button>
+          </div>
+          <div class="flex gap-2">
+            <button class="btn btn-secondary" onclick="exportarRelatorio('producao','excel')">⬇ Excel</button>
+            <button class="btn btn-secondary" onclick="exportarRelatorio('producao','pdf')">⬇ PDF</button>
+          </div>
+        </div>
+        <div class="cards-grid" id="rel-prod-cards" style="margin-bottom:20px"></div>
+        <div class="table-wrap">
+          <div class="table-head"><span class="table-head-title">Registros de Produção</span></div>
+          <table><thead><tr><th>Data</th><th>Colaborador</th><th>Máquina</th><th>Meta</th><th>Produção</th><th>Excedente</th><th>Perda</th><th>Sobra</th><th>Pedido</th></tr></thead>
+          <tbody id="rel-prod-tbody"></tbody></table>
+        </div>
+      </div>
+
+      <div id="rel-content-premiacao" style="display:none">
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex gap-2 items-center">
+            <input type="month" id="rel-prem-mes">
+            <button class="btn btn-secondary" onclick="loadRelPremiacao()">Filtrar</button>
+          </div>
+          <div class="flex gap-2">
+            <button class="btn btn-secondary" onclick="exportarRelatorio('premiacao','pdf')">⬇ PDF</button>
+          </div>
+        </div>
+        <div id="rel-prem-content"></div>
+      </div>
+
+      <div id="rel-content-estoque" style="display:none">
+        <div class="flex items-center justify-between mb-4">
+          <div></div>
+          <div class="flex gap-2">
+            <button class="btn btn-secondary" onclick="exportarRelatorio('estoque','excel')">⬇ Excel</button>
+            <button class="btn btn-secondary" onclick="exportarRelatorio('estoque','pdf')">⬇ PDF</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <div class="table-head"><span class="table-head-title">Posição de Estoque</span></div>
+          <table><thead><tr><th>Produto</th><th>Categoria</th><th>Unidade</th><th>Saldo Atual</th><th>Mínimo</th><th>Situação</th></tr></thead>
+          <tbody id="rel-est-tbody"></tbody></table>
+        </div>
+      </div>
+
+      <div id="rel-content-pedidos" style="display:none">
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex gap-2 items-center">
+            <select id="rel-ped-status" style="min-width:160px">
+              <option value="">Todos os status</option>
+              <option value="aberto">Aberto</option>
+              <option value="em_producao">Em produção</option>
+              <option value="produzido">Produzido</option>
+              <option value="entregue">Entregue</option>
+            </select>
+            <button class="btn btn-secondary" onclick="loadRelPedidos()">Filtrar</button>
+          </div>
+          <div class="flex gap-2">
+            <button class="btn btn-secondary" onclick="exportarRelatorio('pedidos','excel')">⬇ Excel</button>
+            <button class="btn btn-secondary" onclick="exportarRelatorio('pedidos','pdf')">⬇ PDF</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <div class="table-head"><span class="table-head-title">Pedidos</span></div>
+          <table><thead><tr><th>Nº Pedido</th><th>Cliente</th><th>Prazo</th><th>Dias</th><th>Itens</th><th>Status</th></tr></thead>
+          <tbody id="rel-ped-tbody"></tbody></table>
+        </div>
+      </div>
+
+      <div id="rel-content-epi" style="display:none">
+        <div class="flex items-center justify-between mb-4">
+          <div></div>
+          <div class="flex gap-2">
+            <button class="btn btn-secondary" onclick="exportarRelatorio('epi','excel')">⬇ Excel</button>
+            <button class="btn btn-secondary" onclick="exportarRelatorio('epi','pdf')">⬇ PDF</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <div class="table-head"><span class="table-head-title">EPIs por Funcionário</span></div>
+          <table><thead><tr><th>Funcionário</th><th>EPI</th><th>Categoria</th><th>Entrega</th><th>Validade</th><th>Dias</th><th>Status</th></tr></thead>
+          <tbody id="rel-epi-tbody"></tbody></table>
+        </div>
+      </div>
+    </div>
+
+    <!-- CONFIGURAÇÕES -->
+    <div class="page" id="page-configuracoes">
+      <div class="section-title">Configurações do Sistema</div>
+      <div id="config-form" style="max-width:500px;"></div>
+    </div>
+  </div>
+</main>
+
+<!-- MODAL PRODUÇÃO -->
+<div class="modal-overlay" id="modal-producao">
+  <div class="modal" style="max-width:700px;width:96vw">
+    <div class="modal-title" id="modal-prod-title">Registrar Produção</div>
+    <input type="hidden" id="prod-edit-id">
+
+    <div class="form-grid" style="margin-bottom:16px">
+      <div class="form-group"><label>Data</label><input type="date" id="prod-data"></div>
+      <div class="form-group"><label>Colaborador</label><select id="prod-colaborador"></select></div>
+      <div class="form-group"><label>Máquina</label><select id="prod-maquina"></select></div>
+      <div class="form-group"><label>Meta do dia</label><input type="number" id="prod-meta" value="8000"></div>
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Nº Pedido <span style="color:var(--muted);font-size:11px">(opcional)</span></label>
+        <div class="flex gap-2">
+          <select id="prod-pedido" style="flex:1"><option value="">— Sem pedido vinculado —</option></select>
+          <input type="text" id="prod-pedido-manual" placeholder="Ou número manual" style="flex:1">
+        </div>
+      </div>
+    </div>
+
+    <!-- Toggle Lançamento Simplificado -->
+    <div id="prod-toggle-container" style="margin-bottom:14px;display:none">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600">
+        <input type="checkbox" id="prod-toggle-simplificado" style="width:16px;height:16px;accent-color:var(--accent)" onchange="toggleFormSimplificado()">
+        ⚡ Lançamento Simplificado (Informar apenas a quantidade total sem detalhar produtos)
+      </label>
+    </div>
+
+    <!-- Seção Simplificada -->
+    <div id="prod-secao-simplificada" class="form-grid" style="display:none;margin-top:12px;margin-bottom:12px">
+      <div class="form-group">
+        <label>Quantidade Produzida</label>
+        <input type="number" id="prod-simples-qtd" placeholder="0" min="0" oninput="atualizarSimplificadoData()">
+      </div>
+      <div class="form-group">
+        <label>Quantidade de Perda</label>
+        <input type="number" id="prod-simples-perda" placeholder="0" min="0" oninput="atualizarSimplificadoData()">
+      </div>
+      <div class="form-group">
+        <label>Quantidade de Sobra</label>
+        <input type="number" id="prod-simples-sobra" placeholder="0" min="0" oninput="atualizarSimplificadoData()">
+      </div>
+      <div class="form-group">
+        <label>Motivo da Perda</label>
+        <select id="prod-simples-tipo-perda" onchange="atualizarSimplificadoData()">
+          <option value="Quebra">Quebra</option>
+          <option value="Defeito">Defeito</option>
+          <option value="Contaminação">Contaminação</option>
+          <option value="Transporte">Transporte</option>
+          <option value="Outros">Outros</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Seção Detalhada -->
+    <div id="prod-secao-detalhada">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div style="font-family:var(--font-head);font-weight:700;font-size:14px">Produtos Produzidos</div>
+        <button class="btn btn-sm btn-neon" onclick="addItemProducao()">+ Adicionar Produto</button>
+      </div>
+      <div class="prod-header-row" style="display:grid;grid-template-columns:minmax(0, 2fr) 80px 80px 80px 95px 28px;gap:6px;margin-bottom:6px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">
+        <span>Produto do Estoque</span>
+        <span style="text-align:center">Produção</span>
+        <span style="text-align:center">Perda</span>
+        <span style="text-align:center">Sobra</span>
+        <span style="text-align:center">Tipo Perda</span>
+        <span></span>
+      </div>
+      <div id="prod-itens-list"></div>
+    </div>
+
+    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-top:12px;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-size:13px;color:var(--muted)">Total produzido no dia:</span>
+      <span style="font-family:var(--font-head);font-size:20px;font-weight:800;color:var(--accent)" id="prod-total-label">0</span>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-producao')">Cancelar</button>
+      <button class="btn btn-primary" id="prod-save-btn" onclick="salvarProducao()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL COLABORADOR -->
+<div class="modal-overlay" id="modal-colaborador">
+  <div class="modal">
+    <div class="modal-title">Cadastrar Colaborador</div>
+    <input type="hidden" id="col-id">
+    <div class="form-grid">
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Nome</label>
+        <input type="text" id="col-nome">
+      </div>
+      <div class="form-group">
+        <label>Tipo</label>
+        <select id="col-tipo" onchange="toggleMaquina()">
+          <option value="operador">Operador</option>
+          <option value="auxiliar">Auxiliar</option>
+        </select>
+      </div>
+      <div class="form-group" id="col-maquina-group">
+        <label>Máquina</label>
+        <select id="col-maquina"></select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-colaborador')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarColaborador()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL MÁQUINA -->
+<div class="modal-overlay" id="modal-maquina">
+  <div class="modal">
+    <div class="modal-title">Cadastrar Máquina</div>
+    <input type="hidden" id="maq-id">
+    <div class="form-grid">
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Nome da Máquina</label>
+        <input type="text" id="maq-nome">
+      </div>
+      <div class="form-group">
+        <label>Setor</label>
+        <input type="text" id="maq-setor">
+      </div>
+      <div class="form-group">
+        <label>Meta Padrão (peças/dia)</label>
+        <input type="number" id="maq-meta" value="8000">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-maquina')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarMaquina()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL AUXILIAR PREMIAÇÃO -->
+<div class="modal-overlay" id="modal-auxiliar">
+  <div class="modal">
+    <div class="modal-title">Premiação Auxiliar</div>
+    <div class="form-grid">
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Auxiliar</label>
+        <select id="aux-colaborador"></select>
+      </div>
+      <div class="form-group">
+        <label>Posição</label>
+        <select id="aux-posicao">
+          <option value="1">1º Lugar</option>
+          <option value="2">2º Lugar</option>
+          <option value="3">3º Lugar</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Valor do Bônus (R$)</label>
+        <input type="number" id="aux-valor" value="200">
+      </div>
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Observação</label>
+        <input type="text" id="aux-obs">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-auxiliar')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarAuxiliar()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL IMPORTAR CSV ESTOQUE -->
+<div class="modal-overlay" id="modal-import-csv">
+  <div class="modal" style="max-width:620px">
+    <div class="modal-title">📥 Importar Produtos via CSV</div>
+
+    <div style="background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.2);border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:var(--accent2)">
+      O CSV deve ter as colunas: <strong>nome, marca, unidade, estoque_minimo, categoria</strong><br>
+      A coluna <strong>categoria é opcional</strong> — se não existir ou estiver vazia, o produto é importado sem categoria.
+    </div>
+
+    <div style="border:2px dashed var(--border);border-radius:10px;padding:28px;text-align:center;cursor:pointer;margin-bottom:14px"
+         onclick="document.getElementById('csv-file-input').click()"
+         ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
+         ondragleave="this.style.borderColor='var(--border)'"
+         ondrop="handleCSVDrop(event)">
+      <div style="font-size:32px;margin-bottom:8px">📄</div>
+      <div style="font-size:14px;color:var(--muted)">Arraste o arquivo CSV ou clique para selecionar</div>
+      <input type="file" id="csv-file-input" accept=".csv" style="display:none" onchange="handleCSVFile(this.files[0])">
+    </div>
+
+    <div id="csv-preview" style="display:none">
+      <div class="section-title">Pré-visualização</div>
+      <div id="csv-info" class="mb-4" style="font-size:13px;color:var(--muted)"></div>
+      <div style="overflow-x:auto;margin-bottom:14px">
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead id="csv-thead"></thead>
+          <tbody id="csv-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="csv-alert"></div>
+
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-import-csv');cancelarCSV()">Cancelar</button>
+      <button class="btn btn-secondary" onclick="baixarModeloCSV()">⬇ Baixar Modelo</button>
+      <button class="btn btn-primary" id="csv-import-btn" onclick="confirmarImportCSV()" style="display:none">✓ Importar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL PRODUTO -->
+<div class="modal-overlay" id="modal-produto">
+  <div class="modal">
+    <div class="modal-title" id="modal-prod-est-title">Cadastrar Produto</div>
+    <input type="hidden" id="est-prod-id">
+    <div class="form-grid">
+      <div class="form-group">
+        <label>Código/ID</label>
+        <input type="text" id="est-prod-codigo" placeholder="Ex: COPO-300 ou 001">
+      </div>
+      <div class="form-group">
+        <label>Nome do Produto</label>
+        <input type="text" id="est-prod-nome">
+      </div>
+      <div class="form-group">
+        <label>Categoria</label>
+        <select id="est-prod-cat"></select>
+      </div>
+      <div class="form-group">
+        <label>Marca</label>
+        <input type="text" id="est-prod-marca">
+      </div>
+      <div class="form-group">
+        <label>Unidade</label>
+        <select id="est-prod-unidade">
+          <option>unidade</option>
+          <option>kg</option>
+          <option>litro</option>
+          <option>metro</option>
+          <option>caixa</option>
+          <option>pacote</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Estoque Mínimo</label>
+        <input type="number" id="est-prod-minimo" value="0">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-produto')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarProduto()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL MOVIMENTAÇÃO -->
+<div class="modal-overlay" id="modal-movimentacao">
+  <div class="modal">
+    <div class="modal-title">Nova Movimentação</div>
+    <div class="form-grid">
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Produto</label>
+        <select id="est-mov-produto"></select>
+      </div>
+      <div class="form-group">
+        <label>Tipo</label>
+        <select id="est-mov-tipo" onchange="toggleMovTipo()">
+          <option value="entrada">Entrada</option>
+          <option value="saida">Saída</option>
+          <option value="ajuste">Ajuste</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Data</label>
+        <input type="date" id="est-mov-data">
+      </div>
+      <div class="form-group">
+        <label>Quantidade</label>
+        <input type="number" id="est-mov-quantidade" min="0">
+      </div>
+      <div class="form-group">
+        <label>Responsável</label>
+        <input type="text" id="est-mov-responsavel">
+      </div>
+      <div class="form-group" id="est-mov-fornecedor-group">
+        <label>Fornecedor</label>
+        <input type="text" id="est-mov-fornecedor">
+      </div>
+      <div class="form-group" id="est-mov-custo-group">
+        <label>Custo Unitário (R$)</label>
+        <input type="number" id="est-mov-custo" min="0" step="0.01">
+      </div>
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Motivo / Observação</label>
+        <input type="text" id="est-mov-motivo">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-movimentacao')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarMovimentacao()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL PERDA -->
+<div class="modal-overlay" id="modal-perda">
+  <div class="modal">
+    <div class="modal-title">Registrar Perda</div>
+    <div class="form-grid">
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Produto</label>
+        <select id="est-perda-produto"></select>
+      </div>
+      <div class="form-group">
+        <label>Tipo de Perda</label>
+        <select id="est-perda-tipo">
+          <option value="quebra">Quebra / Avaria</option>
+          <option value="defeito">Defeito de fabricação</option>
+          <option value="contaminacao">Contaminação / Descarte</option>
+          <option value="transporte">Perda no transporte</option>
+          <option value="outros">Outros</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Data</label>
+        <input type="date" id="est-perda-data">
+      </div>
+      <div class="form-group">
+        <label>Quantidade</label>
+        <input type="number" id="est-perda-quantidade" min="0">
+      </div>
+      <div class="form-group">
+        <label>Responsável</label>
+        <input type="text" id="est-perda-responsavel">
+      </div>
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Observação</label>
+        <input type="text" id="est-perda-obs">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-perda')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarPerda()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL CATEGORIA -->
+<div class="modal-overlay" id="modal-categoria">
+  <div class="modal">
+    <div class="modal-title" id="modal-cat-title">Nova Categoria</div>
+    <input type="hidden" id="est-cat-id">
+    <div class="form-grid">
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Nome</label>
+        <input type="text" id="est-cat-nome">
+      </div>
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Descrição</label>
+        <input type="text" id="est-cat-desc">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-categoria')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarCategoria()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL PEDIDO -->
+<div class="modal-overlay" id="modal-pedido">
+  <div class="modal" style="max-width:700px;width:95vw">
+    <div class="modal-title" id="modal-ped-title">Novo Pedido</div>
+    <input type="hidden" id="ped-id">
+    <div class="form-grid">
+      <div class="form-group">
+        <label>Número do Pedido</label>
+        <input type="text" id="ped-numero">
+      </div>
+      <div class="form-group">
+        <label>Prazo de Entrega</label>
+        <input type="date" id="ped-prazo">
+      </div>
+      <div class="form-group">
+        <label>Cliente</label>
+        <select id="ped-cliente"></select>
+      </div>
+      <div class="form-group">
+        <label>Vendedor Responsável</label>
+        <input type="text" id="ped-vendedor">
+      </div>
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Observações</label>
+        <input type="text" id="ped-obs">
+      </div>
+    </div>
+
+    <div class="section-title" style="margin-top:16px">Itens do Pedido</div>
+    <div id="ped-itens-list"></div>
+    <button class="btn btn-secondary" onclick="addItemPedido()" style="margin-top:8px;width:100%">+ Adicionar Item</button>
+
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-pedido')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarPedido()">Salvar Pedido</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL CLIENTE -->
+<div class="modal-overlay" id="modal-cliente">
+  <div class="modal" style="max-width:620px;width:95vw">
+    <div class="modal-title" id="modal-cli-title">Cadastrar Cliente</div>
+    <input type="hidden" id="cli-id">
+
+    <div class="form-grid" style="margin-bottom:12px">
+      <div class="form-group" style="grid-column:1/-1">
+        <label>CPF / CNPJ <span style="color:var(--muted);font-size:11px">(busca automática pelo CNPJ)</span></label>
+        <div class="flex gap-2">
+          <input type="text" id="cli-cnpj" placeholder="CPF: 000.000.000-00 ou CNPJ: 00.000.000/0000-00" style="flex:1" oninput="formatDocCli(this)">
+          <button class="btn btn-secondary" onclick="buscarCNPJ()" style="white-space:nowrap" id="btn-buscar-cnpj">Buscar</button>
+        </div>
+        <span id="doc-tipo-cli" style="font-size:11px;color:var(--success)"></span>
+      </div>
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Razão Social</label>
+        <input type="text" id="cli-razao">
+      </div>
+      <div class="form-group">
+        <label>Nome Fantasia</label>
+        <input type="text" id="cli-fantasia">
+      </div>
+      <div class="form-group">
+        <label>IE</label>
+        <input type="text" id="cli-ie">
+      </div>
+      <div class="form-group">
+        <label>E-mail</label>
+        <input type="email" id="cli-email">
+      </div>
+      <div class="form-group">
+        <label>Telefone</label>
+        <input type="text" id="cli-telefone">
+      </div>
+    </div>
+
+    <div class="section-title">Endereço</div>
+    <div class="form-grid">
+      <div class="form-group">
+        <label>CEP <span style="color:var(--muted);font-size:11px">(busca automática)</span></label>
+        <div class="flex gap-2">
+          <input type="text" id="cli-cep" placeholder="00000-000" style="flex:1" oninput="formatCEP(this)">
+          <button class="btn btn-secondary" onclick="buscarCEP()">Buscar</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Número</label>
+        <input type="text" id="cli-numero">
+      </div>
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Logradouro</label>
+        <input type="text" id="cli-logradouro">
+      </div>
+      <div class="form-group">
+        <label>Bairro</label>
+        <input type="text" id="cli-bairro">
+      </div>
+      <div class="form-group">
+        <label>Complemento</label>
+        <input type="text" id="cli-complemento">
+      </div>
+      <div class="form-group">
+        <label>Cidade</label>
+        <input type="text" id="cli-cidade">
+      </div>
+      <div class="form-group">
+        <label>UF</label>
+        <input type="text" id="cli-uf" maxlength="2" style="text-transform:uppercase">
+      </div>
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Observações</label>
+        <input type="text" id="cli-obs">
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-cliente')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarCliente()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL DETALHE PEDIDO -->
+<div class="modal-overlay" id="modal-ped-detalhe">
+  <div class="modal" style="max-width:700px;width:95vw">
+    <div class="modal-title" id="modal-ped-det-title">Pedido</div>
+    <div id="modal-ped-det-content"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-ped-detalhe')">Fechar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL EPI -->
+<div class="modal-overlay" id="modal-epi">
+  <div class="modal">
+    <div class="modal-title" id="modal-epi-title">Cadastrar EPI</div>
+    <input type="hidden" id="epi-id">
+    <div class="form-grid">
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Nome do EPI</label>
+        <input type="text" id="epi-nome" placeholder="Ex: Óculos de proteção">
+      </div>
+      <div class="form-group">
+        <label>Categoria</label>
+        <select id="epi-categoria">
+          <option value="Proteção Visual">Proteção Visual</option>
+          <option value="Proteção Mãos">Proteção Mãos</option>
+          <option value="Proteção Corpo">Proteção Corpo</option>
+          <option value="Proteção Química">Proteção Química</option>
+          <option value="Proteção Respiratória">Proteção Respiratória</option>
+          <option value="Proteção Pés">Proteção Pés</option>
+          <option value="Higiene">Higiene</option>
+          <option value="Outros">Outros</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Descrição</label>
+        <input type="text" id="epi-descricao" placeholder="Detalhes opcionais">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-epi')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarEPI()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL ENTREGA EPI -->
+<div class="modal-overlay" id="modal-entrega-epi">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-title">Registrar Entrega de EPI</div>
+    <div class="form-grid">
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Funcionário</label>
+        <select id="entrega-colaborador" onchange="sugerirEPIs()"></select>
+      </div>
+      <div class="form-group" style="grid-column:1/-1">
+        <label>EPI</label>
+        <select id="entrega-epi"></select>
+      </div>
+      <div class="form-group">
+        <label>Data de Entrega</label>
+        <input type="date" id="entrega-data">
+      </div>
+      <div class="form-group">
+        <label>Validade / Próxima Troca</label>
+        <input type="date" id="entrega-validade">
+      </div>
+      <div class="form-group">
+        <label>Motivo</label>
+        <select id="entrega-motivo">
+          <option value="Entrega inicial">Entrega inicial</option>
+          <option value="Troca periódica">Troca periódica</option>
+          <option value="Substituição por dano">Substituição por dano</option>
+          <option value="Substituição por extravio">Substituição por extravio</option>
+          <option value="Novo colaborador">Novo colaborador</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Responsável pela entrega</label>
+        <input type="text" id="entrega-responsavel">
+      </div>
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Observação</label>
+        <input type="text" id="entrega-obs">
+      </div>
+    </div>
+    <div id="entrega-sugestoes" style="display:none;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.2);border-radius:8px;padding:12px;margin-bottom:12px;font-size:13px">
+      <strong style="color:var(--accent2)">EPIs obrigatórios para esta função:</strong>
+      <div id="entrega-sugestoes-lista" style="margin-top:6px;color:var(--muted)"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-entrega-epi')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarEntrega()">Registrar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL AJUDA DASHBOARD GESTOR -->
+<div class="modal-overlay" id="modal-ajuda-geral">
+  <div class="modal" style="max-width:550px">
+    <div class="modal-title">❓ Ajuda - Painel do Gestor</div>
+    <div style="max-height:60vh; overflow-y:auto; padding-right:8px; font-size:14px; line-height:1.6; color:#caced6">
+      <p style="margin-bottom:12px">Este painel centraliza as principais métricas de tomada de decisão e PCP. Abaixo, veja como utilizar cada função:</p>
+      
+      <strong style="color:var(--accent); display:block; margin:14px 0 6px">📊 Interpretação do Dashboard:</strong>
+      <ul style="padding-left:20px; margin-bottom:12px">
+        <li><strong>Aderência à Meta:</strong> Porcentagem de dias no mês em que a meta diária foi atingida.</li>
+        <li><strong>Índice de Perdas (%):</strong> Relação entre peças perdidas e a produção total acumulada.</li>
+        <li><strong>Custo de Perdas (R$):</strong> Custo financeiro estimado das perdas do mês, calculado com base no custo de compra do produto.</li>
+        <li><strong>Insumos Críticos:</strong> Produtos do estoque que estão com saldo abaixo ou igual ao estoque mínimo.</li>
+      </ul>
+
+      <strong style="color:var(--accent); display:block; margin:14px 0 6px">🏭 Como Registrar Produção Diária:</strong>
+      <ol style="padding-left:20px; margin-bottom:12px">
+        <li>Clique no botão <strong>+ Registrar Produção</strong> no topo direito da tela de Lançamento.</li>
+        <li>Informe a <strong>Data</strong>, o <strong>Colaborador</strong>, a <strong>Máquina</strong> e a meta padrão.</li>
+        <li>(Opcional) Vincule a um Pedido de venda ativo ou insira um número manual.</li>
+        <li>Em <strong>Produtos Produzidos</strong>, use o botão laranja <span style="color:#ff5500; font-weight:bold">+ Adicionar Produto</span> para escolher o item e registrar a quantidade de peças produzidas, perdas (especificando tipo) ou sobras.</li>
+        <li>Confirme clicando em <strong>Salvar</strong>.</li>
+      </ol>
+
+      <strong style="color:var(--accent); display:block; margin:14px 0 6px">⚙️ Filtros e Navegação:</strong>
+      <ul style="padding-left:20px; margin-bottom:12px">
+        <li>Utilize o seletor de <strong>Mês</strong> no topo para recarregar todos os dados do sistema correspondentes àquele período.</li>
+        <li>Utilize os menus laterais para navegar entre os módulos de Vendas, PCP, Segurança, EPIs e Configurações Gerais.</li>
+      </ul>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="closeModal('modal-ajuda-geral')">Entendi</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL COMPROVANTE -->
+<div class="modal-overlay" id="modal-comprovante">
+  <div class="modal" style="max-width:680px">
+    <div class="modal-title">🖨️ Comprovante de Entrega de EPI</div>
+    <div id="comprovante-content"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-comprovante')">Fechar</button>
+      <button class="btn btn-primary" onclick="imprimirComprovante()">🖨️ Imprimir</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL NOVO/EDITAR USUÁRIO -->
+<div class="modal-overlay" id="modal-usuario">
+  <div class="modal" style="max-width: 480px">
+    <div class="modal-title" id="modal-user-title">Novo Usuário</div>
+    <input type="hidden" id="user-id">
+    <div class="form-grid">
+      <div class="form-group" style="grid-column: 1 / -1">
+        <label>Nome Completo</label>
+        <input type="text" id="user-nome" placeholder="Ex: João Silva" required>
+      </div>
+      <div class="form-group">
+        <label>Nome de Usuário (Login)</label>
+        <input type="text" id="user-username" placeholder="Ex: joao.silva" required>
+      </div>
+      <div class="form-group">
+        <label>Perfil de Acesso</label>
+        <select id="user-role">
+          <option value="gestor">🖥️ Gestor</option>
+          <option value="producao">🏭 Produção</option>
+          <option value="comercial">🏢 Comercial</option>
+          <option value="estoque">📦 Estoque</option>
+        </select>
+      </div>
+      <div class="form-group" id="user-password-container">
+        <label>Senha de Acesso</label>
+        <input type="password" id="user-password" placeholder="Mínimo 3 caracteres">
+      </div>
+      <div class="form-group" id="user-ativo-container">
+        <label>Status</label>
+        <select id="user-ativo">
+          <option value="1">Ativo</option>
+          <option value="0">Inativo</option>
+        </select>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-usuario')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarUsuario()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL ALTERAR SENHA -->
+<div class="modal-overlay" id="modal-alterar-senha">
+  <div class="modal" style="max-width: 400px">
+    <div class="modal-title">Alterar Senha do Usuário</div>
+    <input type="hidden" id="pass-user-id">
+    <div class="form-group">
+      <label>Nova Senha</label>
+      <input type="password" id="new-password" placeholder="Mínimo 3 caracteres" required>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-alterar-senha')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarNovaSenha()">Alterar Senha</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="js/app.js"></script>
+<script>
+function toggleSidebar() {
+  const sb = document.querySelector('.sidebar');
+  sb.classList.toggle('open');
+  let overlay = document.querySelector('.sidebar-mobile-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.className = 'sidebar-mobile-overlay';
+    overlay.addEventListener('click', () => {
+      sb.classList.remove('open');
+      overlay.style.display = 'none';
+    });
+    document.body.appendChild(overlay);
+  }
+  overlay.style.display = sb.classList.contains('open') ? 'block' : 'none';
+}
+document.addEventListener('click', (e) => {
+  const target = e.target.closest('.nav-item');
+  if (target) {
+    const sb = document.querySelector('.sidebar');
+    if (sb && sb.classList.contains('open')) {
+      sb.classList.remove('open');
+      const overlay = document.querySelector('.sidebar-mobile-overlay');
+      if (overlay) overlay.style.display = 'none';
+    }
+  }
+});
+
+function toggleTheme() {
+  const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+  const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', newTheme);
+  localStorage.setItem('pratic-theme', newTheme);
+}
+function toggleSectorMenu(event) {
+  event.stopPropagation();
+  const menu = document.getElementById('sector-menu');
+  if (menu) menu.classList.toggle('show');
+}
+document.addEventListener('click', function() {
+  const menu = document.getElementById('sector-menu');
+  if (menu) menu.classList.remove('show');
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,354 @@
+from fastapi import APIRouter, HTTPException
+import sqlite3
+from pydantic import BaseModel
+from typing import Optional
+from database import get_conn
+
+router = APIRouter()
+
+def _normalizar_codigo(codigo: Optional[str]) -> Optional[str]:
+    if codigo is None:
+        return None
+    codigo = str(codigo).strip()
+    return codigo or None
+
+class CategoriaIn(BaseModel):
+    nome: str
+    descricao: Optional[str] = None
+
+class ProdutoIn(BaseModel):
+    codigo: Optional[str] = None
+    categoria_id: Optional[int] = None
+    nome: str
+    marca: Optional[str] = None
+    unidade: Optional[str] = "unidade"
+    estoque_minimo: Optional[float] = 0
+
+class MovimentacaoIn(BaseModel):
+    produto_id: int
+    tipo: str  # entrada, saida, perda, ajuste
+    quantidade: float
+    motivo: Optional[str] = None
+    tipo_perda: Optional[str] = None
+    responsavel: Optional[str] = None
+    fornecedor: Optional[str] = None
+    custo_unitario: Optional[float] = None
+    observacao: Optional[str] = None
+    data: Optional[str] = None
+
+# ─── CATEGORIAS ───────────────────────────────────────────────────────────────
+
+@router.get("/categorias")
+def listar_categorias():
+    conn = get_conn()
+    rows = conn.execute("SELECT * FROM estoque_categorias ORDER BY nome").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+@router.post("/categorias")
+def criar_categoria(c: CategoriaIn):
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("INSERT INTO estoque_categorias (nome, descricao) VALUES (?, ?)", (c.nome, c.descricao))
+    conn.commit()
+    id = cur.lastrowid
+    conn.close()
+    return {"id": id, "mensagem": "Categoria criada"}
+
+@router.put("/categorias/{id}")
+def atualizar_categoria(id: int, c: CategoriaIn):
+    conn = get_conn()
+    conn.execute("UPDATE estoque_categorias SET nome=?, descricao=? WHERE id=?", (c.nome, c.descricao, id))
+    conn.commit()
+    conn.close()
+    return {"mensagem": "Categoria atualizada"}
+
+@router.delete("/categorias/{id}")
+def deletar_categoria(id: int):
+    conn = get_conn()
+    conn.execute("DELETE FROM estoque_categorias WHERE id=?", (id,))
+    conn.commit()
+    conn.close()
+    return {"mensagem": "Categoria removida"}
+
+# ─── PRODUTOS ─────────────────────────────────────────────────────────────────
+
+@router.get("/produtos")
+def listar_produtos(categoria_id: Optional[int] = None):
+    conn = get_conn()
+    query = """
+        SELECT p.*, c.nome as categoria_nome,
+               COALESCE(e.quantidade, 0) as quantidade_atual
+        FROM estoque_produtos p
+        LEFT JOIN estoque_categorias c ON p.categoria_id = c.id
+        LEFT JOIN estoque_saldo e ON e.produto_id = p.id
+        WHERE p.ativo = 1
+    """
+    params = []
+    if categoria_id:
+        query += " AND p.categoria_id = ?"
+        params.append(categoria_id)
+    query += " ORDER BY c.nome, p.codigo, p.nome"
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["alerta"] = d["quantidade_atual"] <= d["estoque_minimo"]
+        result.append(d)
+    return result
+
+@router.post("/produtos")
+def criar_produto(p: ProdutoIn):
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        codigo = _normalizar_codigo(p.codigo)
+        if codigo:
+            existente = conn.execute("SELECT id FROM estoque_produtos WHERE codigo=? AND ativo=1", (codigo,)).fetchone()
+            if existente:
+                raise HTTPException(400, "Já existe um produto ativo com este Código/ID")
+        cur.execute("""INSERT INTO estoque_produtos (codigo, categoria_id, nome, marca, unidade, estoque_minimo)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (codigo, p.categoria_id, p.nome, p.marca, p.unidade, p.estoque_minimo))
+        produto_id = cur.lastrowid
+        cur.execute("INSERT INTO estoque_saldo (produto_id, quantidade) VALUES (?, 0)", (produto_id,))
+        conn.commit()
+        return {"id": produto_id, "mensagem": "Produto criado"}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except sqlite3.IntegrityError as e:
+        conn.rollback()
+        raise HTTPException(400, f"Não foi possível salvar o produto. Verifique Código/ID, categoria e dados obrigatórios. Detalhe: {e}")
+    finally:
+        conn.close()
+
+@router.get("/produtos/{id}")
+def obter_produto(id: int):
+    conn = get_conn()
+    row = conn.execute("""
+        SELECT p.*, c.nome as categoria_nome, COALESCE(e.quantidade, 0) as quantidade_atual
+        FROM estoque_produtos p
+        LEFT JOIN estoque_categorias c ON p.categoria_id = c.id
+        LEFT JOIN estoque_saldo e ON e.produto_id = p.id
+        WHERE p.id = ?
+    """, (id,)).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(404, "Produto não encontrado")
+    d = dict(row)
+    d["alerta"] = d["quantidade_atual"] <= d["estoque_minimo"]
+    return d
+
+@router.put("/produtos/{id}")
+def atualizar_produto(id: int, p: ProdutoIn):
+    conn = get_conn()
+    try:
+        produto = conn.execute("SELECT id FROM estoque_produtos WHERE id=?", (id,)).fetchone()
+        if not produto:
+            raise HTTPException(404, "Produto não encontrado")
+
+        codigo = _normalizar_codigo(p.codigo)
+        if codigo:
+            existente = conn.execute("SELECT id FROM estoque_produtos WHERE codigo=? AND id<>? AND ativo=1", (codigo, id)).fetchone()
+            if existente:
+                raise HTTPException(400, "Já existe outro produto ativo com este Código/ID")
+
+        cur = conn.execute("""UPDATE estoque_produtos SET codigo=?, categoria_id=?, nome=?, marca=?, unidade=?, estoque_minimo=?
+                            WHERE id=?""", (codigo, p.categoria_id, p.nome, p.marca, p.unidade, p.estoque_minimo, id))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Produto não encontrado")
+        conn.commit()
+        return {"mensagem": "Produto atualizado"}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except sqlite3.IntegrityError as e:
+        conn.rollback()
+        raise HTTPException(400, f"Não foi possível atualizar o produto. Verifique se o Código/ID já existe ou se a categoria é válida. Detalhe: {e}")
+    finally:
+        conn.close()
+
+@router.delete("/produtos/{id}")
+def deletar_produto(id: int):
+    conn = get_conn()
+    conn.execute("UPDATE estoque_produtos SET ativo=0 WHERE id=?", (id,))
+    conn.commit()
+    conn.close()
+    return {"mensagem": "Produto desativado"}
+
+# ─── MOVIMENTAÇÕES ────────────────────────────────────────────────────────────
+
+@router.get("/movimentacoes")
+def listar_movimentacoes(produto_id: Optional[int] = None, tipo: Optional[str] = None, data_inicio: Optional[str] = None, data_fim: Optional[str] = None):
+    conn = get_conn()
+    query = """
+        SELECT m.*, p.codigo as produto_codigo, p.nome as produto_nome, p.unidade,
+               cat.nome as categoria_nome
+        FROM estoque_movimentacoes m
+        JOIN estoque_produtos p ON m.produto_id = p.id
+        LEFT JOIN estoque_categorias cat ON p.categoria_id = cat.id
+        WHERE 1=1
+    """
+    params = []
+    if produto_id:
+        query += " AND m.produto_id = ?"
+        params.append(produto_id)
+    if tipo:
+        query += " AND m.tipo = ?"
+        params.append(tipo)
+    if data_inicio:
+        query += " AND m.data >= ?"
+        params.append(data_inicio)
+    if data_fim:
+        query += " AND m.data <= ?"
+        params.append(data_fim)
+    query += " ORDER BY m.data DESC, m.criado_em DESC LIMIT 200"
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+@router.post("/movimentacoes")
+def registrar_movimentacao(m: MovimentacaoIn):
+    from datetime import date
+    if m.tipo not in ("entrada", "saida", "perda", "ajuste", "sobra"):
+        raise HTTPException(400, "Tipo inválido")
+    conn = get_conn()
+
+    saldo_row = conn.execute("SELECT quantidade FROM estoque_saldo WHERE produto_id=?", (m.produto_id,)).fetchone()
+    saldo_atual = saldo_row["quantidade"] if saldo_row else 0
+
+    data = m.data or str(date.today())
+
+    if m.tipo in ("entrada", "sobra"):
+        novo_saldo = saldo_atual + m.quantidade
+    elif m.tipo in ("saida", "perda"):
+        if m.quantidade > saldo_atual:
+            conn.close()
+            raise HTTPException(400, f"Saldo insuficiente. Saldo atual: {saldo_atual}")
+        novo_saldo = saldo_atual - m.quantidade
+    elif m.tipo == "ajuste":
+        novo_saldo = m.quantidade
+    else:
+        novo_saldo = saldo_atual
+
+    cur = conn.cursor()
+    cur.execute("""INSERT INTO estoque_movimentacoes
+                   (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior,
+                    motivo, tipo_perda, responsavel, fornecedor, custo_unitario, observacao, data)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (m.produto_id, m.tipo, m.quantidade, saldo_atual, novo_saldo,
+                 m.motivo, m.tipo_perda, m.responsavel, m.fornecedor,
+                 m.custo_unitario, m.observacao, data))
+
+    if saldo_row:
+        conn.execute("UPDATE estoque_saldo SET quantidade=?, ultima_atualizacao=datetime('now') WHERE produto_id=?",
+                     (novo_saldo, m.produto_id))
+    else:
+        conn.execute("INSERT INTO estoque_saldo (produto_id, quantidade) VALUES (?, ?)", (m.produto_id, novo_saldo))
+
+    conn.commit()
+    id = cur.lastrowid
+    conn.close()
+    return {"id": id, "saldo_anterior": saldo_atual, "saldo_atual": novo_saldo, "mensagem": "Movimentação registrada"}
+
+@router.delete("/movimentacoes/{id}")
+def deletar_movimentacao(id: int):
+    conn = get_conn()
+    try:
+        mov = conn.execute("SELECT * FROM estoque_movimentacoes WHERE id = ?", (id,)).fetchone()
+        if not mov:
+            raise HTTPException(404, "Movimentação não encontrada")
+        
+        produto_id = mov["produto_id"]
+        saldo_anterior = mov["saldo_anterior"] if mov["saldo_anterior"] is not None else 0
+        saldo_posterior = mov["saldo_posterior"] if mov["saldo_posterior"] is not None else 0
+        diff = saldo_posterior - saldo_anterior
+        
+        saldo_row = conn.execute("SELECT quantidade FROM estoque_saldo WHERE produto_id = ?", (produto_id,)).fetchone()
+        saldo_atual = saldo_row["quantidade"] if saldo_row else 0
+        
+        novo_saldo = saldo_atual - diff
+        if novo_saldo < 0:
+            raise HTTPException(400, f"Não é possível excluir esta movimentação, pois o saldo do produto ficaria negativo ({novo_saldo})")
+            
+        conn.execute("UPDATE estoque_saldo SET quantidade = ?, ultima_atualizacao = datetime('now') WHERE produto_id = ?", (novo_saldo, produto_id))
+        conn.execute("DELETE FROM estoque_movimentacoes WHERE id = ?", (id,))
+        conn.commit()
+        return {"mensagem": "Movimentação removida", "saldo_atual": novo_saldo}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(500, f"Erro ao remover movimentação: {str(e)}")
+    finally:
+        conn.close()
+
+# ─── ALERTAS ─────────────────────────────────────────────────────────────────
+
+@router.get("/alertas")
+def listar_alertas():
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT p.id, p.codigo, p.nome, p.marca, p.unidade, p.estoque_minimo,
+               cat.nome as categoria_nome,
+               COALESCE(e.quantidade, 0) as quantidade_atual
+        FROM estoque_produtos p
+        LEFT JOIN estoque_categorias cat ON p.categoria_id = cat.id
+        LEFT JOIN estoque_saldo e ON e.produto_id = p.id
+        WHERE p.ativo = 1
+          AND COALESCE(e.quantidade, 0) <= p.estoque_minimo
+        ORDER BY (COALESCE(e.quantidade, 0) - p.estoque_minimo) ASC
+    """).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+# ─── RESUMO DASHBOARD ────────────────────────────────────────────────────────
+
+@router.get("/resumo")
+def resumo_estoque():
+    conn = get_conn()
+    total_produtos = conn.execute("SELECT COUNT(*) FROM estoque_produtos WHERE ativo=1").fetchone()[0]
+    alertas = conn.execute("""
+        SELECT COUNT(*) FROM estoque_produtos p
+        LEFT JOIN estoque_saldo e ON e.produto_id = p.id
+        WHERE p.ativo=1 AND COALESCE(e.quantidade,0) <= p.estoque_minimo
+    """).fetchone()[0]
+    movs_hoje = conn.execute("""
+        SELECT COUNT(*) FROM estoque_movimentacoes WHERE date(data) = date('now')
+    """).fetchone()[0]
+    perdas_mes = conn.execute("""
+        SELECT COALESCE(SUM(quantidade),0) FROM estoque_movimentacoes
+        WHERE tipo='perda' AND strftime('%Y-%m', data) = strftime('%Y-%m', 'now')
+    """).fetchone()[0]
+    conn.close()
+    return {
+        "total_produtos": total_produtos,
+        "alertas_minimo": alertas,
+        "movimentacoes_hoje": movs_hoje,
+        "perdas_mes": perdas_mes
+    }
+
+# ─── RELATÓRIO PERDAS ────────────────────────────────────────────────────────
+
+@router.get("/relatorio-perdas")
+def relatorio_perdas(mes: Optional[str] = None):
+    conn = get_conn()
+    query = """
+        SELECT p.codigo as produto_codigo, p.nome as produto, p.unidade, cat.nome as categoria,
+               m.tipo_perda, m.data, m.quantidade, m.responsavel, m.observacao
+        FROM estoque_movimentacoes m
+        JOIN estoque_produtos p ON m.produto_id = p.id
+        LEFT JOIN estoque_categorias cat ON p.categoria_id = cat.id
+        WHERE m.tipo = 'perda'
+    """
+    params = []
+    if mes:
+        query += " AND strftime('%Y-%m', m.data) = ?"
+        params.append(mes)
+    query += " ORDER BY m.data DESC"
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]

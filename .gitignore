@@ -1,0 +1,6 @@
+banco/
+__pycache__/
+backend/__pycache__/
+backend/rotas/__pycache__/
+*.pyc
+*.db

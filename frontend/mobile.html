@@ -1,0 +1,1061 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>PRATIC — Operador</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<script>
+  (function() {
+    const savedTheme = localStorage.getItem('pratic-theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+  })();
+</script>
+<link rel="stylesheet" href="css/common.css?v=2">
+<style>
+  :root {
+    --info: var(--accent2);
+  }
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { background:var(--bg); color:var(--text); font-family:var(--fb); min-height:100vh; display:flex !important; flex-direction:column !important; }
+
+  /* HEADER */
+  .header {
+    background:var(--surface);
+    border-bottom:1px solid var(--border);
+    padding:16px 20px;
+    display:flex; align-items:center; justify-content:space-between;
+    position:sticky; top:0; z-index:50;
+  }
+  .logo { font-family:var(--fh); font-size:20px; font-weight:800; color:var(--accent); letter-spacing:2px; }
+  .logo-sub { font-size:10px; color:var(--muted); letter-spacing:1px; }
+  .op-badge {
+    background:rgba(240,180,41,.15); border:1px solid rgba(240,180,41,.3);
+    padding:6px 12px; border-radius:20px; font-size:12px; font-weight:600; color:var(--accent);
+    cursor:pointer;
+  }
+
+  .setor-badge { background:rgba(59,130,246,.15); border:1px solid rgba(59,130,246,.3); color:var(--info); padding:4px 10px; border-radius:20px; font-size:11px; font-weight:600; display:inline-block; }
+
+  /* CONTENT */
+  .content { padding:20px 16px; max-width:480px; margin:0 auto; }
+
+  /* TELA SELEÇÃO */
+  #tela-selecao { display:block; }
+  #tela-lancamento { display:none; }
+  #tela-sucesso { display:none; }
+
+  /* CARD */
+  .card {
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:16px; padding:20px;
+    margin-bottom:16px;
+  }
+  .card-title {
+    font-family:var(--fh); font-size:15px; font-weight:700;
+    margin-bottom:16px; color:var(--text);
+  }
+
+  /* FORM */
+  .form-group { margin-bottom:16px; }
+  label { font-size:12px; color:var(--muted); font-weight:500; letter-spacing:.5px; display:block; margin-bottom:6px; }
+  input, select {
+    width:100%; background:var(--surface2); border:1px solid var(--border);
+    border-radius:10px; padding:14px 16px; color:var(--text); font-family:var(--fb);
+    font-size:16px; outline:none; transition:border .2s; appearance:none;
+  }
+  input[type="month"], input[type="date"] {
+    min-width: 150px;
+  }
+  input:focus, select:focus { border-color:var(--accent); }
+  input::-webkit-calendar-picker-indicator {
+    filter: invert(0.9);
+    cursor: pointer;
+  }
+  input[type=number] { font-size:22px; font-weight:700; text-align:center; }
+  select option { background:var(--surface2); }
+
+  /* BOTÕES */
+  .btn {
+    width:100%; padding:16px; border-radius:12px; font-family:var(--fh);
+    font-size:16px; font-weight:700; cursor:pointer; border:none;
+    transition:all .2s; letter-spacing:.5px;
+  }
+  .btn-primary { background:var(--accent); color:#000; }
+  .btn-primary:active { background:#d4971e; transform:scale(.98); }
+  .btn-primary:disabled { background:var(--border); color:var(--muted); cursor:not-allowed; }
+  .btn-secondary {
+    background:var(--surface2); color:var(--text);
+    border:1px solid var(--border); margin-top:10px;
+  }
+  .btn-secondary:active { transform:scale(.98); }
+  .btn-danger { background:rgba(239,68,68,.15); color:var(--danger); border:1px solid rgba(239,68,68,.3); margin-top:10px; }
+
+  /* OPERADOR LIST */
+  .op-list { display:grid; gap:10px; }
+  .op-item {
+    background:var(--surface2); border:2px solid var(--border);
+    border-radius:12px; padding:16px 20px; cursor:pointer;
+    display:flex; align-items:center; gap:14px; transition:all .2s;
+  }
+  .op-item:active { transform:scale(.98); border-color:var(--accent); }
+  .op-avatar {
+    width:44px; height:44px; border-radius:50%; background:rgba(240,180,41,.15);
+    display:flex; align-items:center; justify-content:center;
+    font-family:var(--fh); font-size:18px; font-weight:800; color:var(--accent);
+    flex-shrink:0;
+  }
+  .op-name { font-family:var(--fh); font-size:16px; font-weight:700; }
+  .op-info { font-size:12px; color:var(--muted); margin-top:2px; }
+
+  /* RESUMO DO DIA */
+  .resumo-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:16px; }
+  .resumo-item {
+    background:var(--surface2); border:1px solid var(--border);
+    border-radius:10px; padding:12px; text-align:center;
+  }
+  .resumo-label { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-bottom:4px; }
+  .resumo-valor { font-family:var(--fh); font-size:22px; font-weight:800; }
+  .resumo-valor.accent { color:var(--accent); }
+  .resumo-valor.success { color:var(--success); }
+  .resumo-valor.danger { color:var(--danger); }
+  .resumo-valor.info { color:var(--info); }
+
+  /* TABS */
+  .tabs { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:20px; }
+  .tab {
+    padding:12px; border-radius:10px; font-family:var(--fh); font-size:13px;
+    font-weight:700; cursor:pointer; border:2px solid var(--border);
+    background:var(--surface2); color:var(--muted); text-align:center; transition:all .2s;
+  }
+  .tab.active { border-color:var(--accent); color:var(--accent); background:rgba(240,180,41,.08); }
+
+  /* ALERT */
+  .alert { padding:12px 16px; border-radius:10px; font-size:13px; margin-bottom:16px; }
+  .alert-success { background:rgba(16,185,129,.1); border:1px solid rgba(16,185,129,.3); color:var(--success); }
+  .alert-danger { background:rgba(239,68,68,.1); border:1px solid rgba(239,68,68,.3); color:var(--danger); }
+
+  /* SUCESSO */
+  .sucesso-icon { font-size:64px; text-align:center; margin:20px 0; }
+  .sucesso-title { font-family:var(--fh); font-size:24px; font-weight:800; text-align:center; color:var(--success); margin-bottom:8px; }
+  .sucesso-sub { font-size:14px; color:var(--muted); text-align:center; margin-bottom:24px; }
+  .sucesso-cards { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:24px; }
+
+  /* PERDA SECTION */
+  .perda-toggle {
+    display:flex; align-items:center; gap:10px; padding:14px 16px;
+    background:rgba(239,68,68,.08); border:1px solid rgba(239,68,68,.2);
+    border-radius:10px; cursor:pointer; margin-bottom:16px;
+  }
+  .perda-toggle-label { font-size:14px; font-weight:500; flex:1; }
+  .toggle-sw {
+    width:44px; height:24px; background:var(--border); border-radius:12px;
+    position:relative; transition:background .2s; flex-shrink:0;
+  }
+  .toggle-sw.on { background:var(--danger); }
+  .toggle-sw::after {
+    content:''; position:absolute; top:3px; left:3px;
+    width:18px; height:18px; border-radius:50%; background:#fff; transition:left .2s;
+  }
+  .toggle-sw.on::after { left:23px; }
+
+  /* DATA BADGE */
+  .data-badge {
+    display:inline-flex; align-items:center; gap:6px;
+    background:rgba(59,130,246,.1); border:1px solid rgba(59,130,246,.25);
+    padding:6px 12px; border-radius:20px; font-size:12px; color:var(--info); font-weight:600;
+    margin-bottom:20px;
+  }
+
+  /* HISTÓRICO */
+  .hist-item {
+    display:flex; justify-content:space-between; align-items:center;
+    padding:12px 0; border-bottom:1px solid var(--border);
+  }
+  .hist-item:last-child { border-bottom:none; }
+  .hist-data { font-size:12px; color:var(--muted); }
+  .hist-val { font-family:var(--fh); font-size:16px; font-weight:700; }
+  .hist-exc { font-size:12px; margin-top:2px; }
+
+  /* META BAR */
+  .meta-bar { margin:16px 0; }
+  .meta-bar-track { height:8px; background:var(--surface2); border-radius:4px; overflow:hidden; }
+  .meta-bar-fill { height:100%; border-radius:4px; transition:width .6s; }
+  .meta-bar-labels { display:flex; justify-content:space-between; font-size:11px; color:var(--muted); margin-top:4px; }
+
+  .spinner { display:inline-block; width:20px; height:20px; border:3px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+
+  .empty { text-align:center; color:var(--muted); padding:32px 0; font-size:14px; }
+
+  /* MODAL */
+  .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,.8); z-index:200; display:flex; align-items:flex-end; justify-content:center; opacity:0; pointer-events:none; transition:opacity .2s; }
+  .modal-overlay.open { opacity:1; pointer-events:all; }
+  .modal { background:var(--surface); border-radius:20px 20px 0 0; padding:24px 20px 36px; width:100%; max-width:480px; transform:translateY(100%); transition:transform .3s; max-height:90vh; overflow-y:auto; }
+  .modal-overlay.open .modal { transform:translateY(0); }
+  .modal-title { font-family:var(--fh); font-size:18px; font-weight:800; margin-bottom:20px; display:flex; align-items:center; gap:10px; }
+  .modal-handle { width:40px; height:4px; background:var(--border); border-radius:2px; margin:0 auto 20px; }
+  .btn-full { width:100%; padding:14px; font-size:15px; margin-top:8px; }
+
+  /* RESPONSIVIDADE DESKTOP */
+  @media (min-width: 769px) {
+    .content {
+      max-width: 960px !important;
+      padding: 32px 24px;
+    }
+    .op-list {
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+    }
+    #tab-content-prod {
+      display: grid;
+      grid-template-columns: 1.3fr 1fr;
+      gap: 24px;
+      align-items: start;
+    }
+    #tab-content-prod > .card {
+      grid-column: 1;
+      grid-row: 1 / 3;
+      margin-bottom: 0;
+    }
+    #mob-resumo {
+      grid-column: 2;
+      grid-row: 1;
+      margin-bottom: 0;
+    }
+    #mob-meta-bar {
+      grid-column: 2;
+      grid-row: 2;
+      margin-top: 0;
+      margin-bottom: 0;
+    }
+    #tela-sucesso > .card {
+      max-width: 480px;
+      margin: 40px auto;
+    }
+  }
+</style>
+</head>
+<body>
+
+<div class="header" style="display:flex; flex-direction:column; gap:10px; padding:12px 16px;">
+  <!-- Linha Superior -->
+  <div style="display:flex; align-items:center; justify-content:space-between; width:100%;">
+    <div>
+      <div class="logo">PRATIC</div>
+      <div class="logo-sub">LANÇAMENTO DE PRODUÇÃO</div>
+    </div>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <button class="btn btn-sm btn-secondary" onclick="openModal('modal-ajuda-op-mob')" style="padding: 6px 12px; font-size: 12px; width:auto; margin:0; cursor:pointer;">❓ Ajuda</button>
+      <button class="btn btn-sm btn-danger" onclick="sairMobile()" style="padding: 6px 12px; font-size: 12px; width:auto; margin:0; cursor:pointer;">🚪 Sair</button>
+      <div class="op-badge" id="op-badge" onclick="trocarOperador()" style="margin:0;">Selecionar ▾</div>
+    </div>
+  </div>
+  
+  <!-- Linha Inferior (Widgets e Badges) -->
+  <div style="display:flex; align-items:center; justify-content:space-between; width:100%; border-top:1px solid var(--border); padding-top:8px; flex-wrap:wrap; gap:8px;">
+    <div id="topbar-info-widgets" style="display:flex; align-items:center; gap:14px; font-size:12px; color:var(--muted); font-weight:500; flex-wrap:wrap;">
+      <span id="topbar-date" style="display:flex; align-items:center; gap:4px;">📅 <span style="color:var(--text)">—</span></span>
+      <span id="topbar-city" style="display:flex; align-items:center; gap:4px;">📍 <span style="color:var(--text)">—</span></span>
+      <span id="topbar-temp" style="display:flex; align-items:center; gap:4px;">🌡️ <span style="color:var(--accent); font-weight:700">—°C</span></span>
+    </div>
+    <div style="display:flex; align-items:center; gap:8px;">
+      <span class="offline-badge online" id="connection-status">🟢 Online</span>
+      <span class="setor-badge" style="font-size:11px; padding:3px 10px;">📱 Mobile Operador</span>
+      <span class="badge" id="topbar-mes" style="background:var(--accent); color:#000; font-size:11px; font-weight:700; padding:3px 8px; border-radius:20px;">—</span>
+    </div>
+  </div>
+</div>
+
+<div class="content">
+  <div id="alert-mob"></div>
+
+  <!-- ── TELA SELEÇÃO ───────────────────────────────────── -->
+  <div id="tela-selecao">
+    <div class="card">
+      <div class="card-title">👤 Quem é você?</div>
+      <div class="op-list" id="op-list">
+        <div class="empty"><div class="spinner"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── TELA LANÇAMENTO ───────────────────────────────── -->
+  <div id="tela-lancamento">
+    <div class="data-badge">📅 <span id="mob-data-label"></span></div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <div class="tab active" id="tab-prod" onclick="switchTab('prod')">🏭 Produção</div>
+      <div class="tab" id="tab-hist" onclick="switchTab('hist')">📋 Histórico</div>
+    </div>
+
+    <!-- TAB PRODUÇÃO -->
+    <div id="tab-content-prod">
+
+      <!-- Resumo do mês -->
+      <div class="resumo-grid" id="mob-resumo"></div>
+
+      <!-- Barra de meta -->
+      <div class="meta-bar" id="mob-meta-bar" style="display:none">
+        <div class="meta-bar-track">
+          <div class="meta-bar-fill" id="mob-meta-fill"></div>
+        </div>
+        <div class="meta-bar-labels">
+          <span>0</span>
+          <span id="mob-meta-label"></span>
+        </div>
+      </div>
+
+      <!-- Formulário -->
+      <div class="card">
+        <div class="card-title">📝 Lançar produção do dia</div>
+
+        <div class="form-group">
+          <label>Data</label>
+          <input type="date" id="mob-data">
+        </div>
+
+        <div class="form-group">
+          <label>Máquina</label>
+          <select id="mob-maquina"></select>
+        </div>
+
+        <div class="form-group">
+          <label>Produto do estoque <span style="color:var(--muted);font-size:11px">(opcional)</span></label>
+          <select id="mob-produto-estoque">
+            <option value="">— Não vincular —</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label>Produção do dia (peças)</label>
+          <input type="number" id="mob-producao" placeholder="0" min="0" inputmode="numeric">
+        </div>
+
+        <!-- Toggle perda -->
+        <div class="perda-toggle" onclick="togglePerda()">
+          <span style="font-size:18px">⚠️</span>
+          <span class="perda-toggle-label">Houve perda hoje?</span>
+          <div class="toggle-sw" id="perda-sw"></div>
+        </div>
+
+        <!-- Toggle sobra -->
+        <div class="perda-toggle" onclick="toggleSobra()" style="background:rgba(16,185,129,.08);border-color:rgba(16,185,129,.2)">
+          <span style="font-size:18px">✅</span>
+          <span class="perda-toggle-label">Houve sobra hoje?</span>
+          <div class="toggle-sw" id="sobra-sw"></div>
+        </div>
+        <div id="sobra-fields" style="display:none">
+          <div class="form-group">
+            <label>Quantidade sobrou (peças)</label>
+            <input type="number" id="mob-sobra-qtd" placeholder="0" min="0" inputmode="numeric">
+          </div>
+          <div class="form-group">
+            <label>Observação</label>
+            <input type="text" id="mob-sobra-obs" placeholder="Ex: pedido concluído com sobra">
+          </div>
+        </div>
+
+        <div id="perda-fields" style="display:none">
+          <div class="form-group">
+            <label>Tipo de Perda</label>
+            <select id="mob-perda-tipo">
+              <option value="quebra">Quebra / Avaria</option>
+              <option value="defeito">Defeito de fabricação</option>
+              <option value="contaminacao">Contaminação / Descarte</option>
+              <option value="transporte">Perda no transporte</option>
+              <option value="outros">Outros</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Quantidade perdida (peças)</label>
+            <input type="number" id="mob-perda-qtd" placeholder="0" min="0" inputmode="numeric">
+          </div>
+          <div class="form-group">
+            <label>Observação</label>
+            <input type="text" id="mob-perda-obs" placeholder="Descreva o ocorrido">
+          </div>
+        </div>
+
+        <div id="mob-alert-form"></div>
+        <button class="btn btn-primary" id="mob-btn-salvar" onclick="salvarMobile()">Confirmar Lançamento</button>
+      </div>
+    </div>
+
+    <!-- TAB HISTÓRICO -->
+    <div id="tab-content-hist" style="display:none">
+      <div class="card">
+        <div class="card-title">📋 Últimos lançamentos</div>
+        <div id="mob-historico"><div class="empty"><div class="spinner"></div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── TELA SUCESSO ───────────────────────────────────── -->
+  <div id="tela-sucesso">
+    <div class="sucesso-icon">✅</div>
+    <div class="sucesso-title">Lançado!</div>
+    <div class="sucesso-sub" id="sucesso-sub"></div>
+    <div class="sucesso-cards" id="sucesso-cards"></div>
+    <button class="btn btn-primary" onclick="novoLancamento()">Novo Lançamento</button>
+    <button class="btn btn-secondary" onclick="trocarOperador()">Trocar Operador</button>
+  </div>
+</div>
+
+<!-- MODAL AJUDA OPERADOR MOBILE -->
+<div class="modal-overlay" id="modal-ajuda-op-mob">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">❓ Ajuda - Lançar Produção</div>
+    <div style="max-height:60vh; overflow-y:auto; padding-right:4px; font-size:14px; line-height:1.6; color:#caced6">
+      <p style="margin-bottom:12px">Este aplicativo é usado pelos operadores para lançar a produção diária. Veja como lançar:</p>
+      
+      <strong style="color:var(--accent); display:block; margin:14px 0 6px">👤 Passo 1: Selecionar seu nome</strong>
+      <ul style="padding-left:20px; margin-bottom:12px">
+        <li>Na tela inicial, clique sobre o seu nome na lista para carregar seu posto de trabalho.</li>
+      </ul>
+
+      <strong style="color:var(--accent); display:block; margin:14px 0 6px">📝 Passo 2: Preencher o formulário</strong>
+      <ol style="padding-left:20px; margin-bottom:12px">
+        <li><strong>Data:</strong> Por padrão, carrega a data de hoje. Se estiver lançando um dia anterior, mude a data.</li>
+        <li><strong>Máquina:</strong> Selecione a máquina que operou.</li>
+        <li><strong>Produto:</strong> (Opcional) Escolha o produto fabricado do estoque.</li>
+        <li><strong>Produção:</strong> Digite o total de peças boas produzidas no turno.</li>
+      </ol>
+
+      <strong style="color:var(--accent); display:block; margin:14px 0 6px">⚠️ Passo 3: Registrar perdas ou sobras</strong>
+      <ul style="padding-left:20px; margin-bottom:12px">
+        <li>Se houve perda de peças (quebras, avarias, refugo), clique em <strong>Houve perda hoje?</strong>, selecione o tipo e digite a quantidade perdida.</li>
+        <li>Se houve sobras, clique em <strong>Houve sobra hoje?</strong> e digite a quantidade correspondente.</li>
+      </ul>
+
+      <strong style="color:var(--accent); display:block; margin:14px 0 6px">📋 Passo 4: Confirmar e Acompanhar</strong>
+      <ul style="padding-left:20px; margin-bottom:12px">
+        <li>Clique em <strong>Confirmar Lançamento</strong> para salvar.</li>
+        <li>Acompanhe seu histórico de lançamentos e sua média diária em relação à meta do mês diretamente na aba <strong>Histórico</strong>.</li>
+      </ul>
+    </div>
+    <div style="margin-top:16px">
+      <button class="btn btn-primary btn-full" onclick="closeModal('modal-ajuda-op-mob')">Entendi</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+const API = window.location.origin + '/api';
+let operadorAtual = null;
+let perdaAtiva = false;
+
+async function req(path, method='GET', body=null) {
+  const opts = { method, headers: {'Content-Type':'application/json'} };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(API + path, opts);
+  if (r.status === 401) {
+    if (path === '/auth/me') {
+      throw new Error('Não autenticado');
+    }
+    window.location.reload();
+    return new Promise(() => {});
+  }
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.detail || 'Erro');
+  return d;
+}
+
+function fmtNum(n) { return Number(n||0).toLocaleString('pt-BR'); }
+function fmtDate(s) { if(!s) return '—'; const [y,m,d]=s.split('-'); return `${d}/${m}/${y}`; }
+
+function showAlert(msg, type='success') {
+  const el = document.getElementById('alert-mob');
+  el.innerHTML = `<div class="alert alert-${type}">${msg}</div>`;
+  setTimeout(() => el.innerHTML='', 4000);
+}
+
+function showFormAlert(msg, type='danger') {
+  const el = document.getElementById('mob-alert-form');
+  el.innerHTML = `<div class="alert alert-${type}" style="margin-bottom:12px">${msg}</div>`;
+  setTimeout(() => el.innerHTML='', 4000);
+}
+
+// ── SELEÇÃO DE OPERADOR
+async function loadOperadores() {
+  try {
+    const ops = await req('/colaboradores/?tipo=operador');
+    const list = document.getElementById('op-list');
+    if (!ops.length) { list.innerHTML = '<div class="empty">Nenhum operador cadastrado</div>'; return; }
+    list.innerHTML = ops.map(op => `
+      <div class="op-item" onclick="selecionarOperador(${op.id}, '${op.nome}', ${op.maquina_id || 'null'})">
+        <div class="op-avatar">${op.nome[0].toUpperCase()}</div>
+        <div>
+          <div class="op-name">${op.nome}</div>
+          <div class="op-info">${op.maquina_nome || 'Sem máquina'}</div>
+        </div>
+        <div style="margin-left:auto;color:var(--muted);font-size:20px">›</div>
+      </div>`).join('');
+  } catch(e) {
+    document.getElementById('op-list').innerHTML = '<div class="empty">Erro ao carregar operadores</div>';
+  }
+}
+
+async function selecionarOperador(id, nome, maquinaId) {
+  operadorAtual = { id, nome, maquinaId };
+  document.getElementById('op-badge').textContent = nome + ' ▾';
+  document.getElementById('tela-selecao').style.display = 'none';
+  document.getElementById('tela-lancamento').style.display = 'block';
+  document.getElementById('tela-sucesso').style.display = 'none';
+
+  // Data hoje
+  const hoje = new Date().toISOString().split('T')[0];
+  document.getElementById('mob-data').value = hoje;
+  document.getElementById('mob-data-label').textContent = fmtDate(hoje);
+  document.getElementById('mob-data').addEventListener('change', function() {
+    document.getElementById('mob-data-label').textContent = fmtDate(this.value);
+  });
+
+  await Promise.all([loadMaquinas(maquinaId), loadProdutosEstoque(), loadResumo(), loadHistorico()]);
+}
+
+async function loadMaquinas(maquinaId) {
+  const mqs = await req('/maquinas/');
+  const sel = document.getElementById('mob-maquina');
+  sel.innerHTML = mqs.filter(m => m.ativa).map(m =>
+    `<option value="${m.id}" data-meta="${m.meta_padrao}" ${m.id == maquinaId ? 'selected' : ''}>${m.nome}</option>`
+  ).join('');
+}
+
+async function loadProdutosEstoque() {
+  try {
+    const prods = await req('/estoque/produtos');
+    document.getElementById('mob-produto-estoque').innerHTML =
+      '<option value="">— Não vincular —</option>' +
+      prods.map(p => `<option value="${p.id}">${p.nome}${p.marca ? ' — '+p.marca : ''} (${fmtNum(p.quantidade_atual)} ${p.unidade})</option>`).join('');
+  } catch(e) {}
+}
+
+async function loadResumo() {
+  try {
+    const mes = new Date().toISOString().slice(0,7);
+    const res = await req('/producao/resumo/' + mes);
+    const op = res.find(r => r.colaborador_id === operadorAtual.id);
+    const resumoEl = document.getElementById('mob-resumo');
+    const metaBarEl = document.getElementById('mob-meta-bar');
+
+    if (op) {
+      const media = Math.round(op.media_diaria || 0);
+      const total = op.total_producao || 0;
+      const dias = op.dias_trabalhados || 0;
+      const meta = op.meta || 8000;
+      const pct = Math.min(100, Math.round((media / meta) * 100));
+      const cor = pct >= 100 ? 'var(--success)' : pct >= 80 ? 'var(--accent)' : 'var(--danger)';
+
+      resumoEl.innerHTML = `
+        <div class="resumo-item">
+          <div class="resumo-label">Total Mês</div>
+          <div class="resumo-valor accent">${fmtNum(total)}</div>
+        </div>
+        <div class="resumo-item">
+          <div class="resumo-label">Média/Dia</div>
+          <div class="resumo-valor ${pct>=100?'success':pct>=80?'accent':'danger'}">${fmtNum(media)}</div>
+        </div>
+        <div class="resumo-item">
+          <div class="resumo-label">Dias Trab.</div>
+          <div class="resumo-valor info">${dias}</div>
+        </div>
+        <div class="resumo-item">
+          <div class="resumo-label">Status</div>
+          <div class="resumo-valor" style="font-size:13px">${pct>=100 ? '✅ Na meta' : '⚠️ Abaixo'}</div>
+        </div>`;
+
+      metaBarEl.style.display = 'block';
+      document.getElementById('mob-meta-fill').style.cssText = `width:${pct}%;background:${cor}`;
+      document.getElementById('mob-meta-label').textContent = `${pct}% da meta diária (${fmtNum(meta)} pçs)`;
+    } else {
+      resumoEl.innerHTML = `
+        <div class="resumo-item" style="grid-column:1/-1;text-align:center">
+          <div class="resumo-label">Nenhum lançamento este mês</div>
+          <div style="font-size:13px;color:var(--muted);margin-top:4px">Faça seu primeiro lançamento!</div>
+        </div>`;
+      metaBarEl.style.display = 'none';
+    }
+  } catch(e) {}
+}
+
+async function loadHistorico() {
+  try {
+    const mes = new Date().toISOString().slice(0,7);
+    const rows = await req(`/producao/?mes=${mes}&colaborador_id=${operadorAtual.id}`);
+    const el = document.getElementById('mob-historico');
+    if (!rows.length) { el.innerHTML = '<div class="empty">Sem lançamentos este mês</div>'; return; }
+    el.innerHTML = rows.slice(0,15).map(r => {
+      const exc = r.excedente || 0;
+      const cor = exc > 0 ? 'var(--success)' : exc < 0 ? 'var(--danger)' : 'var(--muted)';
+      const sig = exc > 0 ? '+' : '';
+      return `<div class="hist-item">
+        <div>
+          <div class="hist-data">${fmtDate(r.data)}</div>
+          <div class="hist-exc" style="color:${cor}">${sig}${fmtNum(exc)} excedente</div>
+        </div>
+        <div style="text-align:right">
+          <div class="hist-val">${fmtNum(r.producao)}</div>
+          <div class="hist-data">peças</div>
+        </div>
+      </div>`;
+    }).join('');
+  } catch(e) {}
+}
+
+function switchTab(tab) {
+  document.getElementById('tab-content-prod').style.display = tab === 'prod' ? '' : 'none';
+  document.getElementById('tab-content-hist').style.display = tab === 'hist' ? '' : 'none';
+  document.getElementById('tab-prod').className = 'tab' + (tab === 'prod' ? ' active' : '');
+  document.getElementById('tab-hist').className = 'tab' + (tab === 'hist' ? ' active' : '');
+  if (tab === 'hist') loadHistorico();
+}
+
+function togglePerda() {
+  perdaAtiva = !perdaAtiva;
+  document.getElementById('perda-sw').className = 'toggle-sw' + (perdaAtiva ? ' on' : '');
+  document.getElementById('perda-fields').style.display = perdaAtiva ? '' : 'none';
+}
+
+let sobraAtiva = false;
+function toggleSobra() {
+  sobraAtiva = !sobraAtiva;
+  const sw = document.getElementById('sobra-sw');
+  sw.className = 'toggle-sw' + (sobraAtiva ? ' on' : '');
+  sw.style.background = sobraAtiva ? 'var(--success)' : '';
+  document.getElementById('sobra-fields').style.display = sobraAtiva ? '' : 'none';
+}
+
+function saveOfflineSubmission(data) {
+  const queue = JSON.parse(localStorage.getItem('pratic-offline-producao') || '[]');
+  queue.push(data);
+  localStorage.setItem('pratic-offline-producao', JSON.stringify(queue));
+}
+
+async function syncOfflineQueue() {
+  if (!navigator.onLine) return;
+  const queue = JSON.parse(localStorage.getItem('pratic-offline-producao') || '[]');
+  if (!queue.length) return;
+  
+  showAlert(`Sincronizando ${queue.length} lançamentos salvos offline...`, 'info');
+  const failed = [];
+  
+  for (const item of queue) {
+    try {
+      await req('/producao/', 'POST', item);
+    } catch (e) {
+      console.error('Falha ao sincronizar lançamento offline:', e);
+      failed.push(item);
+    }
+  }
+  
+  localStorage.setItem('pratic-offline-producao', JSON.stringify(failed));
+  if (failed.length === 0) {
+    showAlert('Lançamentos salvos offline foram sincronizados!', 'success');
+    if (typeof loadResumo === 'function') loadResumo();
+    if (typeof loadHistorico === 'function') loadHistorico();
+  } else {
+    showAlert(`Falha ao sincronizar ${failed.length} lançamentos. Serão reenviados na próxima conexão.`, 'danger');
+  }
+}
+
+function updateConnectionStatus() {
+  const statusEl = document.getElementById('connection-status');
+  if (statusEl) {
+    if (navigator.onLine) {
+      statusEl.className = 'offline-badge online';
+      statusEl.textContent = '🟢 Online';
+    } else {
+      statusEl.className = 'offline-badge offline';
+      statusEl.textContent = '🔴 Offline';
+    }
+  }
+}
+window.addEventListener('online', () => {
+  updateConnectionStatus();
+  syncOfflineQueue();
+});
+window.addEventListener('offline', updateConnectionStatus);
+document.addEventListener('DOMContentLoaded', () => {
+  updateConnectionStatus();
+  syncOfflineQueue();
+});
+
+async function salvarMobile() {
+  const producao = +document.getElementById('mob-producao').value;
+  const data = document.getElementById('mob-data').value;
+  const maquinaId = +document.getElementById('mob-maquina').value;
+  const produtoEstoqueId = +document.getElementById('mob-produto-estoque').value || null;
+
+  if (!data) { showFormAlert('Informe a data'); return; }
+  if (!maquinaId) { showFormAlert('Selecione a máquina'); return; }
+  if (producao < 0) { showFormAlert('Produção inválida'); return; }
+
+  const perda = perdaAtiva ? +document.getElementById('mob-perda-qtd').value || 0 : 0;
+  const perdaTipo = perdaAtiva ? document.getElementById('mob-perda-tipo').value : null;
+  const perdaObs = perdaAtiva ? document.getElementById('mob-perda-obs').value : null;
+  const sobra = sobraAtiva ? +document.getElementById('mob-sobra-qtd').value || 0 : 0;
+
+  const maqSel = document.getElementById('mob-maquina').selectedOptions[0];
+  const meta = +(maqSel?.getAttribute('data-meta') || 8000);
+
+  const btn = document.getElementById('mob-btn-salvar');
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner" style="margin:0 auto"></div>';
+
+  const payload = {
+    colaborador_id: operadorAtual.id,
+    maquina_id: maquinaId,
+    data, meta, producao,
+    produto_estoque_id: produtoEstoqueId,
+    perda_quantidade: perda
+  };
+
+  if (!navigator.onLine) {
+    saveOfflineSubmission(payload);
+    const exc = producao - meta;
+    document.getElementById('tela-lancamento').style.display = 'none';
+    document.getElementById('tela-sucesso').style.display = 'block';
+    document.getElementById('sucesso-sub').innerHTML = `${operadorAtual.nome} — ${fmtDate(data)} <br><span style="color:var(--danger); font-weight:700;">💾 Salvo localmente (Offline)</span>`;
+    document.getElementById('sucesso-cards').innerHTML = `
+      <div class="resumo-item">
+        <div class="resumo-label">Produção</div>
+        <div class="resumo-valor accent">${fmtNum(producao)}</div>
+      </div>
+      <div class="resumo-item">
+        <div class="resumo-label">Excedente</div>
+        <div class="resumo-valor ${exc>=0?'success':'danger'}">${exc>=0?'+':''}${fmtNum(exc)}</div>
+      </div>
+      ${perda > 0 ? `
+      <div class="resumo-item">
+        <div class="resumo-label">Perda</div>
+        <div class="resumo-valor danger">${fmtNum(perda)}</div>
+      </div>
+      <div class="resumo-item">
+        <div class="resumo-label">Tipo Perda</div>
+        <div class="resumo-valor" style="font-size:13px">${perdaTipo||'—'}</div>
+      </div>` : ''}
+      ${sobra > 0 ? `
+      <div class="resumo-item">
+        <div class="resumo-label">Sobra</div>
+        <div class="resumo-valor success">+${fmtNum(sobra)}</div>
+      </div>` : ''}
+    `;
+    return;
+  }
+
+  try {
+    const result = await req('/producao/', 'POST', payload);
+
+    // Tela de sucesso
+    const exc = result.excedente || (producao - meta);
+    document.getElementById('tela-lancamento').style.display = 'none';
+    document.getElementById('tela-sucesso').style.display = 'block';
+    document.getElementById('sucesso-sub').textContent = `${operadorAtual.nome} — ${fmtDate(data)}`;
+    document.getElementById('sucesso-cards').innerHTML = `
+      <div class="resumo-item">
+        <div class="resumo-label">Produção</div>
+        <div class="resumo-valor accent">${fmtNum(producao)}</div>
+      </div>
+      <div class="resumo-item">
+        <div class="resumo-label">Excedente</div>
+        <div class="resumo-valor ${exc>=0?'success':'danger'}">${exc>=0?'+':''}${fmtNum(exc)}</div>
+      </div>
+      ${perda > 0 ? `
+      <div class="resumo-item">
+        <div class="resumo-label">Perda</div>
+        <div class="resumo-valor danger">${fmtNum(perda)}</div>
+      </div>
+      <div class="resumo-item">
+        <div class="resumo-label">Tipo Perda</div>
+        <div class="resumo-valor" style="font-size:13px">${perdaTipo||'—'}</div>
+      </div>` : ''}
+      ${sobra > 0 ? `
+      <div class="resumo-item">
+        <div class="resumo-label">Sobra</div>
+        <div class="resumo-valor success">+${fmtNum(sobra)}</div>
+      </div>` : ''}
+    `;
+
+  } catch(e) {
+    showFormAlert(e.message);
+    btn.disabled = false;
+    btn.textContent = 'Confirmar Lançamento';
+  }
+}
+
+function novoLancamento() {
+  document.getElementById('mob-producao').value = '';
+  document.getElementById('mob-perda-qtd').value = '';
+  document.getElementById('mob-perda-obs').value = '';
+  document.getElementById('mob-btn-salvar').disabled = false;
+  document.getElementById('mob-btn-salvar').textContent = 'Confirmar Lançamento';
+  if (perdaAtiva) togglePerda();
+  if (sobraAtiva) toggleSobra();
+  document.getElementById('tela-sucesso').style.display = 'none';
+  document.getElementById('tela-lancamento').style.display = 'block';
+  loadResumo();
+  loadProdutosEstoque();
+}
+
+function trocarOperador() {
+  operadorAtual = null;
+  document.getElementById('op-badge').textContent = 'Selecionar ▾';
+  document.getElementById('tela-selecao').style.display = 'block';
+  document.getElementById('tela-lancamento').style.display = 'none';
+  document.getElementById('tela-sucesso').style.display = 'none';
+}
+
+// ── VERIFICAR PERMISSÃO DE ACESSO
+async function verificarAcesso() {
+  // 1. Verifica login
+  let me;
+  try {
+    me = await req('/auth/me');
+  } catch (e) {
+    // Se der erro 401 (não logado), mostra tela amigável para o gestor autenticar
+    document.body.innerHTML = `
+      <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0d0f14;font-family:'DM Sans',sans-serif">
+        <div style="text-align:center;padding:40px;max-width:360px">
+          <div style="font-size:60px;margin-bottom:20px">📱</div>
+          <div style="font-family:'Syne',sans-serif;font-size:24px;font-weight:800;color:var(--accent);margin-bottom:12px">PRATIC</div>
+          <div style="font-size:16px;color:#e8eaf0;margin-bottom:12px;font-weight:600">Aparelho não autenticado</div>
+          <div style="font-size:14px;color:var(--muted);line-height:1.5;margin-bottom:24px">Solicite ao Gestor que faça login neste dispositivo para liberar os lançamentos no chão de fábrica.</div>
+          <button onclick="window.location.href='/login?redirect=' + encodeURIComponent(window.location.pathname)" class="btn btn-primary" style="width:auto;padding:12px 24px;font-size:14px">🔑 Autenticar Aparelho</button>
+        </div>
+      </div>`;
+    return;
+  }
+
+  // 2. Verifica se a página mobile está liberada nas configurações de permissões
+  try {
+    const r = await fetch(API + '/configuracoes/permissoes/all');
+    const perms = await r.json();
+    
+    const todosPerms = Object.values(perms).join(',');
+    const mobileAtivo = todosPerms.includes('mobile');
+    
+    if (!mobileAtivo) {
+      document.body.innerHTML = `
+        <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0d0f14;font-family:'DM Sans',sans-serif">
+          <div style="text-align:center;padding:40px">
+            <div style="font-size:60px;margin-bottom:20px">🔒</div>
+            <div style="font-family:'Syne',sans-serif;font-size:24px;font-weight:800;color:#f0b429;margin-bottom:10px">PRATIC</div>
+            <div style="font-size:16px;color:#e8eaf0;margin-bottom:8px">Acesso não autorizado</div>
+            <div style="font-size:13px;color:#6b7280">O acesso mobile está desativado.<br>Entre em contato com o gestor.</div>
+          </div>
+        </div>`;
+      return;
+    }
+  } catch(e) {
+    // Permite acesso se for falha de rede das permissões mas o login já funcionou
+  }
+  loadOperadores();
+}
+
+async function sairMobile() {
+  if (!confirm('Deseja realmente sair?')) return;
+  try {
+    await fetch('/api/auth/logout', { method: 'POST' });
+  } catch (e) {
+    console.error(e);
+  }
+  localStorage.removeItem('user_nome');
+  localStorage.removeItem('user_role');
+  localStorage.removeItem('user_username');
+  window.location.reload();
+}
+
+async function loadTopbarWidgets() {
+  const dateEl = document.querySelector('#topbar-date span');
+  if (dateEl) {
+    const hoje = new Date();
+    const dia = String(hoje.getDate()).padStart(2, '0');
+    const mes = String(hoje.getMonth() + 1).padStart(2, '0');
+    const ano = hoje.getFullYear();
+    dateEl.textContent = `${dia}/${mes}/${ano}`;
+  }
+
+  let cidade = '';
+  let uf = '';
+  try {
+    const dados = await req('/configuracoes/empresa');
+    cidade = dados.cidade || '';
+    uf = dados.uf || '';
+  } catch (e) {
+    console.error('Erro ao buscar dados da empresa para topbar:', e);
+  }
+
+  const cityEl = document.querySelector('#topbar-city span');
+  if (cityEl) {
+    if (cidade) {
+      cityEl.textContent = uf ? `${cidade} - ${uf.toUpperCase()}` : cidade;
+    } else {
+      cityEl.textContent = 'Sem cidade';
+    }
+  }
+
+  const tempEl = document.querySelector('#topbar-temp span');
+  if (tempEl && cidade) {
+    try {
+      const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cidade)}&count=1&language=pt&format=json`;
+      const geoRes = await fetch(geoUrl);
+      if (geoRes.ok) {
+        const geoData = await geoRes.json();
+        if (geoData.results && geoData.results.length > 0) {
+          const { latitude, longitude } = geoData.results[0];
+          const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`;
+          const weatherRes = await fetch(weatherUrl);
+          if (weatherRes.ok) {
+            const weatherData = await weatherRes.json();
+            if (weatherData.current_weather && typeof weatherData.current_weather.temperature !== 'undefined') {
+              const temp = Math.round(weatherData.current_weather.temperature);
+              tempEl.textContent = `${temp}°C`;
+              return;
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Erro ao obter temperatura:', err);
+    }
+  }
+  
+  if (tempEl) {
+    tempEl.textContent = '—°C';
+  }
+}
+
+// INIT
+const mesAtual = new Date().toISOString().slice(0, 7);
+const [y, m] = mesAtual.split('-');
+const meses = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+const el = document.getElementById('topbar-mes');
+if (el) el.textContent = `${meses[+m - 1]} de ${y}`;
+
+verificarAcesso();
+loadTopbarWidgets();
+
+
+/* =========================================================
+   Proteção contra duplo clique em botões de salvar/confirmar
+   ========================================================= */
+(function () {
+  if (window.PRATIC_SAVE_GUARD_INSTALLED) return;
+  window.PRATIC_SAVE_GUARD_INSTALLED = true;
+
+  const actionWords = ['salvar', 'registrar', 'confirmar', 'importar', 'baixar backup'];
+  let currentActionButton = null;
+
+  function normalizeText(value) {
+    return String(value || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function isProtectedButton(btn) {
+    if (!btn || btn.tagName !== 'BUTTON') return false;
+    if (btn.dataset.noGuard === 'true') return false;
+    const onclick = normalizeText(btn.getAttribute('onclick') || '');
+    const label = normalizeText(btn.textContent || btn.innerText || '');
+    return actionWords.some(w => label.includes(w)) ||
+      /salvar|confirmar|registrar|importar|restore|backup/i.test(onclick);
+  }
+
+  function getButton() {
+    if (currentActionButton && document.contains(currentActionButton)) return currentActionButton;
+    const active = document.activeElement;
+    if (active && active.tagName === 'BUTTON') return active;
+    return null;
+  }
+
+  function setLoadingText(btn) {
+    if (!btn || btn.dataset.originalHtml) return;
+    btn.dataset.originalHtml = btn.innerHTML;
+    const text = normalizeText(btn.textContent || btn.innerText || '');
+    if (text.includes('importar')) btn.innerHTML = 'Importando...';
+    else if (text.includes('confirmar')) btn.innerHTML = 'Confirmando...';
+    else if (text.includes('registrar')) btn.innerHTML = 'Registrando...';
+    else if (text.includes('backup') || text.includes('baixar')) btn.innerHTML = 'Processando...';
+    else btn.innerHTML = 'Salvando...';
+  }
+
+  function lock(btn) {
+    if (!btn || !isProtectedButton(btn)) return true;
+    if (btn.dataset.guardBusy === '1') return false;
+    btn.dataset.guardBusy = '1';
+    btn.disabled = true;
+    btn.classList.add('btn-loading');
+    setLoadingText(btn);
+    return true;
+  }
+
+  function unlock(btn) {
+    if (!btn || !document.contains(btn)) return;
+    delete btn.dataset.guardBusy;
+    btn.disabled = false;
+    btn.classList.remove('btn-loading');
+    if (btn.dataset.originalHtml) {
+      btn.innerHTML = btn.dataset.originalHtml;
+      delete btn.dataset.originalHtml;
+    }
+  }
+
+  document.addEventListener('click', function (event) {
+    const btn = event.target.closest && event.target.closest('button');
+    if (!btn || !isProtectedButton(btn)) return;
+    if (btn.dataset.guardBusy === '1') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return false;
+    }
+    currentActionButton = btn;
+    setTimeout(() => {
+      if (currentActionButton === btn) currentActionButton = null;
+    }, 1000);
+  }, true);
+
+  function guardFunction(name) {
+    const original = window[name];
+    if (typeof original !== 'function' || original.__praticGuarded) return;
+    const guarded = async function (...args) {
+      const btn = getButton();
+      if (btn && !lock(btn)) return;
+      try {
+        return await original.apply(this, args);
+      } finally {
+        if (btn) unlock(btn);
+      }
+    };
+    guarded.__praticGuarded = true;
+    window[name] = guarded;
+  }
+
+  function installFunctionGuards() {
+    [
+      'salvarProducao', 'salvarColaborador', 'salvarMaquina', 'salvarAuxiliar',
+      'salvarConfig', 'salvarProduto', 'salvarProdutoEstoque', 'salvarMovimentacao',
+      'salvarPerda', 'salvarCategoria', 'salvarPedido', 'salvarCliente',
+      'salvarEmpresa', 'salvarPermissoes', 'salvarEPI', 'salvarEntrega',
+      'salvarFuncaoEPI', 'salvarNovoPedido', 'salvarNovoCliente', 'salvarMobile',
+      'salvarColabProd', 'salvarMaqProd', 'confirmarImportCSV', 'confirmarImportacao',
+      'confirmarRestore', 'confirmarMovimentacao', 'confirmarMovRapida', 'fazerBackup'
+    ].forEach(guardFunction);
+  }
+
+  installFunctionGuards();
+  document.addEventListener('DOMContentLoaded', installFunctionGuards);
+  setTimeout(installFunctionGuards, 300);
+})();
+</script>
+</body>
+</html>

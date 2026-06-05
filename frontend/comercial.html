@@ -1,0 +1,1081 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PRATIC — Comercial</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script>
+  (function() {
+    const savedTheme = localStorage.getItem('pratic-theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+  })();
+</script>
+<link rel="stylesheet" href="css/common.css?v=2">
+<style>
+  body {
+    display: flex !important;
+    flex-direction: column !important;
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div style="display:flex;align-items:center;gap:24px;flex-wrap:wrap">
+    <div>
+      <div class="logo-title" style="font-size: 20px;">PRATIC</div>
+      <div class="logo-sub" style="font-size: 10px;">Portal Comercial</div>
+    </div>
+    <div id="topbar-info-widgets" style="display:flex;align-items:center;gap:24px;font-size:14px;color:var(--muted);border-left:1px solid var(--border);padding-left:24px;flex-wrap:wrap;font-weight:500">
+      <span id="topbar-date" style="display:flex;align-items:center;gap:6px">📅 <span style="color:var(--text)">—</span></span>
+      <span id="topbar-city" style="display:flex;align-items:center;gap:6px">📍 <span style="color:var(--text)">—</span></span>
+      <span id="topbar-temp" style="display:flex;align-items:center;gap:6px">🌡️ <span style="color:var(--accent);font-weight:700">—°C</span></span>
+    </div>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px">
+    <!-- Seletor de Setores Dropdown -->
+    <div class="sector-switcher">
+      <button class="btn btn-sm btn-secondary" onclick="toggleSectorMenu(event)">🌐 Portais ▾</button>
+      <div class="sector-switcher-menu" id="sector-menu">
+        <a class="sector-switcher-item" onclick="location.href='/'">🖥️ Gestor / Dashboard</a>
+        <a class="sector-switcher-item" onclick="location.href='/producao-setor'">🏭 Setor Produção</a>
+        <a class="sector-switcher-item" onclick="location.href='/comercial'">🏢 Comercial</a>
+        <a class="sector-switcher-item" href="/manual.html" target="_blank">📖 Manual do Usuário</a>
+      </div>
+    </div>
+    <!-- Alternar Tema Button -->
+    <button class="btn btn-sm btn-secondary" onclick="toggleTheme()" title="Alternar Tema" style="font-size:14px;padding:6px 10px;">🌗</button>
+
+    <span id="topbar-user-name" style="font-size:13px;font-weight:600;margin-right:8px;color:var(--text);display:flex;align-items:center;gap:4px">👤 <span id="topbar-user-name-txt">—</span></span>
+    <span class="setor-badge">🏢 Setor Comercial</span>
+    <span class="badge" id="topbar-mes" style="font-size:12px;padding:4px 10px;">—</span>
+    <button class="btn btn-sm btn-secondary" onclick="openModal('modal-ajuda-comercial')" style="padding: 6px 12px; font-size: 12px;">❓ Ajuda</button>
+    <button class="btn btn-sm btn-danger" onclick="sairSistema()" style="padding: 6px 12px; font-size: 12px;">🚪 Sair</button>
+  </div>
+</div>
+
+<div class="content">
+  <div id="alert-com"></div>
+
+  <!-- TABS -->
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab('pedidos')">🧾 Meus Pedidos</button>
+    <button class="tab-btn" onclick="switchTab('novo')">➕ Novo Pedido</button>
+    <button class="tab-btn" onclick="switchTab('importar')">📥 Importar</button>
+  </div>
+
+  <!-- ── TAB PEDIDOS ── -->
+  <div id="tab-pedidos">
+    <div class="cards-grid" id="com-cards"></div>
+
+    <div class="flex items-center justify-between mb-4">
+      <div class="flex gap-2 items-center">
+        <select id="com-filtro-status" onchange="loadPedidosCom()" style="min-width:160px">
+          <option value="">Todos os status</option>
+          <option value="aberto">Aberto</option>
+          <option value="em_producao">Em produção</option>
+          <option value="produzido">Produzido</option>
+          <option value="entregue">Entregue</option>
+        </select>
+        <input type="text" id="com-busca" placeholder="Buscar pedido..." oninput="loadPedidosCom()" style="min-width:200px">
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <div class="table-head">
+        <span class="table-head-title">Pedidos</span>
+      </div>
+      <table>
+        <thead><tr>
+          <th>Nº Pedido</th><th>Cliente</th><th>Prazo</th>
+          <th>Dias</th><th>Itens</th><th>Status</th><th></th>
+        </tr></thead>
+        <tbody id="com-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── TAB NOVO PEDIDO ── -->
+  <div id="tab-novo" style="display:none">
+    <div class="section-title">Dados do Pedido</div>
+    <div class="form-grid mb-4">
+      <div class="form-group">
+        <label>Número do Pedido</label>
+        <input type="text" id="np-numero" placeholder="Ex: PED-2026-001">
+      </div>
+      <div class="form-group">
+        <label>Prazo de Entrega</label>
+        <input type="date" id="np-prazo">
+      </div>
+      <div class="form-group">
+        <label>Vendedor Responsável</label>
+        <input type="text" id="np-vendedor">
+      </div>
+      <div class="form-group">
+        <label>Observações</label>
+        <input type="text" id="np-obs" placeholder="Observações gerais">
+      </div>
+    </div>
+
+    <div class="section-title">Cliente</div>
+    <div class="form-grid mb-4">
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Buscar cliente existente ou cadastrar novo</label>
+        <div class="flex gap-2">
+          <select id="np-cliente" style="flex:1">
+            <option value="">— Selecione um cliente —</option>
+          </select>
+          <button class="btn btn-secondary" onclick="openModalNovoCliente()">+ Novo Cliente</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-title">Itens do Pedido
+      <button class="btn btn-sm btn-secondary" onclick="addItemNP()" style="font-size:11px">+ Item</button>
+    </div>
+    <div id="np-itens"></div>
+
+    <div id="np-alert" style="margin-top:12px"></div>
+    <div class="flex gap-2 mt-4">
+      <button class="btn btn-primary" onclick="salvarNovoPedido()" style="flex:1">✓ Confirmar Pedido</button>
+      <button class="btn btn-secondary" onclick="limparFormulario()">Limpar</button>
+    </div>
+  </div>
+
+  <!-- ── TAB IMPORTAR ── -->
+  <div id="tab-importar" style="display:none">
+    <div class="section-title">Importar Pedidos</div>
+
+    <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()"
+         ondragover="event.preventDefault();this.classList.add('drag')"
+         ondragleave="this.classList.remove('drag')"
+         ondrop="handleDrop(event)">
+      <div class="drop-zone-icon">📥</div>
+      <div class="drop-zone-title">Arraste o arquivo aqui ou clique para selecionar</div>
+      <div class="drop-zone-sub">Suporta Excel (.xlsx, .xls) e CSV (.csv)</div>
+      <input type="file" id="file-input" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleFile(this.files[0])">
+    </div>
+
+    <div id="imp-preview" style="display:none">
+      <div class="section-title">Pré-visualização dos dados</div>
+      <div id="imp-info" class="alert alert-warn mb-4"></div>
+      <div class="table-wrap mb-4" style="overflow-x:auto">
+        <table id="imp-table">
+          <thead id="imp-thead"></thead>
+          <tbody id="imp-tbody"></tbody>
+        </table>
+      </div>
+
+      <div class="section-title">Mapeamento de Colunas</div>
+      <div class="form-grid mb-4" id="imp-mapeamento"></div>
+
+      <div id="imp-alert"></div>
+      <div class="flex gap-2">
+        <button class="btn btn-primary" onclick="confirmarImportacao()" style="flex:1">✓ Importar Pedidos</button>
+        <button class="btn btn-secondary" onclick="cancelarImportacao()">Cancelar</button>
+      </div>
+    </div>
+
+    <div class="section-title">Modelo de importação</div>
+    <div class="card">
+      <div class="card-label" style="margin-bottom:12px">Baixe o modelo para preencher e importar</div>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:16px">
+        O arquivo deve conter as colunas: <strong style="color:var(--text)">numero_pedido, cliente, prazo_entrega, item_descricao, item_quantidade, item_unidade</strong>
+      </p>
+      <button class="btn btn-secondary" onclick="baixarModelo()">⬇ Baixar modelo Excel</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL DETALHE PEDIDO -->
+<div class="modal-overlay" id="modal-com-detalhe">
+  <div class="modal" style="max-width:740px">
+    <div class="modal-title" id="modal-com-det-title">Pedido</div>
+    <div id="modal-com-det-content"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-com-detalhe')">Fechar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL NOVO CLIENTE (RÁPIDO) -->
+<div class="modal-overlay" id="modal-com-cliente">
+  <div class="modal" style="max-width:580px">
+    <div class="modal-title">Cadastrar Cliente</div>
+    <div class="form-grid">
+      <div class="form-group" style="grid-column:1/-1">
+        <label>CPF / CNPJ <span style="color:var(--muted);font-size:11px">(busca automática pelo CNPJ)</span></label>
+        <div class="flex gap-2">
+          <input type="text" id="nc-cnpj" placeholder="CPF: 000.000.000-00 ou CNPJ: 00.000.000/0000-00" style="flex:1" oninput="formatDocumento(this)">
+          <button class="btn btn-secondary" onclick="buscarCNPJ2()" id="btn-buscar-doc">Buscar</button>
+        </div>
+        <span id="doc-tipo-label" style="font-size:11px;color:var(--muted)"></span>
+      </div>
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Razão Social</label>
+        <input type="text" id="nc-razao">
+      </div>
+      <div class="form-group">
+        <label>Nome Fantasia</label>
+        <input type="text" id="nc-fantasia">
+      </div>
+      <div class="form-group">
+        <label>Telefone</label>
+        <input type="text" id="nc-telefone">
+      </div>
+      <div class="form-group">
+        <label>CEP</label>
+        <div class="flex gap-2">
+          <input type="text" id="nc-cep" placeholder="00000-000" style="flex:1" oninput="formatCEP2(this)">
+          <button class="btn btn-secondary" onclick="buscarCEP2()">Buscar</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Cidade/UF</label>
+        <div class="flex gap-2">
+          <input type="text" id="nc-cidade" placeholder="Cidade" style="flex:1">
+          <input type="text" id="nc-uf" placeholder="UF" maxlength="2" style="width:60px;text-transform:uppercase">
+        </div>
+      </div>
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Logradouro</label>
+        <input type="text" id="nc-logradouro">
+      </div>
+      <div class="form-group">
+        <label>Número</label>
+        <input type="text" id="nc-numero-end">
+      </div>
+      <div class="form-group">
+        <label>Bairro</label>
+        <input type="text" id="nc-bairro">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-com-cliente')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarNovoCliente()">Salvar Cliente</button>
+    </div>
+  </div>
+</div>
+<!-- MODAL AJUDA COMERCIAL -->
+<div class="modal-overlay" id="modal-ajuda-comercial">
+  <div class="modal" style="max-width:550px">
+    <div class="modal-title">❓ Ajuda - Portal Comercial</div>
+    <div style="max-height:60vh; overflow-y:auto; padding-right:8px; font-size:14px; line-height:1.6; color:#caced6">
+      <p style="margin-bottom:12px">Este portal gerencia a carteira de clientes e os pedidos de vendas. Abaixo, veja como utilizar cada função:</p>
+      
+      <strong style="color:var(--accent); display:block; margin:14px 0 6px">🧾 Gestão de Pedidos:</strong>
+      <ul style="padding-left:20px; margin-bottom:12px">
+        <li><strong>Visualizar Pedidos:</strong> Na aba "Meus Pedidos", você acompanha a listagem geral com prazos, dias restantes para entrega e status atualizado (Aberto, Em produção, Produzido, Entregue).</li>
+        <li><strong>Filtros e Busca:</strong> Use o seletor de status ou o campo de busca para encontrar pedidos por número ou cliente em tempo real.</li>
+      </ul>
+
+      <strong style="color:var(--accent); display:block; margin:14px 0 6px">➕ Como Lançar Novo Pedido:</strong>
+      <ol style="padding-left:20px; margin-bottom:12px">
+        <li>Vá para a aba <strong>Novo Pedido</strong>.</li>
+        <li>Selecione o cliente cadastrado.</li>
+        <li>Defina o número do pedido e a <strong>Data Limite de Entrega</strong> (o sistema calcula os dias de tolerância automaticamente).</li>
+        <li>Em "Itens do Pedido", selecione um produto do estoque e a quantidade. Use "+ Adicionar Item" para incluir mais de um produto no mesmo pedido.</li>
+        <li>Clique em <strong>Salvar Pedido</strong>.</li>
+      </ol>
+
+      <strong style="color:var(--accent); display:block; margin:14px 0 6px">👥 Cadastro de Clientes:</strong>
+      <ul style="padding-left:20px; margin-bottom:12px">
+        <li>Clique no botão <strong>+ Novo Cliente</strong> (ao lado do seletor de cliente na tela de novo pedido) para abrir o cadastro rápido.</li>
+        <li>Insira os dados cadastrais (Nome, CNPJ/CPF, Telefone, Endereço completo) e clique em Salvar.</li>
+      </ul>
+      
+      <strong style="color:var(--accent); display:block; margin:14px 0 6px">📥 Importar CSV:</strong>
+      <ul style="padding-left:20px; margin-bottom:12px">
+        <li>Na aba <strong>Importar</strong>, você pode carregar uma planilha CSV contendo múltiplos pedidos de uma só vez. Siga o mapeamento de colunas exibido na tela antes de confirmar a importação.</li>
+      </ul>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="closeModal('modal-ajuda-comercial')">Entendi</button>
+    </div>
+  </div>
+</div>
+
+
+<script>
+const API = window.location.origin + '/api';
+let npItens = [];
+let importData = [];
+let importHeaders = [];
+
+const STATUS_LABEL = {
+  aberto: '📋 Aberto', em_producao: '🏭 Em produção',
+  produzido: '✅ Produzido', entregue: '📦 Entregue'
+};
+const STATUS_PILL = {
+  aberto: 'pill-info', em_producao: 'pill-warn',
+  produzido: 'pill-success', entregue: 'pill-success'
+};
+const STATUS_NEXT = {
+  aberto: 'em_producao', em_producao: 'produzido', produzido: 'entregue', entregue: null
+};
+const STATUS_NEXT_LABEL = {
+  aberto: '→ Iniciar produção', em_producao: '→ Marcar produzido',
+  produzido: '→ Confirmar entrega', entregue: null
+};
+
+async function req(path, method='GET', body=null) {
+  const opts = { method, headers: {'Content-Type':'application/json'} };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(API + path, opts);
+  if (r.status === 401) {
+    window.location.href = '/login?redirect=' + encodeURIComponent(window.location.pathname + window.location.search);
+    return;
+  }
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.detail || 'Erro');
+  return d;
+}
+
+async function sairSistema() {
+  if (!confirm('Deseja realmente sair?')) return;
+  try {
+    await fetch('/api/auth/logout', { method: 'POST' });
+  } catch (e) {
+    console.error(e);
+  }
+  localStorage.removeItem('user_nome');
+  localStorage.removeItem('user_role');
+  localStorage.removeItem('user_username');
+  window.location.href = '/login';
+}
+
+function fmtDate(s) { if(!s) return '—'; const [y,m,d]=s.split('-'); return `${d}/${m}/${y}`; }
+function fmtNum(n) { return Number(n||0).toLocaleString('pt-BR'); }
+
+function showAlert(msg, type='success') {
+  const el = document.getElementById('alert-com');
+  el.innerHTML = `<div class="alert alert-${type}">${msg}</div>`;
+  setTimeout(() => el.innerHTML='', 4000);
+}
+
+// ── TABS
+function switchTab(tab) {
+  ['pedidos','novo','importar'].forEach(t => {
+    document.getElementById('tab-' + t).style.display = t === tab ? '' : 'none';
+    document.querySelectorAll('.tab-btn')[['pedidos','novo','importar'].indexOf(t)].classList.toggle('active', t === tab);
+  });
+  if (tab === 'pedidos') { loadPedidosCom(); loadCards(); }
+  if (tab === 'novo') loadClientesSelect();
+}
+
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+
+document.querySelectorAll('.modal-overlay').forEach(m => {
+  m.addEventListener('click', e => { if (e.target === m) m.classList.remove('open'); });
+});
+
+// ── CARDS
+async function loadCards() {
+  try {
+    const al = await req('/pedidos/alertas/resumo');
+    const rows = await req('/pedidos/');
+    const entregues = rows.filter(p => p.status === 'entregue').length;
+    document.getElementById('com-cards').innerHTML = `
+      <div class="card"><div class="card-label">Total de Pedidos</div><div class="card-value accent">${rows.length}</div></div>
+      <div class="card"><div class="card-label">Em Aberto</div><div class="card-value info">${al.em_aberto}</div></div>
+      <div class="card"><div class="card-label">Vencidos</div><div class="card-value danger">${al.vencidos}</div></div>
+      <div class="card"><div class="card-label">Entregues</div><div class="card-value success">${entregues}</div></div>
+    `;
+  } catch(e) {}
+}
+
+// ── LISTA PEDIDOS
+async function loadPedidosCom() {
+  const status = document.getElementById('com-filtro-status').value;
+  const busca = document.getElementById('com-busca').value.toLowerCase();
+  let url = '/pedidos/';
+  if (status) url += '?status=' + status;
+  const rows = await req(url);
+  const filtrados = busca ? rows.filter(p =>
+    p.numero_pedido.toLowerCase().includes(busca) ||
+    p.cliente_nome.toLowerCase().includes(busca)
+  ) : rows;
+
+  const tbody = document.getElementById('com-tbody');
+  if (!filtrados.length) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:32px">Nenhum pedido encontrado</td></tr>';
+    return;
+  }
+  tbody.innerHTML = filtrados.map(p => {
+    const dias = Math.round(p.dias_restantes);
+    const diasCor = dias < 0 ? 'var(--danger)' : dias <= 3 ? 'var(--warn)' : 'var(--success)';
+    return `<tr>
+      <td><strong>${p.numero_pedido}</strong></td>
+      <td>${p.cliente_nome}</td>
+      <td>${fmtDate(p.prazo_entrega)}</td>
+      <td style="color:${diasCor};font-weight:700">${dias < 0 ? 'Vencido' : dias + 'd'}</td>
+      <td style="color:var(--muted)">${p.itens_entregues}/${p.total_itens}</td>
+      <td><span class="pill ${STATUS_PILL[p.status]}">${STATUS_LABEL[p.status]}</span></td>
+      <td class="flex gap-2">
+        <button class="btn btn-sm btn-secondary" onclick="verDetalhe(${p.id})">Ver</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function verDetalhe(id) {
+  const p = await req('/pedidos/' + id);
+  const dias = Math.round(p.dias_restantes);
+  const diasCor = dias < 0 ? 'var(--danger)' : dias <= 3 ? 'var(--warn)' : 'var(--success)';
+  document.getElementById('modal-com-det-title').textContent = `Pedido ${p.numero_pedido}`;
+  document.getElementById('modal-com-det-content').innerHTML = `
+    <div class="cards-grid" style="margin-bottom:16px">
+      <div class="card">
+        <div class="card-label">Cliente</div>
+        <div style="font-weight:600">${p.cliente_nome}</div>
+        ${p.nome_fantasia ? `<div style="font-size:12px;color:var(--muted)">${p.nome_fantasia}</div>` : ''}
+      </div>
+      <div class="card">
+        <div class="card-label">Prazo de Entrega</div>
+        <div style="font-family:var(--fh);font-weight:800;color:${diasCor}">${fmtDate(p.prazo_entrega)}</div>
+        <div style="font-size:12px;color:${diasCor}">${dias < 0 ? 'Vencido há ' + Math.abs(dias) + ' dias' : dias + ' dias restantes'}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Status</div>
+        <span class="pill ${STATUS_PILL[p.status]}">${STATUS_LABEL[p.status]}</span>
+      </div>
+      ${p.vendedor ? `<div class="card"><div class="card-label">Vendedor</div><div style="font-weight:600">${p.vendedor}</div></div>` : ''}
+    </div>
+    ${p.observacoes ? `<div style="font-size:13px;color:var(--muted);margin-bottom:16px">📝 ${p.observacoes}</div>` : ''}
+    <div class="table-wrap">
+      <div class="table-head"><span class="table-head-title">Itens</span></div>
+      <table>
+        <thead><tr><th>Descrição</th><th>Qtd. Pedida</th><th>Produzido</th><th>Status</th></tr></thead>
+        <tbody>
+          ${p.itens.map(i => {
+            const pct = Math.min(100, Math.round((i.qtd_produzida/i.quantidade)*100));
+            return `<tr>
+              <td>${i.descricao}</td>
+              <td>${fmtNum(i.quantidade)} ${i.unidade}</td>
+              <td>
+                <div>${fmtNum(i.qtd_produzida)} (${pct}%)</div>
+                <div style="height:4px;background:var(--surface2);border-radius:2px;margin-top:4px;width:80px">
+                  <div style="height:100%;width:${pct}%;background:${pct>=100?'var(--success)':'var(--accent)'};border-radius:2px"></div>
+                </div>
+              </td>
+              <td><span class="pill ${STATUS_PILL[i.status]}">${STATUS_LABEL[i.status]}</span></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  openModal('modal-com-detalhe');
+}
+
+// ── NOVO PEDIDO
+async function loadClientesSelect() {
+  const [clientes] = await Promise.all([
+    req('/pedidos/clientes'),
+    carregarProdutos()
+  ]);
+  document.getElementById('np-cliente').innerHTML =
+    '<option value="">— Selecione um cliente —</option>' +
+    clientes.map(c => `<option value="${c.id}">${c.razao_social}${c.nome_fantasia ? ' — ' + c.nome_fantasia : ''}</option>`).join('');
+  if (!npItens.length) addItemNP();
+  else renderItensNP();
+}
+
+let produtosCadastrados = [];
+
+async function carregarProdutos() {
+  try {
+    produtosCadastrados = await req('/estoque/produtos');
+  } catch(e) { produtosCadastrados = []; }
+}
+
+function addItemNP() {
+  npItens.push({ descricao: '', quantidade: 1, unidade: 'unidade', produto_id: null });
+  renderItensNP();
+}
+
+function selecionarProduto(idx, val) {
+  if (val) {
+    const prod = produtosCadastrados.find(p => p.id === +val);
+    if (prod) {
+      npItens[idx].descricao = prod.nome + (prod.marca ? ' — ' + prod.marca : '');
+      npItens[idx].unidade = prod.unidade;
+      npItens[idx].produto_id = prod.id;
+      renderItensNP();
+    }
+  } else {
+    npItens[idx].produto_id = null;
+  }
+}
+
+function renderItensNP() {
+  const el = document.getElementById('np-itens');
+  if (!npItens.length) {
+    el.innerHTML = '<p style="color:var(--muted);font-size:13px;padding:8px 0">Clique em "+ Item" para adicionar</p>';
+    return;
+  }
+  el.innerHTML = npItens.map((item, idx) => `
+    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px">
+      <div style="display:grid;grid-template-columns:1fr auto;gap:8px;margin-bottom:8px;align-items:center">
+        <select onchange="selecionarProduto(${idx}, this.value)" style="font-size:13px">
+          <option value="">✏️ Descrição livre ou selecione produto cadastrado...</option>
+          ${produtosCadastrados.map(p =>
+            `<option value="${p.id}" ${item.produto_id===p.id?'selected':''}>${p.codigo?'['+p.codigo+'] ':''}${p.nome}${p.marca?' — '+p.marca:''} (${fmtNum(p.quantidade_atual)} ${p.unidade})</option>`
+          ).join('')}
+        </select>
+        <button class="btn btn-sm btn-danger" onclick="npItens.splice(${idx},1);renderItensNP()">✕</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 90px 110px;gap:8px">
+        <input type="text" value="${item.descricao}" placeholder="Descrição do item *"
+               oninput="npItens[${idx}].descricao=this.value" style="font-size:13px">
+        <input type="number" value="${item.quantidade}" min="1" placeholder="Qtd"
+               oninput="npItens[${idx}].quantidade=+this.value" style="font-size:13px">
+        <select onchange="npItens[${idx}].unidade=this.value" style="font-size:13px">
+          ${['unidade','kg','litro','metro','caixa','pacote'].map(u =>
+            `<option value="${u}" ${item.unidade===u?'selected':''}>${u}</option>`).join('')}
+        </select>
+      </div>
+    </div>`).join('');
+}
+
+async function salvarNovoPedido() {
+  const alertEl = document.getElementById('np-alert');
+  const numero = document.getElementById('np-numero').value.trim();
+  const prazo = document.getElementById('np-prazo').value;
+  const clienteId = +document.getElementById('np-cliente').value;
+  const itensValidos = npItens.filter(i => i.descricao.trim());
+
+  if (!numero) { alertEl.innerHTML = '<div class="alert alert-danger">Informe o número do pedido</div>'; return; }
+  if (!prazo) { alertEl.innerHTML = '<div class="alert alert-danger">Informe o prazo de entrega</div>'; return; }
+  if (!clienteId) { alertEl.innerHTML = '<div class="alert alert-danger">Selecione um cliente</div>'; return; }
+  if (!itensValidos.length) { alertEl.innerHTML = '<div class="alert alert-danger">Adicione ao menos um item</div>'; return; }
+
+  try {
+    await req('/pedidos/', 'POST', {
+      numero_pedido: numero,
+      cliente_id: clienteId,
+      prazo_entrega: prazo,
+      vendedor: document.getElementById('np-vendedor').value,
+      observacoes: document.getElementById('np-obs').value,
+      itens: itensValidos
+    });
+    alertEl.innerHTML = '<div class="alert alert-success">✓ Pedido criado com sucesso!</div>';
+    setTimeout(() => { limparFormulario(); switchTab('pedidos'); }, 1500);
+  } catch(e) {
+    alertEl.innerHTML = `<div class="alert alert-danger">${e.message}</div>`;
+  }
+}
+
+function limparFormulario() {
+  ['np-numero','np-prazo','np-vendedor','np-obs'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('np-cliente').value = '';
+  document.getElementById('np-alert').innerHTML = '';
+  npItens = [];
+  renderItensNP();
+}
+
+// ── CLIENTE RÁPIDO
+function openModalNovoCliente() { openModal('modal-com-cliente'); }
+
+function formatDocumento(el) {
+  let v = el.value.replace(/\D/g,'');
+  const label = document.getElementById('doc-tipo-label');
+  const btn = document.getElementById('btn-buscar-doc');
+  if (v.length <= 11) {
+    // CPF: 000.000.000-00
+    v = v.replace(/(\d{3})(\d)/,'$1.$2');
+    v = v.replace(/(\d{3})\.(\d{3})(\d)/,'$1.$2.$3');
+    v = v.replace(/(\d{3})\.(\d{3})\.(\d{3})(\d)/,'$1.$2.$3-$4');
+    el.value = v;
+    label.textContent = v.replace(/\D/g,'').length === 11 ? '✓ CPF detectado' : '';
+    label.style.color = 'var(--success)';
+    btn.style.opacity = '0.4';
+    btn.title = 'Busca automática disponível apenas para CNPJ';
+  } else {
+    // CNPJ: 00.000.000/0000-00
+    v = v.replace(/^(\d{2})(\d)/,'$1.$2');
+    v = v.replace(/^(\d{2})\.(\d{3})(\d)/,'$1.$2.$3');
+    v = v.replace(/\.(\d{3})(\d)/,'.$1/$2');
+    v = v.replace(/(\d{4})(\d)/,'$1-$2');
+    el.value = v;
+    label.textContent = v.replace(/\D/g,'').length === 14 ? '✓ CNPJ detectado' : '';
+    label.style.color = 'var(--success)';
+    btn.style.opacity = '1';
+    btn.title = '';
+  }
+}
+function formatCNPJ2(el) { formatDocumento(el); }
+function formatCEP2(el) {
+  let v = el.value.replace(/\D/g,'');
+  if (v.length > 5) v = v.slice(0,5) + '-' + v.slice(5,8);
+  el.value = v;
+}
+
+async function buscarCNPJ2() {
+  const cnpj = document.getElementById('nc-cnpj').value.replace(/\D/g,'');
+  if (cnpj.length !== 14) { showAlert('CNPJ inválido', 'danger'); return; }
+  try {
+    const d = await req('/pedidos/busca-cnpj/' + cnpj);
+    document.getElementById('nc-razao').value = d.razao_social || '';
+    document.getElementById('nc-fantasia').value = d.nome_fantasia || '';
+    document.getElementById('nc-telefone').value = d.telefone || '';
+    document.getElementById('nc-cep').value = d.cep ? d.cep.slice(0,5)+'-'+d.cep.slice(5) : '';
+    document.getElementById('nc-logradouro').value = d.logradouro || '';
+    document.getElementById('nc-numero-end').value = d.numero || '';
+    document.getElementById('nc-bairro').value = d.bairro || '';
+    document.getElementById('nc-cidade').value = d.cidade || '';
+    document.getElementById('nc-uf').value = d.uf || '';
+    showAlert('CNPJ encontrado!');
+  } catch(e) { showAlert('CNPJ não encontrado', 'danger'); }
+}
+
+async function buscarCEP2() {
+  const cep = document.getElementById('nc-cep').value.replace(/\D/g,'');
+  if (cep.length !== 8) { showAlert('CEP inválido', 'danger'); return; }
+  try {
+    const d = await req('/pedidos/busca-cep/' + cep);
+    document.getElementById('nc-logradouro').value = d.logradouro || '';
+    document.getElementById('nc-bairro').value = d.bairro || '';
+    document.getElementById('nc-cidade').value = d.cidade || '';
+    document.getElementById('nc-uf').value = d.uf || '';
+    showAlert('CEP encontrado!');
+  } catch(e) { showAlert('CEP não encontrado', 'danger'); }
+}
+
+async function salvarNovoCliente() {
+  const body = {
+    razao_social: document.getElementById('nc-razao').value,
+    cnpj: document.getElementById('nc-cnpj').value.replace(/\D/g,''),
+    nome_fantasia: document.getElementById('nc-fantasia').value,
+    telefone: document.getElementById('nc-telefone').value,
+    cep: document.getElementById('nc-cep').value.replace(/\D/g,''),
+    logradouro: document.getElementById('nc-logradouro').value,
+    numero: document.getElementById('nc-numero-end').value,
+    bairro: document.getElementById('nc-bairro').value,
+    cidade: document.getElementById('nc-cidade').value,
+    uf: document.getElementById('nc-uf').value
+  };
+  if (!body.razao_social) { showAlert('Informe a razão social', 'danger'); return; }
+  try {
+    await req('/pedidos/clientes', 'POST', body);
+    showAlert('Cliente salvo!');
+    closeModal('modal-com-cliente');
+    await loadClientesSelect();
+    const clientes = await req('/pedidos/clientes');
+    const ultimo = clientes[clientes.length - 1];
+    if (ultimo) document.getElementById('np-cliente').value = ultimo.id;
+  } catch(e) { showAlert(e.message, 'danger'); }
+}
+
+// ── IMPORTAÇÃO
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('drop-zone').classList.remove('drag');
+  const file = e.dataTransfer.files[0];
+  if (file) handleFile(file);
+}
+
+function handleFile(file) {
+  if (!file) return;
+  const ext = file.name.split('.').pop().toLowerCase();
+  const reader = new FileReader();
+
+  reader.onload = (e) => {
+    let data;
+    if (ext === 'csv') {
+      const text = e.target.result;
+      const lines = text.split('\n').filter(l => l.trim());
+      importHeaders = lines[0].split(/[;,]/).map(h => h.trim().replace(/"/g,''));
+      data = lines.slice(1).map(line => {
+        const cols = line.split(/[;,]/).map(c => c.trim().replace(/"/g,''));
+        const row = {};
+        importHeaders.forEach((h, i) => row[h] = cols[i] || '');
+        return row;
+      });
+    } else {
+      const wb = XLSX.read(e.target.result, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      data = XLSX.utils.sheet_to_json(ws, { defval: '' });
+      importHeaders = data.length ? Object.keys(data[0]) : [];
+    }
+    importData = data;
+    mostrarPreview(data);
+  };
+
+  if (ext === 'csv') reader.readAsText(file, 'UTF-8');
+  else reader.readAsArrayBuffer(file);
+}
+
+function mostrarPreview(data) {
+  document.getElementById('imp-preview').style.display = '';
+  document.getElementById('imp-info').textContent =
+    `✓ Arquivo carregado: ${data.length} linha(s) encontrada(s). Verifique o mapeamento abaixo.`;
+
+  // Tabela preview (max 5 linhas)
+  const preview = data.slice(0, 5);
+  document.getElementById('imp-thead').innerHTML =
+    '<tr>' + importHeaders.map(h => `<th>${h}</th>`).join('') + '</tr>';
+  document.getElementById('imp-tbody').innerHTML =
+    preview.map(row => '<tr>' + importHeaders.map(h => `<td>${row[h] || ''}</td>`).join('') + '</tr>').join('');
+
+  // Mapeamento
+  const campos = [
+    { key: 'numero_pedido', label: 'Número do Pedido *' },
+    { key: 'cliente', label: 'Cliente (nome/razão social) *' },
+    { key: 'prazo_entrega', label: 'Prazo de Entrega * (YYYY-MM-DD)' },
+    { key: 'item_descricao', label: 'Descrição do Item *' },
+    { key: 'item_quantidade', label: 'Quantidade *' },
+    { key: 'item_unidade', label: 'Unidade' },
+    { key: 'vendedor', label: 'Vendedor' },
+  ];
+
+  document.getElementById('imp-mapeamento').innerHTML = campos.map(c => `
+    <div class="form-group">
+      <label>${c.label}</label>
+      <select id="map-${c.key}">
+        <option value="">— Ignorar —</option>
+        ${importHeaders.map(h => {
+          const sel = h.toLowerCase().includes(c.key.split('_')[0]) || h.toLowerCase() === c.key ? 'selected' : '';
+          return `<option value="${h}" ${sel}>${h}</option>`;
+        }).join('')}
+      </select>
+    </div>`).join('');
+}
+
+async function confirmarImportacao() {
+  const alertEl = document.getElementById('imp-alert');
+  const get = (key) => document.getElementById('map-' + key)?.value || '';
+
+  const camposObrig = ['numero_pedido', 'cliente', 'prazo_entrega', 'item_descricao', 'item_quantidade'];
+  for (const c of camposObrig) {
+    if (!get(c)) {
+      alertEl.innerHTML = `<div class="alert alert-danger">Mapeie o campo obrigatório: ${c}</div>`;
+      return;
+    }
+  }
+
+  // Agrupar por pedido
+  const pedidosMap = {};
+  importData.forEach(row => {
+    const num = String(row[get('numero_pedido')] || '').trim();
+    if (!num) return;
+    if (!pedidosMap[num]) {
+      pedidosMap[num] = {
+        numero_pedido: num,
+        cliente_nome: String(row[get('cliente')] || '').trim(),
+        prazo_entrega: String(row[get('prazo_entrega')] || '').trim(),
+        vendedor: get('vendedor') ? String(row[get('vendedor')] || '') : '',
+        itens: []
+      };
+    }
+    const desc = String(row[get('item_descricao')] || '').trim();
+    const qtd = parseFloat(String(row[get('item_quantidade')] || '0').replace(',','.')) || 1;
+    const unid = get('item_unidade') ? String(row[get('item_unidade')] || 'unidade') : 'unidade';
+    if (desc) pedidosMap[num].itens.push({ descricao: desc, quantidade: qtd, unidade: unid });
+  });
+
+  const pedidos = Object.values(pedidosMap);
+  if (!pedidos.length) { alertEl.innerHTML = '<div class="alert alert-danger">Nenhum pedido válido encontrado</div>'; return; }
+
+  // Buscar/criar clientes e importar pedidos
+  let ok = 0, erros = 0;
+  const clientes = await req('/pedidos/clientes');
+
+  for (const p of pedidos) {
+    try {
+      let cliente = clientes.find(c =>
+        c.razao_social.toLowerCase().includes(p.cliente_nome.toLowerCase()) ||
+        p.cliente_nome.toLowerCase().includes(c.razao_social.toLowerCase())
+      );
+
+      if (!cliente) {
+        const res = await req('/pedidos/clientes', 'POST', { razao_social: p.cliente_nome });
+        cliente = { id: res.id };
+        clientes.push({ id: res.id, razao_social: p.cliente_nome });
+      }
+
+      await req('/pedidos/', 'POST', {
+        numero_pedido: p.numero_pedido,
+        cliente_id: cliente.id,
+        prazo_entrega: p.prazo_entrega,
+        vendedor: p.vendedor,
+        itens: p.itens
+      });
+      ok++;
+    } catch(e) { erros++; }
+  }
+
+  alertEl.innerHTML = `<div class="alert alert-${erros ? 'warn' : 'success'}">
+    ✓ ${ok} pedido(s) importado(s) com sucesso${erros ? ` &nbsp;|&nbsp; ${erros} com erro` : ''}.
+  </div>`;
+  setTimeout(() => { cancelarImportacao(); switchTab('pedidos'); }, 2000);
+}
+
+function cancelarImportacao() {
+  document.getElementById('imp-preview').style.display = 'none';
+  document.getElementById('file-input').value = '';
+  importData = [];
+  importHeaders = [];
+}
+
+function baixarModelo() {
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet([
+    ['numero_pedido','cliente','prazo_entrega','item_descricao','item_quantidade','item_unidade','vendedor'],
+    ['PED-001','Cliente Exemplo Ltda','2026-07-30','Copo 500ml',1000,'unidade','João'],
+    ['PED-001','Cliente Exemplo Ltda','2026-07-30','Caneca 300ml',500,'unidade','João'],
+    ['PED-002','Outra Empresa SA','2026-08-15','Copo 200ml',2000,'unidade','Maria'],
+  ]);
+  XLSX.utils.book_append_sheet(wb, ws, 'Pedidos');
+  XLSX.writeFile(wb, 'modelo_importacao_pratic.xlsx');
+}
+
+function sairMobile() {
+  if (!confirm('Deseja sair do sistema?')) return;
+  document.body.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0d0f14;font-family:DM Sans,sans-serif"><div style="text-align:center;padding:40px"><div style="font-family:Syne,sans-serif;font-size:28px;font-weight:800;color:#f0b429;margin-bottom:16px">PRATIC</div><div style="font-size:14px;color:#6b7280;margin-bottom:24px">Sessão encerrada.</div><button onclick="location.reload()" style="padding:12px 28px;background:#f0b429;color:#000;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer">Entrar novamente</button></div></div>';
+}
+
+async function verificarAcessoComercial() {
+  let me;
+  try {
+    me = await req('/auth/me');
+    if (me) {
+      const elNome = document.getElementById('topbar-user-name-txt');
+      if (elNome) elNome.textContent = me.nome;
+    }
+  } catch (e) {
+    window.location.href = '/login?redirect=' + encodeURIComponent(window.location.pathname + window.location.search);
+    return false;
+  }
+
+  try {
+    const r = await fetch(API + '/configuracoes/permissoes/all');
+    const perms = await r.json();
+    const liberadas = String(perms['perm_comercial'] || 'pedidos').split(',').map(p => p.trim()).filter(Boolean);
+    if (!liberadas.includes('pedidos')) {
+      const destino = liberadas[0];
+      if (destino) {
+        window.location.href = '/?perfil=comercial&page=' + encodeURIComponent(destino);
+        return false;
+      }
+      document.body.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0d0f14;font-family:DM Sans,sans-serif"><div style="text-align:center;padding:40px"><div style="font-size:60px;margin-bottom:20px">🔒</div><div style="font-family:Syne,sans-serif;font-size:24px;font-weight:800;color:#f0b429;margin-bottom:10px">PRATIC</div><div style="font-size:16px;color:#e8eaf0;margin-bottom:8px">Acesso não autorizado</div><div style="font-size:13px;color:#6b7280">Nenhuma página foi liberada para este perfil.</div></div></div>';
+      return false;
+    }
+  } catch(e) {}
+  return true;
+}
+
+async function loadTopbarWidgets() {
+  const dateEl = document.querySelector('#topbar-date span');
+  if (dateEl) {
+    const hoje = new Date();
+    const dia = String(hoje.getDate()).padStart(2, '0');
+    const mes = String(hoje.getMonth() + 1).padStart(2, '0');
+    const ano = hoje.getFullYear();
+    dateEl.textContent = `${dia}/${mes}/${ano}`;
+  }
+
+  let cidade = '';
+  let uf = '';
+  try {
+    const r = await fetch(API + '/configuracoes/empresa', { cache: 'no-store' });
+    if (r.ok) {
+      const dados = await r.json();
+      cidade = dados.cidade || '';
+      uf = dados.uf || '';
+    }
+  } catch (e) {
+    console.error('Erro ao buscar dados da empresa para topbar:', e);
+  }
+
+  const cityEl = document.querySelector('#topbar-city span');
+  if (cityEl) {
+    if (cidade) {
+      cityEl.textContent = uf ? `${cidade} - ${uf.toUpperCase()}` : cidade;
+    } else {
+      cityEl.textContent = 'Sem cidade';
+    }
+  }
+
+  const tempEl = document.querySelector('#topbar-temp span');
+  if (tempEl && cidade) {
+    try {
+      const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cidade)}&count=1&language=pt&format=json`;
+      const geoRes = await fetch(geoUrl);
+      if (geoRes.ok) {
+        const geoData = await geoRes.json();
+        if (geoData.results && geoData.results.length > 0) {
+          const { latitude, longitude } = geoData.results[0];
+          const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`;
+          const weatherRes = await fetch(weatherUrl);
+          if (weatherRes.ok) {
+            const weatherData = await weatherRes.json();
+            if (weatherData.current_weather && typeof weatherData.current_weather.temperature !== 'undefined') {
+              const temp = Math.round(weatherData.current_weather.temperature);
+              tempEl.textContent = `${temp}°C`;
+              return;
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Erro ao obter temperatura:', err);
+    }
+  }
+  
+  if (tempEl) {
+    tempEl.textContent = '—°C';
+  }
+}
+
+// INIT
+verificarAcessoComercial().then(ok => {
+  if (!ok) return;
+
+  // Set current month/year in header
+  const mesAtual = new Date().toISOString().slice(0, 7);
+  const [y, m] = mesAtual.split('-');
+  const meses = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+  const el = document.getElementById('topbar-mes');
+  if (el) el.textContent = `${meses[+m - 1]} de ${y}`;
+
+  loadPedidosCom();
+  loadCards();
+  loadTopbarWidgets();
+});
+
+
+/* =========================================================
+   Proteção contra duplo clique em botões de salvar/confirmar
+   ========================================================= */
+(function () {
+  if (window.PRATIC_SAVE_GUARD_INSTALLED) return;
+  window.PRATIC_SAVE_GUARD_INSTALLED = true;
+
+  const actionWords = ['salvar', 'registrar', 'confirmar', 'importar', 'baixar backup'];
+  let currentActionButton = null;
+
+  function normalizeText(value) {
+    return String(value || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function isProtectedButton(btn) {
+    if (!btn || btn.tagName !== 'BUTTON') return false;
+    if (btn.dataset.noGuard === 'true') return false;
+    const onclick = normalizeText(btn.getAttribute('onclick') || '');
+    const label = normalizeText(btn.textContent || btn.innerText || '');
+    return actionWords.some(w => label.includes(w)) ||
+      /salvar|confirmar|registrar|importar|restore|backup/i.test(onclick);
+  }
+
+  function getButton() {
+    if (currentActionButton && document.contains(currentActionButton)) return currentActionButton;
+    const active = document.activeElement;
+    if (active && active.tagName === 'BUTTON') return active;
+    return null;
+  }
+
+  function setLoadingText(btn) {
+    if (!btn || btn.dataset.originalHtml) return;
+    btn.dataset.originalHtml = btn.innerHTML;
+    const text = normalizeText(btn.textContent || btn.innerText || '');
+    if (text.includes('importar')) btn.innerHTML = 'Importando...';
+    else if (text.includes('confirmar')) btn.innerHTML = 'Confirmando...';
+    else if (text.includes('registrar')) btn.innerHTML = 'Registrando...';
+    else if (text.includes('backup') || text.includes('baixar')) btn.innerHTML = 'Processando...';
+    else btn.innerHTML = 'Salvando...';
+  }
+
+  function lock(btn) {
+    if (!btn || !isProtectedButton(btn)) return true;
+    if (btn.dataset.guardBusy === '1') return false;
+    btn.dataset.guardBusy = '1';
+    btn.disabled = true;
+    btn.classList.add('btn-loading');
+    setLoadingText(btn);
+    return true;
+  }
+
+  function unlock(btn) {
+    if (!btn || !document.contains(btn)) return;
+    delete btn.dataset.guardBusy;
+    btn.disabled = false;
+    btn.classList.remove('btn-loading');
+    if (btn.dataset.originalHtml) {
+      btn.innerHTML = btn.dataset.originalHtml;
+      delete btn.dataset.originalHtml;
+    }
+  }
+
+  document.addEventListener('click', function (event) {
+    const btn = event.target.closest && event.target.closest('button');
+    if (!btn || !isProtectedButton(btn)) return;
+    if (btn.dataset.guardBusy === '1') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return false;
+    }
+    currentActionButton = btn;
+    setTimeout(() => {
+      if (currentActionButton === btn) currentActionButton = null;
+    }, 1000);
+  }, true);
+
+  function guardFunction(name) {
+    const original = window[name];
+    if (typeof original !== 'function' || original.__praticGuarded) return;
+    const guarded = async function (...args) {
+      const btn = getButton();
+      if (btn && !lock(btn)) return;
+      try {
+        return await original.apply(this, args);
+      } finally {
+        if (btn) unlock(btn);
+      }
+    };
+    guarded.__praticGuarded = true;
+    window[name] = guarded;
+  }
+
+  function installFunctionGuards() {
+    [
+      'salvarProducao', 'salvarColaborador', 'salvarMaquina', 'salvarAuxiliar',
+      'salvarConfig', 'salvarProduto', 'salvarProdutoEstoque', 'salvarMovimentacao',
+      'salvarPerda', 'salvarCategoria', 'salvarPedido', 'salvarCliente',
+      'salvarEmpresa', 'salvarPermissoes', 'salvarEPI', 'salvarEntrega',
+      'salvarFuncaoEPI', 'salvarNovoPedido', 'salvarNovoCliente', 'salvarMobile',
+      'salvarColabProd', 'salvarMaqProd', 'confirmarImportCSV', 'confirmarImportacao',
+      'confirmarRestore', 'confirmarMovimentacao', 'confirmarMovRapida', 'fazerBackup'
+    ].forEach(guardFunction);
+  }
+
+  installFunctionGuards();
+  document.addEventListener('DOMContentLoaded', installFunctionGuards);
+  setTimeout(installFunctionGuards, 300);
+})();
+
+function toggleTheme() {
+  const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+  const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', newTheme);
+  localStorage.setItem('pratic-theme', newTheme);
+}
+function toggleSectorMenu(event) {
+  event.stopPropagation();
+  const menu = document.getElementById('sector-menu');
+  if (menu) menu.classList.toggle('show');
+}
+document.addEventListener('click', function() {
+  const menu = document.getElementById('sector-menu');
+  if (menu) menu.classList.remove('show');
+});
+</script>
+</body>
+</html>

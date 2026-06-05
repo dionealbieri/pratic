@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>PRATIC — Estoque Mobile</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<script>
+  (function() {
+    const savedTheme = localStorage.getItem('pratic-theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+  })();
+</script>
+<link rel="stylesheet" href="css/common.css?v=2">
+<style>
+  :root {
+    --info: var(--accent2);
+    --warn: var(--accent);
+  }
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { background:var(--bg); color:var(--text); font-family:var(--fb); min-height:100vh; display:flex !important; flex-direction:column !important; }
+
+  .header { background:var(--surface); border-bottom:1px solid var(--border); padding:14px 18px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:50; }
+  .logo { font-family:var(--fh); font-size:18px; font-weight:800; color:var(--accent); letter-spacing:2px; }
+  .logo-sub { font-size:10px; color:var(--muted); letter-spacing:1px; }
+  .header-badge { background:rgba(59,130,246,.15); border:1px solid rgba(59,130,246,.3); color:var(--info); padding:5px 12px; border-radius:20px; font-size:12px; font-weight:600; }
+
+  .content { padding:16px; max-width:480px; margin:0 auto; }
+
+  /* TABS */
+  .tabs { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-bottom:20px; }
+  .tab { padding:12px 8px; border-radius:10px; font-family:var(--fh); font-size:12px; font-weight:700; cursor:pointer; border:2px solid var(--border); background:var(--surface2); color:var(--muted); text-align:center; transition:all .2s; }
+  .tab.active { border-color:var(--accent); color:var(--accent); background:rgba(240,180,41,.08); }
+
+  /* CARDS */
+  .cards-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:20px; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 16px; }
+  .card-label { font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:1px; margin-bottom:5px; }
+  .card-value { font-family:var(--fh); font-size:22px; font-weight:800; }
+  .accent { color:var(--accent); } .success { color:var(--success); } .danger { color:var(--danger); } .info { color:var(--info); }
+
+  /* PRODUTO CARD */
+  .prod-card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 16px; margin-bottom:10px; }
+  .prod-card.alerta { border-color:rgba(239,68,68,.4); background:rgba(239,68,68,.05); }
+  .prod-nome { font-family:var(--fh); font-size:15px; font-weight:700; margin-bottom:4px; }
+  .prod-cat { font-size:11px; color:var(--muted); margin-bottom:10px; }
+  .prod-saldo { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+  .prod-qtd { font-family:var(--fh); font-size:24px; font-weight:800; }
+  .prod-min { font-size:12px; color:var(--muted); }
+  .bar-track { height:6px; background:var(--surface2); border-radius:3px; overflow:hidden; margin-bottom:12px; }
+  .bar-fill { height:100%; border-radius:3px; transition:width .4s; }
+  .prod-actions { display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; }
+
+  /* BUTTONS */
+  .btn { padding:10px 14px; border-radius:10px; font-family:var(--fh); font-size:13px; font-weight:700; cursor:pointer; border:none; transition:all .2s; text-align:center; }
+  .btn:active { transform:scale(.97); }
+  .btn-primary { background:var(--accent); color:#000; }
+  .btn-success { background:rgba(16,185,129,.15); color:var(--success); border:1px solid rgba(16,185,129,.3); }
+  .btn-danger { background:rgba(239,68,68,.15); color:var(--danger); border:1px solid rgba(239,68,68,.3); }
+  .btn-info { background:rgba(59,130,246,.15); color:var(--info); border:1px solid rgba(59,130,246,.3); }
+  .btn-secondary { background:var(--surface2); color:var(--text); border:1px solid var(--border); }
+  .btn-full { width:100%; padding:14px; font-size:15px; margin-top:8px; }
+
+  /* FORM */
+  .form-group { margin-bottom:14px; }
+  label { font-size:12px; color:var(--muted); display:block; margin-bottom:6px; font-weight:500; }
+  input, select, textarea { width:100%; background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:13px 14px; color:var(--text); font-family:var(--fb); font-size:16px; outline:none; }
+  input:focus, select:focus { border-color:var(--accent); }
+  input::-webkit-calendar-picker-indicator {
+    filter: invert(0.9);
+    cursor: pointer;
+  }
+  input[type="month"], input[type="date"] {
+    min-width: 150px;
+  }
+  input[type=number] { font-size:22px; font-weight:700; text-align:center; }
+
+  /* MODAL */
+  .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,.8); z-index:200; display:flex; align-items:flex-end; justify-content:center; opacity:0; pointer-events:none; transition:opacity .2s; }
+  .modal-overlay.open { opacity:1; pointer-events:all; }
+  .modal { background:var(--surface); border-radius:20px 20px 0 0; padding:24px 20px 36px; width:100%; max-width:480px; transform:translateY(100%); transition:transform .3s; max-height:90vh; overflow-y:auto; }
+  .modal-overlay.open .modal { transform:translateY(0); }
+  .modal-title { font-family:var(--fh); font-size:18px; font-weight:800; margin-bottom:20px; display:flex; align-items:center; gap:10px; }
+  .modal-handle { width:40px; height:4px; background:var(--border); border-radius:2px; margin:0 auto 20px; }
+
+  /* PILLS */
+  .pill { display:inline-flex; align-items:center; padding:3px 10px; border-radius:20px; font-size:11px; font-weight:600; }
+  .pill-danger { background:rgba(239,68,68,.15); color:var(--danger); }
+  .pill-success { background:rgba(16,185,129,.15); color:var(--success); }
+  .pill-warn { background:rgba(245,158,11,.15); color:var(--warn); }
+
+  /* MOVIMENTAÇÕES */
+  .mov-item { display:flex; align-items:center; justify-content:space-between; padding:12px 0; border-bottom:1px solid var(--border); }
+  .mov-item:last-child { border-bottom:none; }
+  .mov-tipo { font-size:12px; color:var(--muted); margin-top:2px; }
+  .mov-qtd { font-family:var(--fh); font-size:16px; font-weight:700; }
+
+  /* BUSCA */
+  .busca { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:12px 14px; width:100%; color:var(--text); font-size:15px; outline:none; margin-bottom:16px; }
+  .busca:focus { border-color:var(--accent); }
+
+  .alert { padding:12px 16px; border-radius:10px; font-size:13px; margin-bottom:14px; }
+  .alert-success { background:rgba(16,185,129,.1); border:1px solid rgba(16,185,129,.3); color:var(--success); }
+  .alert-danger { background:rgba(239,68,68,.1); border:1px solid rgba(239,68,68,.3); color:var(--danger); }
+  .empty { text-align:center; color:var(--muted); padding:32px 0; font-size:14px; }
+  .spinner { display:inline-block; width:24px; height:24px; border:3px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin .8s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .data-badge { display:inline-flex; align-items:center; gap:6px; background:rgba(59,130,246,.1); border:1px solid rgba(59,130,246,.25); padding:5px 12px; border-radius:20px; font-size:12px; color:var(--info); font-weight:600; margin-bottom:16px; }
+  .setor-badge { background:rgba(59,130,246,.15); border:1px solid rgba(59,130,246,.3); color:var(--info); padding:4px 10px; border-radius:20px; font-size:11px; font-weight:600; display:inline-block; }
+  .btn-sm { padding:6px 12px; font-size:12px; }
+
+  /* RESPONSIVIDADE DESKTOP */
+  @media (min-width: 769px) {
+    .content {
+      max-width: 960px !important;
+      padding: 32px 24px;
+    }
+    #content-produtos {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    #est-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin-bottom: 0;
+    }
+    #busca-prod {
+      max-width: 400px;
+      margin-bottom: 0;
+    }
+    #lista-produtos {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 16px;
+    }
+    .prod-card {
+      margin-bottom: 0 !important;
+    }
+    #content-movimentar {
+      max-width: 500px;
+      margin: 0 auto;
+    }
+  }
+</style>
+</head>
+<body>
+
+<div class="header" style="display:flex; flex-direction:column; gap:10px; padding:12px 16px;">
+  <!-- Linha Superior -->
+  <div style="display:flex; align-items:center; justify-content:space-between; width:100%;">
+    <div>
+      <div class="logo">PRATIC</div>
+      <div class="logo-sub">ESTOQUE MOBILE</div>
+    </div>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <button class="btn btn-sm btn-secondary" onclick="openModal('modal-ajuda-est-mob')" style="padding: 6px 12px; font-size: 12px; width:auto; margin:0; cursor:pointer;">❓ Ajuda</button>
+      <button class="btn btn-sm btn-danger" onclick="sairMobile()" style="padding: 6px 12px; font-size: 12px; width:auto; margin:0; cursor:pointer;">🚪 Sair</button>
+    </div>
+  </div>
+  
+  <!-- Linha Inferior (Widgets e Badges) -->
+  <div style="display:flex; align-items:center; justify-content:space-between; width:100%; border-top:1px solid var(--border); padding-top:8px; flex-wrap:wrap; gap:8px;">
+    <div id="topbar-info-widgets" style="display:flex; align-items:center; gap:14px; font-size:12px; color:var(--muted); font-weight:500; flex-wrap:wrap;">
+      <span id="topbar-date" style="display:flex; align-items:center; gap:4px;">📅 <span style="color:var(--text)">—</span></span>
+      <span id="topbar-city" style="display:flex; align-items:center; gap:4px;">📍 <span style="color:var(--text)">—</span></span>
+      <span id="topbar-temp" style="display:flex; align-items:center; gap:4px;">🌡️ <span style="color:var(--accent); font-weight:700">—°C</span></span>
+    </div>
+    <div style="display:flex; align-items:center; gap:8px;">
+      <span class="offline-badge online" id="connection-status">🟢 Online</span>
+      <span class="setor-badge" style="font-size:11px; padding:3px 10px;">📦 Mobile Estoque</span>
+      <span class="badge" id="topbar-mes" style="background:var(--accent); color:#000; font-size:11px; font-weight:700; padding:3px 8px; border-radius:20px;">—</span>
+    </div>
+  </div>
+</div>
+
+<div class="content">
+  <div id="alert-est"></div>
+
+  <!-- TABS -->
+  <div class="tabs">
+    <div class="tab active" id="tab-produtos" onclick="switchTab('produtos')">📦 Produtos</div>
+    <div class="tab" id="tab-movimentar" onclick="switchTab('movimentar')">🔄 Movimentar</div>
+    <div class="tab" id="tab-historico" onclick="switchTab('historico')">📋 Histórico</div>
+  </div>
+
+  <!-- TAB PRODUTOS -->
+  <div id="content-produtos">
+    <div class="cards-grid" id="est-cards"></div>
+    <input class="busca" id="busca-prod" placeholder="🔍 Buscar produto..." oninput="filtrarProdutos()">
+    <div id="lista-produtos"><div class="empty"><div class="spinner"></div></div></div>
+  </div>
+
+  <!-- TAB MOVIMENTAR -->
+  <div id="content-movimentar" style="display:none">
+    <div class="data-badge">📅 <span id="mov-data-label"></span></div>
+    <div class="form-group">
+      <label>Produto</label>
+      <select id="mov-produto" onchange="atualizarSaldoMov()">
+        <option value="">— Selecione um produto —</option>
+      </select>
+    </div>
+    <div id="mov-saldo-info" style="display:none;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:14px">
+      <div style="font-size:12px;color:var(--muted)">Saldo atual</div>
+      <div style="font-family:var(--fh);font-size:22px;font-weight:800;color:var(--accent)" id="mov-saldo-atual">—</div>
+    </div>
+    <div class="form-group">
+      <label>Tipo de Movimentação</label>
+      <select id="mov-tipo" onchange="toggleMovTipos()">
+        <option value="entrada">📥 Entrada (compra/recebimento)</option>
+        <option value="saida">📤 Saída (consumo)</option>
+        <option value="perda">⚠️ Perda / Avaria</option>
+        <option value="sobra">✅ Sobra de produção</option>
+        <option value="ajuste">🔧 Ajuste de inventário</option>
+      </select>
+    </div>
+    <div id="mov-perda-tipo-group" style="display:none" class="form-group">
+      <label>Tipo de Perda</label>
+      <select id="mov-perda-tipo">
+        <option value="quebra">Quebra / Avaria</option>
+        <option value="defeito">Defeito de fabricação</option>
+        <option value="contaminacao">Contaminação / Descarte</option>
+        <option value="transporte">Perda no transporte</option>
+        <option value="outros">Outros</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label id="mov-qtd-label">Quantidade</label>
+      <input type="number" id="mov-quantidade" placeholder="0" min="0" inputmode="numeric">
+    </div>
+    <div class="form-group">
+      <label>Responsável</label>
+      <input type="text" id="mov-responsavel" placeholder="Seu nome">
+    </div>
+    <div id="mov-fornecedor-group" style="display:none" class="form-group">
+      <label>Fornecedor</label>
+      <input type="text" id="mov-fornecedor" placeholder="Nome do fornecedor">
+    </div>
+    <div class="form-group">
+      <label>Observação</label>
+      <input type="text" id="mov-obs" placeholder="Opcional">
+    </div>
+    <div id="mov-alert"></div>
+    <button class="btn btn-primary btn-full" id="mov-btn" onclick="confirmarMovimentacao()">✓ Confirmar Movimentação</button>
+  </div>
+
+  <!-- TAB HISTÓRICO -->
+  <div id="content-historico" style="display:none">
+    <div class="form-group">
+      <label>Filtrar por tipo</label>
+      <select id="hist-filtro" onchange="loadHistorico()">
+        <option value="">Todos</option>
+        <option value="entrada">📥 Entradas</option>
+        <option value="saida">📤 Saídas</option>
+        <option value="perda">⚠️ Perdas</option>
+        <option value="ajuste">🔧 Ajustes</option>
+      </select>
+    </div>
+    <div id="lista-historico"><div class="empty"><div class="spinner"></div></div></div>
+  </div>
+</div>
+
+<!-- MODAL AJUDA ESTOQUE MOBILE -->
+<div class="modal-overlay" id="modal-ajuda-est-mob">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title">❓ Ajuda - Estoque Mobile</div>
+    <div style="max-height:60vh; overflow-y:auto; padding-right:4px; font-size:14px; line-height:1.6; color:#caced6">
+      <p style="margin-bottom:12px">Este aplicativo gerencia o fluxo físico de materiais. Abaixo, veja como utilizar:</p>
+      
+      <strong style="color:var(--accent); display:block; margin:14px 0 6px">📦 Consulta de Produtos:</strong>
+      <ul style="padding-left:20px; margin-bottom:12px">
+        <li><strong>Filtro e Busca:</strong> Use a barra de pesquisa na aba "Produtos" para localizar qualquer item por nome ou código em tempo real.</li>
+        <li><strong>Alerta Crítico:</strong> Itens destacados em vermelho estão abaixo do estoque mínimo de segurança.</li>
+      </ul>
+
+      <strong style="color:var(--accent); display:block; margin:14px 0 6px">🔄 Lançar Movimentação Manual:</strong>
+      <ol style="padding-left:20px; margin-bottom:12px">
+        <li>Vá na aba <strong>Movimentar</strong>.</li>
+        <li>Selecione o produto. O saldo atual aparecerá automaticamente.</li>
+        <li>Escolha o tipo (Entrada, Saída, Perda, Sobra ou Ajuste).</li>
+        <li>Insira a quantidade e complete as observações correspondentes e confirme o lançamento.</li>
+      </ol>
+
+      <strong style="color:var(--accent); display:block; margin:14px 0 6px">🔧 Ajustes de Inventário (Conferência):</strong>
+      <ul style="padding-left:20px; margin-bottom:12px">
+        <li>Ao realizar contagem física no almoxarifado, selecione o tipo <strong>Ajuste de inventário</strong>.</li>
+        <li>No campo quantidade, digite a <strong>quantidade real contada</strong> (ex: se contou 500 peças, digite 500). O sistema atualizará o saldo atual diretamente para esse número.</li>
+      </ul>
+      
+      <strong style="color:var(--accent); display:block; margin:14px 0 6px">📋 Consultar Histórico:</strong>
+      <ul style="padding-left:20px; margin-bottom:12px">
+        <li>Na aba <strong>Histórico</strong>, você pode consultar e auditar os últimos lançamentos do mês de referência.</li>
+      </ul>
+    </div>
+    <div style="margin-top:16px">
+      <button class="btn btn-primary btn-full" onclick="document.getElementById('modal-ajuda-est-mob').classList.remove('open')">Entendi</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL MOVIMENTAÇÃO RÁPIDA -->
+<div class="modal-overlay" id="modal-mov-rapida">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="modal-mov-titulo">Movimentação</div>
+    <input type="hidden" id="modal-prod-id">
+    <div class="form-group">
+      <label id="modal-mov-qtd-label">Quantidade</label>
+      <input type="number" id="modal-mov-qtd" placeholder="0" min="0" inputmode="numeric">
+    </div>
+    <div class="form-group">
+      <label>Responsável</label>
+      <input type="text" id="modal-mov-resp" placeholder="Seu nome">
+    </div>
+    <div id="modal-perda-tipo-group" style="display:none" class="form-group">
+      <label>Tipo de Perda</label>
+      <select id="modal-perda-tipo">
+        <option value="quebra">Quebra / Avaria</option>
+        <option value="defeito">Defeito de fabricação</option>
+        <option value="contaminacao">Contaminação / Descarte</option>
+        <option value="outros">Outros</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Observação</label>
+      <input type="text" id="modal-mov-obs" placeholder="Opcional">
+    </div>
+    <div id="modal-mov-alert"></div>
+    <button class="btn btn-primary btn-full" id="modal-mov-btn" onclick="confirmarMovRapida()">✓ Confirmar</button>
+    <button class="btn btn-secondary btn-full" onclick="closeModal('modal-mov-rapida')" style="margin-top:8px">Cancelar</button>
+  </div>
+</div>
+
+<script>
+const API = window.location.origin + '/api';
+let produtosCache = [];
+let movTipoAtual = 'entrada';
+let prodIdAtual = null;
+
+async function req(path, method='GET', body=null) {
+  const opts = { method, headers:{'Content-Type':'application/json'} };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(API + path, opts);
+  if (r.status === 401) {
+    if (path === '/auth/me') {
+      throw new Error('Não autenticado');
+    }
+    window.location.reload();
+    return new Promise(() => {});
+  }
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.detail || 'Erro');
+  return d;
+}
+
+async function sairMobile() {
+  if (!confirm('Deseja realmente sair?')) return;
+  try {
+    await fetch('/api/auth/logout', { method: 'POST' });
+  } catch (e) {
+    console.error(e);
+  }
+  localStorage.removeItem('user_nome');
+  localStorage.removeItem('user_role');
+  localStorage.removeItem('user_username');
+  window.location.reload();
+}
+
+function fmtNum(n) { return Number(n||0).toLocaleString('pt-BR'); }
+function fmtDate(s) { if(!s) return '—'; const [y,m,d]=s.split('-'); return `${d}/${m}/${y}`; }
+function fmtDatetime(s) { if(!s) return '—'; const [dt] = s.split('T'); return fmtDate(dt); }
+
+function showAlert(msg, type='success') {
+  const el = document.getElementById('alert-est');
+  el.innerHTML = `<div class="alert alert-${type}">${msg}</div>`;
+  setTimeout(() => el.innerHTML='', 3500);
+}
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+document.querySelectorAll('.modal-overlay').forEach(m => m.addEventListener('click', e => { if(e.target===m) m.classList.remove('open'); }));
+
+// ── TABS
+function switchTab(tab) {
+  ['produtos','movimentar','historico'].forEach(t => {
+    document.getElementById('content-' + t).style.display = t === tab ? '' : 'none';
+    document.getElementById('tab-' + t).classList.toggle('active', t === tab);
+  });
+  if (tab === 'produtos') loadProdutos();
+  if (tab === 'movimentar') prepMovimentar();
+  if (tab === 'historico') loadHistorico();
+}
+
+// ── PRODUTOS
+async function loadProdutos() {
+  try {
+    produtosCache = await req('/estoque/produtos');
+    const alertas = produtosCache.filter(p => p.alerta);
+
+    document.getElementById('est-cards').innerHTML = `
+      <div class="card"><div class="card-label">Total Produtos</div><div class="card-value accent">${produtosCache.length}</div></div>
+      <div class="card"><div class="card-label">Alertas</div><div class="card-value ${alertas.length>0?'danger':'success'}">${alertas.length}</div></div>
+    `;
+    renderProdutos(produtosCache);
+  } catch(e) { showAlert('Erro ao carregar produtos', 'danger'); }
+}
+
+function filtrarProdutos() {
+  const busca = document.getElementById('busca-prod').value.toLowerCase();
+  const filtrados = busca ? produtosCache.filter(p =>
+    (p.codigo||'').toLowerCase().includes(busca) ||
+    p.nome.toLowerCase().includes(busca) ||
+    (p.marca||'').toLowerCase().includes(busca) ||
+    (p.categoria_nome||'').toLowerCase().includes(busca)
+  ) : produtosCache;
+  renderProdutos(filtrados);
+}
+
+function renderProdutos(lista) {
+  const el = document.getElementById('lista-produtos');
+  if (!lista.length) { el.innerHTML = '<div class="empty">Nenhum produto encontrado</div>'; return; }
+  el.innerHTML = lista.map(p => {
+    const pct = p.estoque_minimo > 0 ? Math.min(100, Math.round((p.quantidade_atual / p.estoque_minimo) * 100)) : 100;
+    const cor = p.alerta ? 'var(--danger)' : pct < 150 ? 'var(--warn)' : 'var(--success)';
+    return `
+      <div class="prod-card ${p.alerta ? 'alerta' : ''}">
+        <div class="prod-nome">${p.codigo ? '<span style="color:var(--accent)">['+p.codigo+']</span> ' : ''}${p.nome}${p.marca ? ' <span style="color:var(--muted);font-weight:400">— '+p.marca+'</span>' : ''}</div>
+        <div class="prod-cat">${p.categoria_nome || '—'} ${p.alerta ? '<span class="pill pill-danger">⚠️ Abaixo do mínimo</span>' : ''}</div>
+        <div class="prod-saldo">
+          <div>
+            <div class="prod-qtd" style="color:${cor}">${fmtNum(p.quantidade_atual)}</div>
+            <div class="prod-min">${p.unidade} • mín: ${fmtNum(p.estoque_minimo)}</div>
+          </div>
+        </div>
+        <div class="bar-track">
+          <div class="bar-fill" style="width:${Math.min(100,pct)}%;background:${cor}"></div>
+        </div>
+        <div class="prod-actions">
+          <button class="btn btn-success" onclick="abrirMovRapida(${p.id},'${p.codigo?'['+p.codigo+'] ':''}${p.nome}','entrada',${p.quantidade_atual})">📥 Entrada</button>
+          <button class="btn btn-info" onclick="abrirMovRapida(${p.id},'${p.codigo?'['+p.codigo+'] ':''}${p.nome}','saida',${p.quantidade_atual})">📤 Saída</button>
+          <button class="btn btn-danger" onclick="abrirMovRapida(${p.id},'${p.codigo?'['+p.codigo+'] ':''}${p.nome}','perda',${p.quantidade_atual})">⚠️ Perda</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// ── MOV RÁPIDA (da lista de produtos)
+function abrirMovRapida(id, nome, tipo, saldoAtual) {
+  prodIdAtual = id;
+  movTipoAtual = tipo;
+  const titulos = { entrada:'📥 Entrada', saida:'📤 Saída', perda:'⚠️ Perda' };
+  document.getElementById('modal-mov-titulo').textContent = titulos[tipo] + ' — ' + nome;
+  document.getElementById('modal-mov-qtd').value = '';
+  document.getElementById('modal-mov-resp').value = '';
+  document.getElementById('modal-mov-obs').value = '';
+  document.getElementById('modal-mov-alert').innerHTML = '';
+  document.getElementById('modal-perda-tipo-group').style.display = tipo === 'perda' ? '' : 'none';
+  document.getElementById('modal-mov-qtd-label').textContent =
+    tipo === 'ajuste' ? `Nova quantidade total (saldo atual: ${fmtNum(saldoAtual)})` : 'Quantidade';
+  openModal('modal-mov-rapida');
+}
+
+function saveOfflineEstoque(data) {
+  const queue = JSON.parse(localStorage.getItem('pratic-offline-estoque') || '[]');
+  queue.push(data);
+  localStorage.setItem('pratic-offline-estoque', JSON.stringify(queue));
+}
+
+async function syncOfflineEstoque() {
+  if (!navigator.onLine) return;
+  const queue = JSON.parse(localStorage.getItem('pratic-offline-estoque') || '[]');
+  if (!queue.length) return;
+  
+  showAlert(`Sincronizando ${queue.length} movimentações offline...`);
+  const failed = [];
+  
+  for (const item of queue) {
+    try {
+      await req('/estoque/movimentacoes', 'POST', item);
+    } catch (e) {
+      console.error('Falha ao sincronizar item offline de estoque:', e);
+      failed.push(item);
+    }
+  }
+  
+  localStorage.setItem('pratic-offline-estoque', JSON.stringify(failed));
+  if (failed.length === 0) {
+    showAlert('Movimentações offline sincronizadas!');
+    if (typeof loadProdutos === 'function') loadProdutos();
+    if (typeof loadHistorico === 'function') loadHistorico();
+  } else {
+    showAlert(`Falha ao sincronizar ${failed.length} movimentações offline.`, 'danger');
+  }
+}
+
+function updateConnectionStatus() {
+  const statusEl = document.getElementById('connection-status');
+  if (statusEl) {
+    if (navigator.onLine) {
+      statusEl.className = 'offline-badge online';
+      statusEl.textContent = '🟢 Online';
+    } else {
+      statusEl.className = 'offline-badge offline';
+      statusEl.textContent = '🔴 Offline';
+    }
+  }
+}
+window.addEventListener('online', () => {
+  updateConnectionStatus();
+  syncOfflineEstoque();
+});
+window.addEventListener('offline', updateConnectionStatus);
+
+async function confirmarMovRapida() {
+  const qtd = +document.getElementById('modal-mov-qtd').value;
+  const resp = document.getElementById('modal-mov-resp').value.trim();
+  const obs = document.getElementById('modal-mov-obs').value;
+  const alertEl = document.getElementById('modal-mov-alert');
+
+  if (!qtd || qtd <= 0) { alertEl.innerHTML = '<div class="alert alert-danger">Informe a quantidade</div>'; return; }
+  if (!resp) { alertEl.innerHTML = '<div class="alert alert-danger">Informe o responsável</div>'; return; }
+
+  const btn = document.getElementById('modal-mov-btn');
+  btn.disabled = true; btn.textContent = 'Salvando...';
+
+  const payload = {
+    produto_id: prodIdAtual,
+    tipo: movTipoAtual,
+    quantidade: qtd,
+    responsavel: resp,
+    observacao: obs,
+    tipo_perda: movTipoAtual === 'perda' ? document.getElementById('modal-perda-tipo').value : null,
+    data: new Date().toISOString().split('T')[0]
+  };
+
+  if (!navigator.onLine) {
+    saveOfflineEstoque(payload);
+    closeModal('modal-mov-rapida');
+    showAlert('Movimentação registrada localmente (Offline)!');
+    btn.disabled = false; btn.textContent = '✓ Confirmar';
+    return;
+  }
+
+  try {
+    await req('/estoque/movimentacoes', 'POST', payload);
+    closeModal('modal-mov-rapida');
+    showAlert('Movimentação registrada!');
+    loadProdutos();
+  } catch(e) {
+    alertEl.innerHTML = `<div class="alert alert-danger">${e.message}</div>`;
+  } finally {
+    btn.disabled = false; btn.textContent = '✓ Confirmar';
+  }
+}
+
+// ── MOVIMENTAR (tab completa)
+async function prepMovimentar() {
+  const hoje = new Date().toISOString().split('T')[0];
+  const [y,m,d] = hoje.split('-');
+  document.getElementById('mov-data-label').textContent = `${d}/${m}/${y}`;
+  toggleMovTipos();
+
+  if (produtosCache.length === 0) produtosCache = await req('/estoque/produtos').catch(()=>[]);
+  document.getElementById('mov-produto').innerHTML =
+    '<option value="">— Selecione um produto —</option>' +
+    produtosCache.map(p => `<option value="${p.id}" data-saldo="${p.quantidade_atual}" data-unidade="${p.unidade}">${p.codigo?'['+p.codigo+'] ':''}${p.nome}${p.marca?' — '+p.marca:''} (${fmtNum(p.quantidade_atual)} ${p.unidade})</option>`).join('');
+}
+
+function atualizarSaldoMov() {
+  const sel = document.getElementById('mov-produto').selectedOptions[0];
+  const infoEl = document.getElementById('mov-saldo-info');
+  if (sel && sel.value) {
+    document.getElementById('mov-saldo-atual').textContent = `${fmtNum(sel.getAttribute('data-saldo'))} ${sel.getAttribute('data-unidade')}`;
+    infoEl.style.display = '';
+  } else {
+    infoEl.style.display = 'none';
+  }
+}
+
+function toggleMovTipos() {
+  const tipo = document.getElementById('mov-tipo').value;
+  document.getElementById('mov-perda-tipo-group').style.display = tipo === 'perda' ? '' : 'none';
+  document.getElementById('mov-fornecedor-group').style.display = tipo === 'entrada' ? '' : 'none';
+  document.getElementById('mov-qtd-label').textContent = tipo === 'ajuste' ? 'Nova quantidade total' : 'Quantidade';
+}
+
+async function confirmarMovimentacao() {
+  const prodId = +document.getElementById('mov-produto').value;
+  const tipo = document.getElementById('mov-tipo').value;
+  const qtd = +document.getElementById('mov-quantidade').value;
+  const resp = document.getElementById('mov-responsavel').value.trim();
+  const alertEl = document.getElementById('mov-alert');
+
+  if (!prodId) { alertEl.innerHTML = '<div class="alert alert-danger">Selecione um produto</div>'; return; }
+  if (!qtd || qtd <= 0) { alertEl.innerHTML = '<div class="alert alert-danger">Informe a quantidade</div>'; return; }
+  if (!resp) { alertEl.innerHTML = '<div class="alert alert-danger">Informe o responsável</div>'; return; }
+
+  const btn = document.getElementById('mov-btn');
+  btn.disabled = true; btn.textContent = 'Salvando...';
+
+  const payload = {
+    produto_id: prodId,
+    tipo,
+    quantidade: qtd,
+    responsavel: resp,
+    fornecedor: document.getElementById('mov-fornecedor').value,
+    observacao: document.getElementById('mov-obs').value,
+    tipo_perda: tipo === 'perda' ? document.getElementById('mov-perda-tipo').value : null,
+    data: new Date().toISOString().split('T')[0]
+  };
+
+  if (!navigator.onLine) {
+    saveOfflineEstoque(payload);
+    alertEl.innerHTML = '<div class="alert alert-success">✅ Movimentação registrada localmente (Offline)!</div>';
+    document.getElementById('mov-produto').value = '';
+    document.getElementById('mov-quantidade').value = '';
+    document.getElementById('mov-responsavel').value = '';
+    document.getElementById('mov-fornecedor').value = '';
+    document.getElementById('mov-obs').value = '';
+    document.getElementById('mov-saldo-info').style.display = 'none';
+    setTimeout(() => alertEl.innerHTML = '', 3000);
+    btn.disabled = false; btn.textContent = '✓ Confirmar Movimentação';
+    produtosCache = [];
+    return;
+  }
+
+  try {
+    await req('/estoque/movimentacoes', 'POST', payload);
+    alertEl.innerHTML = '<div class="alert alert-success">✅ Movimentação registrada!</div>';
+    document.getElementById('mov-produto').value = '';
+    document.getElementById('mov-quantidade').value = '';
+    document.getElementById('mov-responsavel').value = '';
+    document.getElementById('mov-fornecedor').value = '';
+    document.getElementById('mov-obs').value = '';
+    document.getElementById('mov-saldo-info').style.display = 'none';
+    setTimeout(() => alertEl.innerHTML = '', 3000);
+    produtosCache = [];
+  } catch(e) {
+    alertEl.innerHTML = `<div class="alert alert-danger">${e.message}</div>`;
+  } finally {
+    btn.disabled = false; btn.textContent = '✓ Confirmar Movimentação';
+  }
+}
+
+// ── HISTÓRICO
+async function loadHistorico() {
+  const tipo = document.getElementById('hist-filtro').value;
+  let url = '/estoque/movimentacoes';
+  if (tipo) url += '?tipo=' + tipo;
+  const el = document.getElementById('lista-historico');
+  el.innerHTML = '<div class="empty"><div class="spinner"></div></div>';
+
+  try {
+    const rows = await req(url);
+    if (!rows.length) { el.innerHTML = '<div class="empty">Nenhuma movimentação encontrada</div>'; return; }
+    const tipoIcon = { entrada:'📥', saida:'📤', perda:'⚠️', sobra:'✅', ajuste:'🔧' };
+    const tipoCor = { entrada:'var(--success)', saida:'var(--info)', perda:'var(--danger)', sobra:'var(--success)', ajuste:'var(--warn)' };
+    el.innerHTML = rows.slice(0,50).map(r => `
+      <div class="mov-item">
+        <div>
+          <div style="font-weight:600">${tipoIcon[r.tipo]||''} ${r.produto_nome}</div>
+          <div class="mov-tipo">${fmtDate(r.data)} ${r.responsavel ? '• '+r.responsavel : ''}</div>
+          ${r.observacao ? `<div style="font-size:11px;color:var(--muted)">${r.observacao}</div>` : ''}
+        </div>
+        <div style="text-align:right">
+          <div class="mov-qtd" style="color:${tipoCor[r.tipo]||'var(--text)'}">
+            ${r.tipo==='entrada'?'+':r.tipo==='ajuste'?'→':'-'}${fmtNum(r.quantidade)}
+          </div>
+          <div style="font-size:11px;color:var(--muted)">${r.unidade}</div>
+        </div>
+      </div>`).join('');
+  } catch(e) { el.innerHTML = '<div class="empty">Erro ao carregar histórico</div>'; }
+}
+
+// sairMobile editada para usar a nova lógica na parte superior do script
+
+async function loadTopbarWidgets() {
+  const dateEl = document.querySelector('#topbar-date span');
+  if (dateEl) {
+    const hoje = new Date();
+    const dia = String(hoje.getDate()).padStart(2, '0');
+    const mes = String(hoje.getMonth() + 1).padStart(2, '0');
+    const ano = hoje.getFullYear();
+    dateEl.textContent = `${dia}/${mes}/${ano}`;
+  }
+
+  let cidade = '';
+  let uf = '';
+  try {
+    const dados = await req('/configuracoes/empresa');
+    cidade = dados.cidade || '';
+    uf = dados.uf || '';
+  } catch (e) {
+    console.error('Erro ao buscar dados da empresa para topbar:', e);
+  }
+
+  const cityEl = document.querySelector('#topbar-city span');
+  if (cityEl) {
+    if (cidade) {
+      cityEl.textContent = uf ? `${cidade} - ${uf.toUpperCase()}` : cidade;
+    } else {
+      cityEl.textContent = 'Sem cidade';
+    }
+  }
+
+  const tempEl = document.querySelector('#topbar-temp span');
+  if (tempEl && cidade) {
+    try {
+      const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cidade)}&count=1&language=pt&format=json`;
+      const geoRes = await fetch(geoUrl);
+      if (geoRes.ok) {
+        const geoData = await geoRes.json();
+        if (geoData.results && geoData.results.length > 0) {
+          const { latitude, longitude } = geoData.results[0];
+          const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`;
+          const weatherRes = await fetch(weatherUrl);
+          if (weatherRes.ok) {
+            const weatherData = await weatherRes.json();
+            if (weatherData.current_weather && typeof weatherData.current_weather.temperature !== 'undefined') {
+              const temp = Math.round(weatherData.current_weather.temperature);
+              tempEl.textContent = `${temp}°C`;
+              return;
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Erro ao obter temperatura:', err);
+    }
+  }
+  
+  if (tempEl) {
+    tempEl.textContent = '—°C';
+  }
+}
+
+// INIT
+async function init() {
+  // 1. Verifica login
+  let me;
+  try {
+    me = await req('/auth/me');
+  } catch (e) {
+    document.body.innerHTML = `
+      <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0d0f14;font-family:'DM Sans',sans-serif">
+        <div style="text-align:center;padding:40px;max-width:360px">
+          <div style="font-size:60px;margin-bottom:20px">📦</div>
+          <div style="font-family:'Syne',sans-serif;font-size:24px;font-weight:800;color:var(--accent);margin-bottom:12px">PRATIC</div>
+          <div style="font-size:16px;color:#e8eaf0;margin-bottom:12px;font-weight:600">Aparelho não autenticado</div>
+          <div style="font-size:14px;color:var(--muted);line-height:1.5;margin-bottom:24px">Solicite ao Gestor que faça login neste dispositivo para liberar as movimentações de estoque.</div>
+          <button onclick="window.location.href='/login?redirect=' + encodeURIComponent(window.location.pathname)" class="btn btn-primary" style="width:auto;padding:12px 24px;font-size:14px">🔑 Autenticar Aparelho</button>
+        </div>
+      </div>`;
+    return;
+  }
+
+  // Set current month/year in header
+  const mesAtual = new Date().toISOString().slice(0, 7);
+  const [y, m] = mesAtual.split('-');
+  const meses = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+  const el = document.getElementById('topbar-mes');
+  if (el) el.textContent = `${meses[+m - 1]} de ${y}`;
+
+  updateConnectionStatus();
+  syncOfflineEstoque();
+
+
+  try {
+    const r = await fetch(API + '/configuracoes/permissoes/all');
+    const perms = await r.json();
+    const todosPerms = Object.values(perms).join(',');
+    if (!todosPerms.includes('estoque_mobile') && !todosPerms.includes('mobile')) {
+      document.body.innerHTML = `
+        <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0d0f14;font-family:'DM Sans',sans-serif">
+          <div style="text-align:center;padding:40px">
+            <div style="font-size:60px;margin-bottom:20px">🔒</div>
+            <div style="font-family:'Syne',sans-serif;font-size:24px;font-weight:800;color:#f0b429;margin-bottom:10px">PRATIC</div>
+            <div style="font-size:14px;color:#6b7280">Acesso não autorizado.<br>Entre em contato com o gestor.</div>
+          </div>
+        </div>`;
+      return;
+    }
+  } catch(e) {}
+  loadProdutos();
+  loadTopbarWidgets();
+}
+
+init();
+
+
+/* =========================================================
+   Proteção contra duplo clique em botões de salvar/confirmar
+   ========================================================= */
+(function () {
+  if (window.PRATIC_SAVE_GUARD_INSTALLED) return;
+  window.PRATIC_SAVE_GUARD_INSTALLED = true;
+
+  const actionWords = ['salvar', 'registrar', 'confirmar', 'importar', 'baixar backup'];
+  let currentActionButton = null;
+
+  function normalizeText(value) {
+    return String(value || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function isProtectedButton(btn) {
+    if (!btn || btn.tagName !== 'BUTTON') return false;
+    if (btn.dataset.noGuard === 'true') return false;
+    const onclick = normalizeText(btn.getAttribute('onclick') || '');
+    const label = normalizeText(btn.textContent || btn.innerText || '');
+    return actionWords.some(w => label.includes(w)) ||
+      /salvar|confirmar|registrar|importar|restore|backup/i.test(onclick);
+  }
+
+  function getButton() {
+    if (currentActionButton && document.contains(currentActionButton)) return currentActionButton;
+    const active = document.activeElement;
+    if (active && active.tagName === 'BUTTON') return active;
+    return null;
+  }
+
+  function setLoadingText(btn) {
+    if (!btn || btn.dataset.originalHtml) return;
+    btn.dataset.originalHtml = btn.innerHTML;
+    const text = normalizeText(btn.textContent || btn.innerText || '');
+    if (text.includes('importar')) btn.innerHTML = 'Importando...';
+    else if (text.includes('confirmar')) btn.innerHTML = 'Confirmando...';
+    else if (text.includes('registrar')) btn.innerHTML = 'Registrando...';
+    else if (text.includes('backup') || text.includes('baixar')) btn.innerHTML = 'Processando...';
+    else btn.innerHTML = 'Salvando...';
+  }
+
+  function lock(btn) {
+    if (!btn || !isProtectedButton(btn)) return true;
+    if (btn.dataset.guardBusy === '1') return false;
+    btn.dataset.guardBusy = '1';
+    btn.disabled = true;
+    btn.classList.add('btn-loading');
+    setLoadingText(btn);
+    return true;
+  }
+
+  function unlock(btn) {
+    if (!btn || !document.contains(btn)) return;
+    delete btn.dataset.guardBusy;
+    btn.disabled = false;
+    btn.classList.remove('btn-loading');
+    if (btn.dataset.originalHtml) {
+      btn.innerHTML = btn.dataset.originalHtml;
+      delete btn.dataset.originalHtml;
+    }
+  }
+
+  document.addEventListener('click', function (event) {
+    const btn = event.target.closest && event.target.closest('button');
+    if (!btn || !isProtectedButton(btn)) return;
+    if (btn.dataset.guardBusy === '1') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return false;
+    }
+    currentActionButton = btn;
+    setTimeout(() => {
+      if (currentActionButton === btn) currentActionButton = null;
+    }, 1000);
+  }, true);
+
+  function guardFunction(name) {
+    const original = window[name];
+    if (typeof original !== 'function' || original.__praticGuarded) return;
+    const guarded = async function (...args) {
+      const btn = getButton();
+      if (btn && !lock(btn)) return;
+      try {
+        return await original.apply(this, args);
+      } finally {
+        if (btn) unlock(btn);
+      }
+    };
+    guarded.__praticGuarded = true;
+    window[name] = guarded;
+  }
+
+  function installFunctionGuards() {
+    [
+      'salvarProducao', 'salvarColaborador', 'salvarMaquina', 'salvarAuxiliar',
+      'salvarConfig', 'salvarProduto', 'salvarProdutoEstoque', 'salvarMovimentacao',
+      'salvarPerda', 'salvarCategoria', 'salvarPedido', 'salvarCliente',
+      'salvarEmpresa', 'salvarPermissoes', 'salvarEPI', 'salvarEntrega',
+      'salvarFuncaoEPI', 'salvarNovoPedido', 'salvarNovoCliente', 'salvarMobile',
+      'salvarColabProd', 'salvarMaqProd', 'confirmarImportCSV', 'confirmarImportacao',
+      'confirmarRestore', 'confirmarMovimentacao', 'confirmarMovRapida', 'fazerBackup'
+    ].forEach(guardFunction);
+  }
+
+  installFunctionGuards();
+  document.addEventListener('DOMContentLoaded', installFunctionGuards);
+  setTimeout(installFunctionGuards, 300);
+})();
+</script>
+</body>
+</html>
