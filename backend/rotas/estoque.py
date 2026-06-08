@@ -1,16 +1,69 @@
 from fastapi import APIRouter, HTTPException
 import sqlite3
+import re
+import unicodedata
 from pydantic import BaseModel
 from typing import Optional
 from database import get_conn
 
 router = APIRouter()
 
+
+
+def _prefixo_categoria(conn, categoria_id: Optional[int]) -> str:
+    """Retorna 3 letras limpas da categoria em MAIÚSCULO. Ex.: Matéria Prima -> MAT."""
+    nome = None
+    if categoria_id:
+        row = conn.execute("SELECT nome FROM estoque_categorias WHERE id=?", (categoria_id,)).fetchone()
+        if row:
+            nome = row["nome"]
+    base = nome or "GERAL"
+    sem_acento = unicodedata.normalize("NFD", str(base))
+    sem_acento = "".join(ch for ch in sem_acento if unicodedata.category(ch) != "Mn")
+    letras = re.sub(r"[^A-Za-z0-9]", "", sem_acento).upper()
+    return (letras[:3] or "GER").ljust(3, "X")
+
+
+def _proximo_codigo_automatico(conn, categoria_id: Optional[int], excluir_id: Optional[int] = None) -> str:
+    """Gera código sequencial por categoria: CAT-001, CAT-002, CAT-003...
+
+    A leitura considera códigos antigos e novos como COP001, cop-001, COP_002 ou COP 001
+    para continuar a sequência sem reiniciar a contagem.
+    """
+    prefixo = _prefixo_categoria(conn, categoria_id)
+    params = [f"{prefixo}%"]
+    query = "SELECT id, codigo FROM estoque_produtos WHERE UPPER(COALESCE(codigo,'')) LIKE UPPER(?)"
+    if excluir_id:
+        query += " AND id<>?"
+        params.append(excluir_id)
+    rows = conn.execute(query, params).fetchall()
+
+    maior = 0
+    # Aceita formatos antigos e novos: COP001, COP-001-AL, COP_001, COP 001.
+    padrao = re.compile(rf"^{re.escape(prefixo)}[^0-9]*(\d+)", re.IGNORECASE)
+    for row in rows:
+        codigo_existente = str(row["codigo"] or "").strip().upper()
+        m = padrao.match(codigo_existente)
+        if m:
+            maior = max(maior, int(m.group(1)))
+
+    proximo = maior + 1
+    while True:
+        codigo = f"{prefixo}-{proximo:03d}"
+        params_check = [codigo]
+        query_check = "SELECT id FROM estoque_produtos WHERE UPPER(COALESCE(codigo,'')) = UPPER(?)"
+        if excluir_id:
+            query_check += " AND id<>?"
+            params_check.append(excluir_id)
+        if not conn.execute(query_check, params_check).fetchone():
+            return codigo
+        proximo += 1
+
 def _normalizar_codigo(codigo: Optional[str]) -> Optional[str]:
     if codigo is None:
         return None
     codigo = str(codigo).strip()
-    return codigo or None
+    return codigo.upper() or None
 
 class CategoriaIn(BaseModel):
     nome: str
@@ -104,17 +157,18 @@ def criar_produto(p: ProdutoIn):
     try:
         cur = conn.cursor()
         codigo = _normalizar_codigo(p.codigo)
-        if codigo:
-            existente = conn.execute("SELECT id FROM estoque_produtos WHERE codigo=? AND ativo=1", (codigo,)).fetchone()
-            if existente:
-                raise HTTPException(400, "Já existe um produto ativo com este Código/ID")
+        if not codigo:
+            codigo = _proximo_codigo_automatico(conn, p.categoria_id)
+        existente = conn.execute("SELECT id FROM estoque_produtos WHERE codigo=? AND ativo=1", (codigo,)).fetchone()
+        if existente:
+            raise HTTPException(400, "Já existe um produto ativo com este Código/ID")
         cur.execute("""INSERT INTO estoque_produtos (codigo, categoria_id, nome, marca, unidade, estoque_minimo)
                        VALUES (?, ?, ?, ?, ?, ?)""",
                     (codigo, p.categoria_id, p.nome, p.marca, p.unidade, p.estoque_minimo))
         produto_id = cur.lastrowid
         cur.execute("INSERT INTO estoque_saldo (produto_id, quantidade) VALUES (?, 0)", (produto_id,))
         conn.commit()
-        return {"id": produto_id, "mensagem": "Produto criado"}
+        return {"id": produto_id, "codigo": codigo, "mensagem": "Produto criado"}
     except HTTPException:
         conn.rollback()
         raise
@@ -150,17 +204,18 @@ def atualizar_produto(id: int, p: ProdutoIn):
             raise HTTPException(404, "Produto não encontrado")
 
         codigo = _normalizar_codigo(p.codigo)
-        if codigo:
-            existente = conn.execute("SELECT id FROM estoque_produtos WHERE codigo=? AND id<>? AND ativo=1", (codigo, id)).fetchone()
-            if existente:
-                raise HTTPException(400, "Já existe outro produto ativo com este Código/ID")
+        if not codigo:
+            codigo = _proximo_codigo_automatico(conn, p.categoria_id, excluir_id=id)
+        existente = conn.execute("SELECT id FROM estoque_produtos WHERE codigo=? AND id<>? AND ativo=1", (codigo, id)).fetchone()
+        if existente:
+            raise HTTPException(400, "Já existe outro produto ativo com este Código/ID")
 
         cur = conn.execute("""UPDATE estoque_produtos SET codigo=?, categoria_id=?, nome=?, marca=?, unidade=?, estoque_minimo=?
                             WHERE id=?""", (codigo, p.categoria_id, p.nome, p.marca, p.unidade, p.estoque_minimo, id))
         if cur.rowcount == 0:
             raise HTTPException(404, "Produto não encontrado")
         conn.commit()
-        return {"mensagem": "Produto atualizado"}
+        return {"codigo": codigo, "mensagem": "Produto atualizado"}
     except HTTPException:
         conn.rollback()
         raise
@@ -181,11 +236,11 @@ def deletar_produto(id: int):
 # ─── MOVIMENTAÇÕES ────────────────────────────────────────────────────────────
 
 @router.get("/movimentacoes")
-def listar_movimentacoes(produto_id: Optional[int] = None, tipo: Optional[str] = None, data_inicio: Optional[str] = None, data_fim: Optional[str] = None):
+def listar_movimentacoes(produto_id: Optional[int] = None, tipo: Optional[str] = None, data_inicio: Optional[str] = None, data_fim: Optional[str] = None, categoria_id: Optional[int] = None):
     conn = get_conn()
     query = """
         SELECT m.*, p.codigo as produto_codigo, p.nome as produto_nome, p.unidade,
-               cat.nome as categoria_nome
+               p.categoria_id as produto_categoria_id, cat.nome as categoria_nome
         FROM estoque_movimentacoes m
         JOIN estoque_produtos p ON m.produto_id = p.id
         LEFT JOIN estoque_categorias cat ON p.categoria_id = cat.id
@@ -198,6 +253,9 @@ def listar_movimentacoes(produto_id: Optional[int] = None, tipo: Optional[str] =
     if tipo:
         query += " AND m.tipo = ?"
         params.append(tipo)
+    if categoria_id:
+        query += " AND p.categoria_id = ?"
+        params.append(categoria_id)
     if data_inicio:
         query += " AND m.data >= ?"
         params.append(data_inicio)

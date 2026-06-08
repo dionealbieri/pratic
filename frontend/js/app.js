@@ -1071,13 +1071,117 @@ async function removerAuxiliar(id) {
 
 // ─── COLABORADORES ────────────────────────────────────────────────────────────
 
+function tipoKeyColaborador(tipo) {
+  return (tipo || '')
+    .toString()
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '');
+}
+
+function formatTipoColaborador(tipo) {
+  return (tipo || '')
+    .toString()
+    .trim()
+    .toLowerCase()
+    .split(/([\s-]+)/)
+    .map(parte => /^[\s-]+$/.test(parte) ? parte : parte.charAt(0).toUpperCase() + parte.slice(1))
+    .join('');
+}
+
+function pillTipoColaborador(tipo) {
+  const key = tipoKeyColaborador(tipo);
+  const mapa = {
+    operador: 'pill-info',
+    auxiliar: 'pill-warn',
+    lider: 'pill-purple',
+    supervisor: 'pill-success',
+    conferente: 'pill-teal',
+    estoquista: 'pill-pink'
+  };
+  if (mapa[key]) return mapa[key];
+  const cores = ['pill-purple', 'pill-success', 'pill-teal', 'pill-pink', 'pill-slate'];
+  let soma = 0;
+  for (let i = 0; i < key.length; i++) soma += key.charCodeAt(i);
+  return cores[soma % cores.length];
+}
+
+async function carregarTiposColaborador(selected = 'operador') {
+  const tipos = await api('/colaboradores/tipos').catch(() => ([
+    { nome: 'operador' },
+    { nome: 'auxiliar' }
+  ]));
+  const sel = document.getElementById('col-tipo');
+  if (sel) {
+    sel.innerHTML = tipos.map(t => {
+      const nome = t.nome || '';
+      return `<option value="${nome}" ${nome === selected ? 'selected' : ''}>${formatTipoColaborador(nome)}</option>`;
+    }).join('');
+    if (selected && !tipos.some(t => t.nome === selected)) {
+      sel.innerHTML += `<option value="${selected}" selected>${formatTipoColaborador(selected)}</option>`;
+    }
+  }
+  return tipos;
+}
+
+async function openModalTipoColaborador() {
+  document.getElementById('col-tipo-novo').value = '';
+  await renderTiposColaborador();
+  openModal('modal-tipo-colaborador');
+}
+
+async function renderTiposColaborador() {
+  const lista = document.getElementById('col-tipos-lista');
+  if (!lista) return;
+  const tipos = await api('/colaboradores/tipos').catch(() => []);
+  lista.innerHTML = tipos.length ? tipos.map(t => `
+    <span class="pill ${pillTipoColaborador(t.nome)}" style="display:inline-flex;align-items:center;gap:6px">
+      ${formatTipoColaborador(t.nome)}
+      ${['operador','auxiliar'].includes(t.nome) ? '' : `<button class="btn btn-sm btn-danger" style="padding:2px 6px" onclick="deletarTipoColaborador(${t.id})">×</button>`}
+    </span>
+  `).join('') : '<span style="color:var(--muted)">Nenhum tipo cadastrado</span>';
+}
+
+async function salvarTipoColaborador() {
+  const input = document.getElementById('col-tipo-novo');
+  const nome = (input?.value || '').trim();
+  clearFieldHighlights('modal-tipo-colaborador');
+  if (!nome) { highlightField('col-tipo-novo', true, 'Informe o tipo'); return; }
+  const btn = document.getElementById('btn-salvar-tipo-colaborador');
+  if (btn) btn.disabled = true;
+  try {
+    await api('/colaboradores/tipos', 'POST', { nome });
+    showAlert('Tipo cadastrado!');
+    input.value = '';
+    await renderTiposColaborador();
+    await carregarTiposColaborador(nome.toLowerCase());
+  } catch (e) {
+    showAlert(e.message || 'Erro ao salvar tipo de colaborador', 'danger');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function deletarTipoColaborador(id) {
+  if (!confirm('Desativar este tipo?')) return;
+  try {
+    await api('/colaboradores/tipos/' + id, 'DELETE');
+    showAlert('Tipo desativado');
+    await renderTiposColaborador();
+    await carregarTiposColaborador();
+  } catch (e) {
+    showAlert(e.message, 'danger');
+  }
+}
+
 async function loadColaboradores() {
   const rows = await api('/colaboradores/');
   const tbody = document.getElementById('col-tbody');
   tbody.innerHTML = rows.map(c => `
     <tr>
       <td><strong>${c.nome}</strong></td>
-      <td><span class="pill ${c.tipo === 'operador' ? 'pill-info' : 'pill-warn'}">${c.tipo}</span></td>
+      <td><span class="pill ${pillTipoColaborador(c.tipo)}">${formatTipoColaborador(c.tipo)}</span></td>
       <td>${c.maquina_nome || '—'}</td>
       <td><span class="pill pill-success">Ativo</span></td>
       <td class="flex gap-2">
@@ -1091,7 +1195,7 @@ async function loadColaboradores() {
 async function openModalColaborador() {
   document.getElementById('col-id').value = '';
   document.getElementById('col-nome').value = '';
-  document.getElementById('col-tipo').value = 'operador';
+  await carregarTiposColaborador('operador');
   const mqs = await api('/maquinas/');
   document.getElementById('col-maquina').innerHTML =
     mqs.filter(m => m.ativa).map(m => `<option value="${m.id}">${m.nome}</option>`).join('');
@@ -1109,7 +1213,7 @@ async function editColaborador(id) {
   const mqs = await api('/maquinas/');
   document.getElementById('col-id').value = c.id;
   document.getElementById('col-nome').value = c.nome;
-  document.getElementById('col-tipo').value = c.tipo;
+  await carregarTiposColaborador(c.tipo);
   document.getElementById('col-maquina').innerHTML =
     mqs.filter(m => m.ativa).map(m =>
       `<option value="${m.id}" ${m.id === c.maquina_id ? 'selected' : ''}>${m.nome}</option>`
@@ -1125,21 +1229,27 @@ async function salvarColaborador() {
 
   clearFieldHighlights('modal-colaborador');
   if (!nome) { highlightField('col-nome', true, 'Informe o nome'); return; }
+  if (!tipo) { highlightField('col-tipo', true, 'Selecione o tipo'); return; }
 
+  const maquinaVal = document.getElementById('col-maquina')?.value || '';
   const body = {
     nome,
     tipo,
-    maquina_id: tipo === 'operador' ? +document.getElementById('col-maquina').value : null,
+    maquina_id: tipo === 'operador' && maquinaVal ? +maquinaVal : null,
     ativo: 1
   };
+  const btn = document.getElementById('btn-salvar-colaborador');
+  if (btn) btn.disabled = true;
   try {
     if (id) await api('/colaboradores/' + id, 'PUT', body);
     else await api('/colaboradores/', 'POST', body);
     showAlert('Colaborador salvo!');
     closeModal('modal-colaborador');
-    loadColaboradores();
+    await loadColaboradores();
   } catch (e) {
-    showAlert(e.message, 'danger');
+    showAlert(e.message || 'Erro ao salvar colaborador', 'danger');
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -1252,6 +1362,7 @@ async function loadRelatorios() {
     const sel = document.getElementById('rel-prod-col');
     if (sel && sel.options.length<=1) cols.forEach(c => { const o=document.createElement('option'); o.value=c.id; o.textContent=c.nome; sel.appendChild(o); });
   } catch(e) {}
+  await carregarCategoriasRelEstoque();
   // Só carrega se a aba produção estiver visível
   if (document.getElementById('rel-content-producao')) loadRelProducao();
 }
@@ -1323,17 +1434,136 @@ async function loadRelPremiacao() {
     </div>`;
 }
 
+
+async function carregarCategoriasRelEstoque() {
+  const sel = document.getElementById('rel-est-categoria');
+  if (!sel) return;
+  const atual = sel.value || '';
+  try {
+    const cats = await api('/estoque/categorias');
+    sel.innerHTML = '<option value="">Todas as categorias</option>' + cats.map(c => `<option value="${c.id}">${c.nome}</option>`).join('');
+    if (atual) sel.value = atual;
+  } catch (e) {
+    console.warn('Não foi possível carregar categorias do relatório de estoque', e);
+  }
+}
+
+function statusEstoqueRel(p) {
+  const saldo = Number(p.quantidade_atual || 0);
+  const minimo = Number(p.estoque_minimo || 0);
+  if (saldo <= 0) return { texto: 'Falta em estoque', pill: 'pill-danger', cor: 'var(--danger)' };
+  if (saldo <= minimo) return { texto: 'Abaixo do mínimo', pill: 'pill-warn', cor: 'var(--warn)' };
+  return { texto: 'OK', pill: 'pill-success', cor: 'var(--success)' };
+}
+
+function cardRelatorioEstoque(titulo, valor, detalhe) {
+  return `<div class="card metric-card"><div class="metric-label">${titulo}</div><div class="metric-value">${valor}</div><div class="metric-sub">${detalhe || ''}</div></div>`;
+}
+
 async function loadRelEstoque() {
-  const prods = await api('/estoque/produtos');
+  await carregarCategoriasRelEstoque();
+
+  const modelo = document.getElementById('rel-est-modelo')?.value || 'geral';
+  const categoriaId = document.getElementById('rel-est-categoria')?.value || '';
+  const tipoMov = document.getElementById('rel-est-tipo-mov')?.value || '';
+  const dataIni = document.getElementById('rel-est-data-ini')?.value || '';
+  const dataFim = document.getElementById('rel-est-data-fim')?.value || '';
+
+  const isMov = modelo === 'movimentacoes';
+  ['rel-est-tipo-mov','rel-est-data-ini','rel-est-data-sep','rel-est-data-fim'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = isMov ? '' : 'none';
+  });
+
   const tbody = document.getElementById('rel-est-tbody');
-  tbody.innerHTML = prods.map(p => `<tr>
-    <td><strong>${p.nome}${p.marca?' — '+p.marca:''}</strong></td>
-    <td>${p.categoria_nome||'—'}</td>
-    <td>${p.unidade}</td>
-    <td style="font-weight:700;color:${p.alerta?'var(--danger)':'var(--success)'}">${fmtNum(p.quantidade_atual)}</td>
-    <td>${fmtNum(p.estoque_minimo)}</td>
-    <td><span class="pill ${p.alerta?'pill-danger':'pill-success'}">${p.alerta?'⚠ Abaixo':'✓ OK'}</span></td>
-  </tr>`).join('');
+  const thead = document.getElementById('rel-est-thead');
+  const title = document.getElementById('rel-est-title');
+  const cards = document.getElementById('rel-est-cards');
+  if (!tbody || !thead) return;
+
+  if (isMov) {
+    const params = [];
+    if (categoriaId) params.push('categoria_id=' + encodeURIComponent(categoriaId));
+    if (tipoMov) params.push('tipo=' + encodeURIComponent(tipoMov));
+    if (dataIni) params.push('data_inicio=' + encodeURIComponent(dataIni));
+    if (dataFim) params.push('data_fim=' + encodeURIComponent(dataFim));
+    const movs = await api('/estoque/movimentacoes' + (params.length ? '?' + params.join('&') : ''));
+
+    const entradas = movs.filter(m => m.tipo === 'entrada').reduce((a,m)=>a+Number(m.quantidade||0),0);
+    const saidas = movs.filter(m => ['saida','perda'].includes(m.tipo)).reduce((a,m)=>a+Number(m.quantidade||0),0);
+    if (title) title.textContent = 'Movimentações de Estoque';
+    if (cards) cards.innerHTML = [
+      cardRelatorioEstoque('Movimentações', movs.length, 'registros encontrados'),
+      cardRelatorioEstoque('Entradas', fmtNum(entradas), 'quantidade movimentada'),
+      cardRelatorioEstoque('Saídas/Perdas', fmtNum(saidas), 'quantidade movimentada')
+    ].join('');
+    thead.innerHTML = '<tr><th>Data</th><th>Código</th><th>Produto</th><th>Categoria</th><th>Tipo</th><th>Quantidade</th><th>Saldo Depois</th><th>Motivo/Obs.</th></tr>';
+    tbody.innerHTML = movs.length ? movs.map(m => {
+      const tipoLabel = {entrada:'Entrada',saida:'Saída',perda:'Perda',ajuste:'Ajuste'}[m.tipo] || m.tipo;
+      const pill = m.tipo === 'entrada' ? 'pill-success' : (m.tipo === 'perda' ? 'pill-danger' : 'pill-warn');
+      return `<tr>
+        <td>${fmtDate(m.data)}</td>
+        <td><strong>${m.produto_codigo || '—'}</strong></td>
+        <td>${m.produto_nome || '—'}</td>
+        <td>${m.categoria_nome || '—'}</td>
+        <td><span class="pill ${pill}">${tipoLabel}</span></td>
+        <td>${fmtNum(m.quantidade)}</td>
+        <td>${fmtNum(m.saldo_posterior)}</td>
+        <td>${m.motivo || m.observacao || '—'}</td>
+      </tr>`;
+    }).join('') : '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:28px">Nenhuma movimentação encontrada</td></tr>';
+    return;
+  }
+
+  let prods = await api('/estoque/produtos' + (categoriaId ? '?categoria_id=' + encodeURIComponent(categoriaId) : ''));
+  const todos = prods.slice();
+
+  if (modelo === 'falta') prods = prods.filter(p => Number(p.quantidade_atual || 0) <= 0);
+  if (modelo === 'baixo') prods = prods.filter(p => Number(p.quantidade_atual || 0) > 0 && Number(p.quantidade_atual || 0) <= Number(p.estoque_minimo || 0));
+  if (modelo === 'positivo') prods = prods.filter(p => Number(p.quantidade_atual || 0) > 0);
+  if (modelo === 'sem_minimo') prods = prods.filter(p => Number(p.estoque_minimo || 0) <= 0);
+  if (modelo === 'sem_movimento') {
+    let movs = [];
+    try { movs = await api('/estoque/movimentacoes'); } catch(e) { movs = []; }
+    const idsComMov = new Set(movs.map(m => Number(m.produto_id)));
+    prods = prods.filter(p => !idsComMov.has(Number(p.id)));
+  }
+
+  const titulos = {
+    geral: 'Relatório Geral de Estoque',
+    categoria: 'Produtos por Categoria',
+    falta: 'Produtos em Falta no Estoque',
+    baixo: 'Produtos com Estoque Baixo',
+    positivo: 'Produtos com Saldo Positivo',
+    sem_minimo: 'Produtos sem Estoque Mínimo Cadastrado',
+    sem_movimento: 'Produtos sem Movimentação'
+  };
+  if (title) title.textContent = titulos[modelo] || 'Posição de Estoque';
+
+  const totalGeral = todos.length;
+  const totalFalta = todos.filter(p => Number(p.quantidade_atual || 0) <= 0).length;
+  const totalBaixo = todos.filter(p => Number(p.quantidade_atual || 0) > 0 && Number(p.quantidade_atual || 0) <= Number(p.estoque_minimo || 0)).length;
+  const totalOk = todos.filter(p => Number(p.quantidade_atual || 0) > Number(p.estoque_minimo || 0)).length;
+  if (cards) cards.innerHTML = [
+    cardRelatorioEstoque('Itens filtrados', prods.length, `de ${totalGeral} produtos ativos`),
+    cardRelatorioEstoque('Falta em estoque', totalFalta, 'saldo igual ou menor que zero'),
+    cardRelatorioEstoque('Estoque baixo', totalBaixo, 'saldo abaixo ou igual ao mínimo'),
+    cardRelatorioEstoque('Estoque OK', totalOk, 'acima do mínimo')
+  ].join('');
+
+  thead.innerHTML = '<tr><th>Código</th><th>Produto</th><th>Categoria</th><th>Unidade</th><th>Saldo Atual</th><th>Mínimo</th><th>Situação</th></tr>';
+  tbody.innerHTML = prods.length ? prods.map(p => {
+    const st = statusEstoqueRel(p);
+    return `<tr>
+      <td><strong>${p.codigo || '—'}</strong></td>
+      <td><strong>${p.nome}${p.marca ? ' — ' + p.marca : ''}</strong></td>
+      <td>${p.categoria_nome || '—'}</td>
+      <td>${p.unidade || '—'}</td>
+      <td style="font-weight:700;color:${st.cor}">${fmtNum(p.quantidade_atual)}</td>
+      <td>${fmtNum(p.estoque_minimo)}</td>
+      <td><span class="pill ${st.pill}">${st.texto}</span></td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:28px">Nenhum produto encontrado para este filtro</td></tr>';
 }
 
 async function loadRelPedidos() {
@@ -1467,16 +1697,109 @@ async function loadRelPremiacao() {
 }
 
 async function loadRelEstoque() {
-  const prods = await api('/estoque/produtos');
+  await carregarCategoriasRelEstoque();
+
+  const modelo = document.getElementById('rel-est-modelo')?.value || 'geral';
+  const categoriaId = document.getElementById('rel-est-categoria')?.value || '';
+  const tipoMov = document.getElementById('rel-est-tipo-mov')?.value || '';
+  const dataIni = document.getElementById('rel-est-data-ini')?.value || '';
+  const dataFim = document.getElementById('rel-est-data-fim')?.value || '';
+
+  const isMov = modelo === 'movimentacoes';
+  ['rel-est-tipo-mov','rel-est-data-ini','rel-est-data-sep','rel-est-data-fim'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = isMov ? '' : 'none';
+  });
+
   const tbody = document.getElementById('rel-est-tbody');
-  if(!tbody) return;
-  tbody.innerHTML = prods.map(p=>`<tr>
-    <td><strong>${p.nome}${p.marca?' — '+p.marca:''}</strong></td>
-    <td>${p.categoria_nome||'—'}</td><td>${p.unidade}</td>
-    <td style="font-weight:700;color:${p.alerta?'var(--danger)':'var(--success)'}">${fmtNum(p.quantidade_atual)}</td>
-    <td>${fmtNum(p.estoque_minimo)}</td>
-    <td><span class="pill ${p.alerta?'pill-danger':'pill-success'}">${p.alerta?'⚠ Abaixo':'✓ OK'}</span></td>
-  </tr>`).join('');
+  const thead = document.getElementById('rel-est-thead');
+  const title = document.getElementById('rel-est-title');
+  const cards = document.getElementById('rel-est-cards');
+  if (!tbody || !thead) return;
+
+  if (isMov) {
+    const params = [];
+    if (categoriaId) params.push('categoria_id=' + encodeURIComponent(categoriaId));
+    if (tipoMov) params.push('tipo=' + encodeURIComponent(tipoMov));
+    if (dataIni) params.push('data_inicio=' + encodeURIComponent(dataIni));
+    if (dataFim) params.push('data_fim=' + encodeURIComponent(dataFim));
+    const movs = await api('/estoque/movimentacoes' + (params.length ? '?' + params.join('&') : ''));
+
+    const entradas = movs.filter(m => m.tipo === 'entrada').reduce((a,m)=>a+Number(m.quantidade||0),0);
+    const saidas = movs.filter(m => ['saida','perda'].includes(m.tipo)).reduce((a,m)=>a+Number(m.quantidade||0),0);
+    if (title) title.textContent = 'Movimentações de Estoque';
+    if (cards) cards.innerHTML = [
+      cardRelatorioEstoque('Movimentações', movs.length, 'registros encontrados'),
+      cardRelatorioEstoque('Entradas', fmtNum(entradas), 'quantidade movimentada'),
+      cardRelatorioEstoque('Saídas/Perdas', fmtNum(saidas), 'quantidade movimentada')
+    ].join('');
+    thead.innerHTML = '<tr><th>Data</th><th>Código</th><th>Produto</th><th>Categoria</th><th>Tipo</th><th>Quantidade</th><th>Saldo Depois</th><th>Motivo/Obs.</th></tr>';
+    tbody.innerHTML = movs.length ? movs.map(m => {
+      const tipoLabel = {entrada:'Entrada',saida:'Saída',perda:'Perda',ajuste:'Ajuste'}[m.tipo] || m.tipo;
+      const pill = m.tipo === 'entrada' ? 'pill-success' : (m.tipo === 'perda' ? 'pill-danger' : 'pill-warn');
+      return `<tr>
+        <td>${fmtDate(m.data)}</td>
+        <td><strong>${m.produto_codigo || '—'}</strong></td>
+        <td>${m.produto_nome || '—'}</td>
+        <td>${m.categoria_nome || '—'}</td>
+        <td><span class="pill ${pill}">${tipoLabel}</span></td>
+        <td>${fmtNum(m.quantidade)}</td>
+        <td>${fmtNum(m.saldo_posterior)}</td>
+        <td>${m.motivo || m.observacao || '—'}</td>
+      </tr>`;
+    }).join('') : '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:28px">Nenhuma movimentação encontrada</td></tr>';
+    return;
+  }
+
+  let prods = await api('/estoque/produtos' + (categoriaId ? '?categoria_id=' + encodeURIComponent(categoriaId) : ''));
+  const todos = prods.slice();
+
+  if (modelo === 'falta') prods = prods.filter(p => Number(p.quantidade_atual || 0) <= 0);
+  if (modelo === 'baixo') prods = prods.filter(p => Number(p.quantidade_atual || 0) > 0 && Number(p.quantidade_atual || 0) <= Number(p.estoque_minimo || 0));
+  if (modelo === 'positivo') prods = prods.filter(p => Number(p.quantidade_atual || 0) > 0);
+  if (modelo === 'sem_minimo') prods = prods.filter(p => Number(p.estoque_minimo || 0) <= 0);
+  if (modelo === 'sem_movimento') {
+    let movs = [];
+    try { movs = await api('/estoque/movimentacoes'); } catch(e) { movs = []; }
+    const idsComMov = new Set(movs.map(m => Number(m.produto_id)));
+    prods = prods.filter(p => !idsComMov.has(Number(p.id)));
+  }
+
+  const titulos = {
+    geral: 'Relatório Geral de Estoque',
+    categoria: 'Produtos por Categoria',
+    falta: 'Produtos em Falta no Estoque',
+    baixo: 'Produtos com Estoque Baixo',
+    positivo: 'Produtos com Saldo Positivo',
+    sem_minimo: 'Produtos sem Estoque Mínimo Cadastrado',
+    sem_movimento: 'Produtos sem Movimentação'
+  };
+  if (title) title.textContent = titulos[modelo] || 'Posição de Estoque';
+
+  const totalGeral = todos.length;
+  const totalFalta = todos.filter(p => Number(p.quantidade_atual || 0) <= 0).length;
+  const totalBaixo = todos.filter(p => Number(p.quantidade_atual || 0) > 0 && Number(p.quantidade_atual || 0) <= Number(p.estoque_minimo || 0)).length;
+  const totalOk = todos.filter(p => Number(p.quantidade_atual || 0) > Number(p.estoque_minimo || 0)).length;
+  if (cards) cards.innerHTML = [
+    cardRelatorioEstoque('Itens filtrados', prods.length, `de ${totalGeral} produtos ativos`),
+    cardRelatorioEstoque('Falta em estoque', totalFalta, 'saldo igual ou menor que zero'),
+    cardRelatorioEstoque('Estoque baixo', totalBaixo, 'saldo abaixo ou igual ao mínimo'),
+    cardRelatorioEstoque('Estoque OK', totalOk, 'acima do mínimo')
+  ].join('');
+
+  thead.innerHTML = '<tr><th>Código</th><th>Produto</th><th>Categoria</th><th>Unidade</th><th>Saldo Atual</th><th>Mínimo</th><th>Situação</th></tr>';
+  tbody.innerHTML = prods.length ? prods.map(p => {
+    const st = statusEstoqueRel(p);
+    return `<tr>
+      <td><strong>${p.codigo || '—'}</strong></td>
+      <td><strong>${p.nome}${p.marca ? ' — ' + p.marca : ''}</strong></td>
+      <td>${p.categoria_nome || '—'}</td>
+      <td>${p.unidade || '—'}</td>
+      <td style="font-weight:700;color:${st.cor}">${fmtNum(p.quantidade_atual)}</td>
+      <td>${fmtNum(p.estoque_minimo)}</td>
+      <td><span class="pill ${st.pill}">${st.texto}</span></td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:28px">Nenhum produto encontrado para este filtro</td></tr>';
 }
 
 async function loadRelPedidos() {
@@ -2043,7 +2366,7 @@ async function deletarEPI(id) {
 
 async function openModalEntrega() {
   const [cols,epis] = await Promise.all([api('/colaboradores/'),api('/epi/epis')]);
-  document.getElementById('entrega-colaborador').innerHTML=cols.map(c=>`<option value="${c.id}" data-tipo="${c.tipo}">${c.nome} (${c.tipo})</option>`).join('');
+  document.getElementById('entrega-colaborador').innerHTML=cols.map(c=>`<option value="${c.id}" data-tipo="${c.tipo}">${c.nome} (${formatTipoColaborador(c.tipo)})</option>`).join('');
   document.getElementById('entrega-epi').innerHTML=epis.map(e=>`<option value="${e.id}">${e.nome} — ${e.categoria||'—'}</option>`).join('');
   document.getElementById('entrega-data').value=new Date().toISOString().split('T')[0];
   document.getElementById('entrega-validade').value='';
@@ -3043,6 +3366,41 @@ function _produtoLabel(p) {
   return codigo + (p.nome || '') + marca;
 }
 
+
+function _prefixoCategoriaProduto(nomeCategoria) {
+  const base = (nomeCategoria || 'GERAL')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9]/g, '')
+    .toUpperCase();
+  return (base.substring(0, 3) || 'GER').padEnd(3, 'X');
+}
+
+async function gerarCodigoProdutoAutomatico(categoriaId, excluirId = '') {
+  const cats = await api('/estoque/categorias').catch(() => []);
+  const categoria = cats.find(c => String(c.id) === String(categoriaId));
+  const prefixo = _prefixoCategoriaProduto(categoria?.nome);
+  const produtos = await api('/estoque/produtos').catch(() => []);
+  const padrao = new RegExp('^' + prefixo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[^0-9]*(\\d+)', 'i');
+  let maior = 0;
+
+  produtos.forEach(p => {
+    if (String(p.id) === String(excluirId || '')) return;
+    const codigoAtual = String(p.codigo || '').trim().toUpperCase();
+    const m = codigoAtual.match(padrao);
+    if (m) maior = Math.max(maior, parseInt(m[1], 10) || 0);
+  });
+
+  let proximo = maior + 1;
+  let codigo = '';
+  do {
+    codigo = prefixo + '-' + String(proximo).padStart(3, '0');
+    proximo++;
+  } while (produtos.some(p => String(p.id) !== String(excluirId || '') && String(p.codigo || '').trim().toLowerCase() === codigo.toLowerCase()));
+
+  return codigo;
+}
+
 function switchEstoqueTab(tab) {
   estoqueTabAtual = tab || 'produtos';
   ['produtos', 'movimentacoes', 'perdas', 'categorias'].forEach(t => {
@@ -3144,9 +3502,10 @@ async function editProduto(id) {
 
 async function salvarProduto() {
   const id = _getVal('est-prod-id');
+  const categoriaId = _getVal('est-prod-cat') ? +_getVal('est-prod-cat') : null;
   const body = {
     codigo: _getVal('est-prod-codigo').trim(),
-    categoria_id: _getVal('est-prod-cat') ? +_getVal('est-prod-cat') : null,
+    categoria_id: categoriaId,
     nome: _getVal('est-prod-nome').trim(),
     marca: _getVal('est-prod-marca').trim(),
     unidade: _getVal('est-prod-unidade') || 'unidade',
@@ -3154,6 +3513,10 @@ async function salvarProduto() {
   };
   if (!body.nome) { showAlert('Informe o nome do produto', 'danger'); return; }
   try {
+    if (!body.codigo) {
+      body.codigo = await gerarCodigoProdutoAutomatico(categoriaId, id);
+      _setVal('est-prod-codigo', body.codigo);
+    }
     if (id) await api('/estoque/produtos/' + id, 'PUT', body);
     else await api('/estoque/produtos', 'POST', body);
     closeModal('modal-produto');
@@ -3736,7 +4099,7 @@ function baixarModeloCSV() {
 
   function installFunctionGuards() {
     [
-      'salvarProducao', 'salvarColaborador', 'salvarMaquina', 'salvarAuxiliar',
+      'salvarProducao', 'salvarColaborador', 'salvarTipoColaborador', 'salvarMaquina', 'salvarAuxiliar',
       'salvarConfig', 'salvarProduto', 'salvarProdutoEstoque', 'salvarMovimentacao',
       'salvarPerda', 'salvarCategoria', 'salvarPedido', 'salvarCliente',
       'salvarEmpresa', 'salvarPermissoes', 'salvarEPI', 'salvarEntrega',
@@ -3920,3 +4283,11 @@ async function excluirUsuario(id, nome) {
     showAlert(e.message, 'danger');
   }
 }
+// Funções expostas para os botões inline do HTML
+window.openModalTipoColaborador = openModalTipoColaborador;
+window.salvarTipoColaborador = salvarTipoColaborador;
+window.deletarTipoColaborador = deletarTipoColaborador;
+window.openModalColaborador = openModalColaborador;
+window.editColaborador = editColaborador;
+window.salvarColaborador = salvarColaborador;
+window.deletarColaborador = deletarColaborador;

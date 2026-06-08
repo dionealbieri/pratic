@@ -435,6 +435,10 @@ button:disabled.btn-loading {
 .pill-danger { background: rgba(239, 68, 68, 0.15); color: var(--danger); }
 .pill-warn { background: rgba(240, 180, 41, 0.15); color: var(--accent); }
 .pill-info { background: rgba(59, 130, 246, 0.15); color: var(--accent2); }
+.pill-purple { background: rgba(168, 85, 247, 0.16); color: #a855f7; }
+.pill-teal { background: rgba(20, 184, 166, 0.16); color: #14b8a6; }
+.pill-pink { background: rgba(236, 72, 153, 0.16); color: #ec4899; }
+.pill-slate { background: rgba(148, 163, 184, 0.16); color: #94a3b8; }
 
 /* SECTION */
 .section {
@@ -1117,5 +1121,36 @@ button:disabled.btn-loading {
   }
   .prod-header-row {
     display: none !important;
+  }
+}
+
+/* Barra fixa da aba Produtos do Estoque: mantém o botão + Novo Produto acessível durante a rolagem */
+.estoque-produtos-toolbar {
+  position: sticky;
+  top: 12px;
+  z-index: 60;
+  padding: 10px 0;
+  background: var(--bg);
+  border-bottom: 1px solid transparent;
+}
+
+.estoque-produtos-toolbar.is-stuck,
+.estoque-produtos-toolbar:hover {
+  border-bottom-color: var(--border);
+}
+
+@media (max-width: 768px) {
+  .estoque-produtos-toolbar {
+    top: 8px;
+    align-items: stretch;
+  }
+
+  .estoque-produtos-toolbar > .flex {
+    width: 100%;
+  }
+
+  .estoque-produtos-toolbar .btn {
+    flex: 1;
+    justify-content: center;
   }
 }

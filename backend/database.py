@@ -25,10 +25,17 @@ def init_db():
             criado_em TEXT DEFAULT (datetime('now'))
         );
 
+        CREATE TABLE IF NOT EXISTS colaborador_tipos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT UNIQUE NOT NULL,
+            ativo INTEGER DEFAULT 1,
+            criado_em TEXT DEFAULT (datetime('now'))
+        );
+
         CREATE TABLE IF NOT EXISTS colaboradores (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             nome TEXT NOT NULL,
-            tipo TEXT NOT NULL CHECK(tipo IN ('operador','auxiliar')),
+            tipo TEXT NOT NULL,
             maquina_id INTEGER,
             ativo INTEGER DEFAULT 1,
             criado_em TEXT DEFAULT (datetime('now')),
@@ -279,6 +286,48 @@ def init_db():
 
 
     # Migrações leves para bancos já existentes
+    # Tipos de colaboradores configuráveis: remove a trava antiga que aceitava somente operador/auxiliar
+    # e cria uma tabela simples para o usuário cadastrar novas funções/tipos pela tela.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS colaborador_tipos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT UNIQUE NOT NULL,
+            ativo INTEGER DEFAULT 1,
+            criado_em TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    for tipo_padrao in ("operador", "auxiliar"):
+        conn.execute("INSERT OR IGNORE INTO colaborador_tipos (nome, ativo) VALUES (?, 1)", (tipo_padrao,))
+    for row in conn.execute("SELECT DISTINCT tipo FROM colaboradores WHERE COALESCE(tipo,'')<>''").fetchall():
+        conn.execute("INSERT OR IGNORE INTO colaborador_tipos (nome, ativo) VALUES (?, 1)", (row[0],))
+
+    colaboradores_sql = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='colaboradores'").fetchone()
+    if colaboradores_sql and "CHECK(tipo IN" in (colaboradores_sql[0] or ""):
+        # A recriação precisa ocorrer fora de transação e com legacy_alter_table ligado,
+        # para as FKs das tabelas de produção/EPIs continuarem apontando para colaboradores.
+        conn.commit()
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("PRAGMA legacy_alter_table=ON")
+        conn.execute("ALTER TABLE colaboradores RENAME TO colaboradores_old")
+        conn.execute("""
+            CREATE TABLE colaboradores (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nome TEXT NOT NULL,
+                tipo TEXT NOT NULL,
+                maquina_id INTEGER,
+                ativo INTEGER DEFAULT 1,
+                criado_em TEXT DEFAULT (datetime('now')),
+                FOREIGN KEY (maquina_id) REFERENCES maquinas(id)
+            )
+        """)
+        conn.execute("""
+            INSERT INTO colaboradores (id, nome, tipo, maquina_id, ativo, criado_em)
+            SELECT id, nome, tipo, maquina_id, ativo, criado_em FROM colaboradores_old
+        """)
+        conn.execute("DROP TABLE colaboradores_old")
+        conn.execute("PRAGMA legacy_alter_table=OFF")
+        conn.execute("PRAGMA foreign_keys=ON")
+
     cols = [row[1] for row in conn.execute("PRAGMA table_info(estoque_produtos)").fetchall()]
     if "codigo" not in cols:
         conn.execute("ALTER TABLE estoque_produtos ADD COLUMN codigo TEXT")

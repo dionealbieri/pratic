@@ -226,7 +226,10 @@
     <div class="page" id="page-colaboradores">
       <div class="flex items-center justify-between mb-4">
         <div></div>
-        <button class="btn btn-primary" onclick="openModalColaborador()">+ Novo Colaborador</button>
+        <div class="flex gap-2">
+          <button type="button" class="btn btn-secondary" onclick="openModalTipoColaborador()">+ Cadastrar Tipo</button>
+          <button type="button" class="btn btn-primary" onclick="openModalColaborador()">+ Novo Colaborador</button>
+        </div>
       </div>
       <div class="table-wrap">
         <div class="table-head"><span class="table-head-title">Colaboradores</span></div>
@@ -327,7 +330,7 @@
 
       <!-- PRODUTOS -->
       <div id="est-tab-produtos">
-        <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center justify-between mb-4 estoque-produtos-toolbar">
           <select id="est-filtro-cat" onchange="loadProdutos()" style="min-width:180px">
             <option value="">Todas as categorias</option>
           </select>
@@ -835,16 +838,44 @@
       </div>
 
       <div id="rel-content-estoque" style="display:none">
-        <div class="flex items-center justify-between mb-4">
-          <div></div>
-          <div class="flex gap-2">
-            <button class="btn btn-secondary" onclick="exportarRelatorio('estoque','excel')">⬇ Excel</button>
-            <button class="btn btn-secondary" onclick="exportarRelatorio('estoque','pdf')">⬇ PDF</button>
+        <div class="card" style="padding:16px;margin-bottom:16px">
+          <div class="flex items-center justify-between mb-4" style="gap:12px;flex-wrap:wrap">
+            <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+              <select id="rel-est-modelo" style="min-width:230px" onchange="loadRelEstoque()">
+                <option value="geral">Relatório geral do estoque</option>
+                <option value="categoria">Produtos por categoria</option>
+                <option value="falta">Falta em estoque</option>
+                <option value="baixo">Estoque baixo / abaixo do mínimo</option>
+                <option value="positivo">Produtos com saldo positivo</option>
+                <option value="sem_minimo">Produtos sem mínimo cadastrado</option>
+                <option value="sem_movimento">Produtos sem movimentação</option>
+                <option value="movimentacoes">Movimentações de estoque</option>
+              </select>
+              <select id="rel-est-categoria" style="min-width:190px" onchange="loadRelEstoque()">
+                <option value="">Todas as categorias</option>
+              </select>
+              <select id="rel-est-tipo-mov" style="min-width:150px;display:none" onchange="loadRelEstoque()">
+                <option value="">Todos os movimentos</option>
+                <option value="entrada">Entrada</option>
+                <option value="saida">Saída</option>
+                <option value="perda">Perda</option>
+                <option value="ajuste">Ajuste</option>
+              </select>
+              <input type="date" id="rel-est-data-ini" style="display:none" onchange="loadRelEstoque()">
+              <span id="rel-est-data-sep" style="display:none;color:var(--muted)">até</span>
+              <input type="date" id="rel-est-data-fim" style="display:none" onchange="loadRelEstoque()">
+              <button class="btn btn-secondary" onclick="loadRelEstoque()">Filtrar</button>
+            </div>
+            <div class="flex gap-2">
+              <button class="btn btn-secondary" onclick="exportarRelatorio('estoque','excel')">⬇ Excel</button>
+              <button class="btn btn-secondary" onclick="exportarRelatorio('estoque','pdf')">⬇ PDF</button>
+            </div>
           </div>
+          <div class="cards-grid" id="rel-est-cards" style="margin-bottom:0"></div>
         </div>
         <div class="table-wrap">
-          <div class="table-head"><span class="table-head-title">Posição de Estoque</span></div>
-          <table><thead><tr><th>Produto</th><th>Categoria</th><th>Unidade</th><th>Saldo Atual</th><th>Mínimo</th><th>Situação</th></tr></thead>
+          <div class="table-head"><span class="table-head-title" id="rel-est-title">Posição de Estoque</span></div>
+          <table id="rel-est-table"><thead id="rel-est-thead"><tr><th>Código</th><th>Produto</th><th>Categoria</th><th>Unidade</th><th>Saldo Atual</th><th>Mínimo</th><th>Situação</th></tr></thead>
           <tbody id="rel-est-tbody"></tbody></table>
         </div>
       </div>
@@ -981,6 +1012,28 @@
 </div>
 
 <!-- MODAL COLABORADOR -->
+
+
+<div class="modal-overlay" id="modal-tipo-colaborador">
+  <div class="modal" style="max-width:520px">
+    <div class="modal-title">Cadastrar Tipo de Colaborador</div>
+    <div class="form-grid">
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Novo tipo/função</label>
+        <input type="text" id="col-tipo-novo" placeholder="Ex.: supervisor, líder, conferente">
+      </div>
+    </div>
+    <div style="margin-top:14px">
+      <label style="display:block;margin-bottom:8px;color:var(--muted);font-size:13px">Tipos cadastrados</label>
+      <div id="col-tipos-lista" class="flex gap-2" style="flex-wrap:wrap"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-tipo-colaborador')">Cancelar</button>
+      <button type="button" class="btn btn-primary" id="btn-salvar-tipo-colaborador" onclick="salvarTipoColaborador()">Salvar Tipo</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-colaborador">
   <div class="modal">
     <div class="modal-title">Cadastrar Colaborador</div>
@@ -1004,7 +1057,7 @@
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal('modal-colaborador')">Cancelar</button>
-      <button class="btn btn-primary" onclick="salvarColaborador()">Salvar</button>
+      <button type="button" class="btn btn-primary" id="btn-salvar-colaborador" onclick="salvarColaborador()">Salvar</button>
     </div>
   </div>
 </div>
@@ -1117,7 +1170,7 @@
     <div class="form-grid">
       <div class="form-group">
         <label>Código/ID</label>
-        <input type="text" id="est-prod-codigo" placeholder="Ex: COPO-300 ou 001">
+        <input type="text" id="est-prod-codigo" placeholder="Deixe em branco para gerar automático. Ex: epi-001">
       </div>
       <div class="form-group">
         <label>Nome do Produto</label>
