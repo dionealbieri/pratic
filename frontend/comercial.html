@@ -41,7 +41,7 @@
       <div class="sector-switcher-menu" id="sector-menu">
         <a class="sector-switcher-item" onclick="location.href='/'">🖥️ Gestor / Dashboard</a>
         <a class="sector-switcher-item" onclick="location.href='/producao-setor'">🏭 Setor Produção</a>
-        <a class="sector-switcher-item" onclick="location.href='/comercial'">🏢 Comercial</a>
+        <a class="sector-switcher-item" onclick="location.href='/?perfil=comercial'">🏢 Comercial</a>
         <a class="sector-switcher-item" href="/manual.html" target="_blank">📖 Manual do Usuário</a>
       </div>
     </div>
@@ -854,12 +854,18 @@ async function verificarAcessoComercial() {
     const r = await fetch(API + '/configuracoes/permissoes/all');
     const perms = await r.json();
     const liberadas = String(perms['perm_comercial'] || 'pedidos').split(',').map(p => p.trim()).filter(Boolean);
+    const paginasPainel = liberadas.filter(p => p !== 'pedidos');
+
+    // Se o Comercial tiver outras páginas liberadas no Controle de Acesso,
+    // envia para o painel principal, onde a barra lateral mostra todas as abas autorizadas.
+    // A página /comercial continua sendo usada apenas quando o perfil tem somente Pedidos.
+    if (paginasPainel.length > 0) {
+      const destino = liberadas.includes('dashboard') ? 'dashboard' : paginasPainel[0];
+      window.location.href = '/?perfil=comercial&page=' + encodeURIComponent(destino);
+      return false;
+    }
+
     if (!liberadas.includes('pedidos')) {
-      const destino = liberadas[0];
-      if (destino) {
-        window.location.href = '/?perfil=comercial&page=' + encodeURIComponent(destino);
-        return false;
-      }
       document.body.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0d0f14;font-family:DM Sans,sans-serif"><div style="text-align:center;padding:40px"><div style="font-size:60px;margin-bottom:20px">🔒</div><div style="font-family:Syne,sans-serif;font-size:24px;font-weight:800;color:#f0b429;margin-bottom:10px">PRATIC</div><div style="font-size:16px;color:#e8eaf0;margin-bottom:8px">Acesso não autorizado</div><div style="font-size:13px;color:#6b7280">Nenhuma página foi liberada para este perfil.</div></div></div>';
       return false;
     }

@@ -177,15 +177,27 @@ async function carregarAcessoPrincipal() {
     if (elNomeTxt) elNomeTxt.textContent = me.nome;
     
     perfilAtual = me.role;
+    paginasLiberadas = me.permissions
+      ? me.permissions.split(',').map(p => p.trim()).filter(p => PAGE_META_MAIN[p])
+      : (perfilAtual === 'gestor' ? Object.keys(PAGE_META_MAIN) : ['dashboard']);
     
     const path = window.location.pathname;
-    if (path === '/' || path === '/index.html') {
+    const params = new URLSearchParams(window.location.search);
+    const temPaginaSolicitada = params.has('page') || params.has('pagina') || params.has('perfil') || params.has('setor');
+
+    if ((path === '/' || path === '/index.html') && !temPaginaSolicitada) {
       if (me.role === 'producao') {
         window.location.href = '/producao-setor';
         return;
       } else if (me.role === 'comercial') {
-        window.location.href = '/comercial';
-        return;
+        // Comercial agora pode usar o painel principal quando tiver outras abas liberadas
+        // pelo Controle de Acesso. Antes o sistema sempre redirecionava para /comercial,
+        // que é uma tela simplificada somente de pedidos.
+        const somentePedidos = paginasLiberadas.every(p => ['pedidos'].includes(p));
+        if (somentePedidos) {
+          window.location.href = '/comercial';
+          return;
+        }
       } else if (me.role === 'estoque') {
         window.location.href = '/estoque-mobile';
         return;
@@ -209,11 +221,6 @@ async function carregarAcessoPrincipal() {
     sectorBadgeEl.style.display = '';
   }
 
-  if (me && me.permissions) {
-    paginasLiberadas = me.permissions.split(',').map(p => p.trim()).filter(p => PAGE_META_MAIN[p]);
-  } else {
-    paginasLiberadas = perfilAtual === 'gestor' ? Object.keys(PAGE_META_MAIN) : ['dashboard'];
-  }
   montarMenuPrincipal();
 }
 
@@ -2147,7 +2154,7 @@ async function loadPermissoes() {
     const cardsHtml = [
       {perfil:'🖥️ Gestor',url:'/'},
       {perfil:'🏭 Setor Produção',url:'/producao-setor'},
-      {perfil:'🏢 Comercial',url:'/comercial'},
+      {perfil:'🏢 Comercial',url:'/?perfil=comercial'},
       {perfil:'📱 Mobile Operador',url:'/mobile'},
       {perfil:'📦 Mobile Estoque',url:'/estoque-mobile'},
       {perfil:'📖 Manual do Usuário',url:'/manual.html'},
