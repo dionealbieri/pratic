@@ -3451,33 +3451,123 @@ async function loadCategoriasFiltro() {
   } catch(e) { return []; }
 }
 
+let _produtosBuscaTimer = null;
+
+function loadProdutosDebounced() {
+  clearTimeout(_produtosBuscaTimer);
+  _produtosBuscaTimer = setTimeout(() => loadProdutos(), 180);
+}
+
+function _normBuscaProduto(v) {
+  return String(v || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function limparFiltrosProdutos() {
+  _setVal('est-busca-produto', '');
+  _setVal('est-filtro-cat', '');
+  _setVal('est-filtro-status', '');
+  loadProdutos();
+}
+
+function _statusProduto(p) {
+  const qtd = Number(p.quantidade_atual || 0);
+  const min = Number(p.estoque_minimo || 0);
+  if (qtd <= 0) return { texto: 'Falta', classe: 'pill-danger' };
+  if (min > 0 && qtd <= min) return { texto: 'Baixo', classe: 'pill-danger' };
+  return { texto: 'OK', classe: 'pill-success' };
+}
+
+function _filtrarProdutosEstoque(prods) {
+  const busca = _normBuscaProduto(_getVal('est-busca-produto'));
+  const status = _getVal('est-filtro-status');
+
+  return prods.filter(p => {
+    const qtd = Number(p.quantidade_atual || 0);
+    const min = Number(p.estoque_minimo || 0);
+
+    if (busca) {
+      const alvo = _normBuscaProduto([p.codigo, p.nome, p.marca, p.categoria_nome, p.unidade].join(' '));
+      if (!alvo.includes(busca)) return false;
+    }
+
+    if (status === 'falta' && qtd > 0) return false;
+    if (status === 'baixo' && !(min > 0 && qtd > 0 && qtd <= min)) return false;
+    if (status === 'ok' && !(qtd > 0 && (min <= 0 || qtd > min))) return false;
+    if (status === 'positivo' && !(qtd > 0)) return false;
+    if (status === 'sem_minimo' && !(min <= 0)) return false;
+
+    return true;
+  });
+}
+
+function _atualizarSugestoesProdutos(prods) {
+  const dl = document.getElementById('est-busca-produtos-list');
+  if (!dl) return;
+  const opts = [];
+  const seen = new Set();
+  prods.forEach(p => {
+    [p.codigo, p.nome, p.marca, p.categoria_nome].forEach(v => {
+      v = String(v || '').trim();
+      if (v && !seen.has(v.toLowerCase())) {
+        seen.add(v.toLowerCase());
+        opts.push(`<option value="${v.replace(/"/g, '&quot;')}"></option>`);
+      }
+    });
+  });
+  dl.innerHTML = opts.slice(0, 120).join('');
+}
+
 async function loadProdutos() {
   const catId = _getVal('est-filtro-cat');
   let url = '/estoque/produtos';
   if (catId) url += '?categoria_id=' + encodeURIComponent(catId);
-  const prods = await api(url);
+
+  const todos = await api(url);
+  _atualizarSugestoesProdutos(todos);
+
+  const prods = _filtrarProdutosEstoque(todos);
   const tbody = document.getElementById('est-produtos-tbody');
+  const resumo = document.getElementById('est-produtos-resumo');
   if (!tbody) return;
+
+  const total = todos.length;
+  const exibindo = prods.length;
+  const falta = todos.filter(p => Number(p.quantidade_atual || 0) <= 0).length;
+  const baixo = todos.filter(p => {
+    const qtd = Number(p.quantidade_atual || 0);
+    const min = Number(p.estoque_minimo || 0);
+    return min > 0 && qtd > 0 && qtd <= min;
+  }).length;
+  if (resumo) resumo.innerHTML = `Exibindo <strong>${exibindo}</strong> de <strong>${total}</strong> produto(s) • Falta: <strong>${falta}</strong> • Estoque baixo: <strong>${baixo}</strong>`;
+
   if (!prods.length) {
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:28px">Nenhum produto cadastrado</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:28px">Nenhum produto encontrado com os filtros selecionados</td></tr>';
     return;
   }
-  tbody.innerHTML = prods.map(p => `
+
+  tbody.innerHTML = prods.map(p => {
+    const st = _statusProduto(p);
+    return `
     <tr>
       <td><strong>${p.codigo || '—'}</strong></td>
       <td><strong>${p.nome || ''}</strong></td>
       <td>${p.categoria_nome || '—'}</td>
       <td>${p.marca || '—'}</td>
       <td>${p.unidade || 'unidade'}</td>
-      <td style="font-weight:700;color:${p.alerta?'var(--danger)':'var(--text)'}">${fmtNum(p.quantidade_atual || 0)}</td>
+      <td style="font-weight:700;color:${st.classe==='pill-danger'?'var(--danger)':'var(--text)'}">${fmtNum(p.quantidade_atual || 0)}</td>
       <td>${fmtNum(p.estoque_minimo || 0)}</td>
-      <td><span class="pill ${p.alerta?'pill-danger':'pill-success'}">${p.alerta?'⚠ Abaixo':'✓ OK'}</span></td>
+      <td><span class="pill ${st.classe}">${st.texto}</span></td>
       <td class="flex gap-2">
         <button class="btn btn-sm btn-secondary" onclick="openModalMovimentacao(${p.id})">📦 Mov.</button>
         <button class="btn btn-sm btn-secondary" onclick="editProduto(${p.id})">✏️</button>
         <button class="btn btn-sm btn-danger" onclick="deletarProduto(${p.id})">✕</button>
       </td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
 }
 
 async function openModalProduto() {

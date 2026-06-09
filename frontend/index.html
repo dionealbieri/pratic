@@ -330,15 +330,29 @@
 
       <!-- PRODUTOS -->
       <div id="est-tab-produtos">
-        <div class="flex items-center justify-between mb-4 estoque-produtos-toolbar">
-          <select id="est-filtro-cat" onchange="loadProdutos()" style="min-width:180px">
-            <option value="">Todas as categorias</option>
-          </select>
+        <div class="flex items-center justify-between mb-4 estoque-produtos-toolbar" style="gap:12px;align-items:flex-start">
+          <div class="flex gap-2 items-center" style="flex-wrap:wrap;flex:1">
+            <input id="est-busca-produto" list="est-busca-produtos-list" type="text" placeholder="Pesquisar por código, produto, marca ou categoria..." oninput="loadProdutosDebounced()" style="min-width:300px;flex:1;max-width:460px">
+            <datalist id="est-busca-produtos-list"></datalist>
+            <select id="est-filtro-cat" onchange="loadProdutos()" style="min-width:180px">
+              <option value="">Todas as categorias</option>
+            </select>
+            <select id="est-filtro-status" onchange="loadProdutos()" style="min-width:180px">
+              <option value="">Todos os status</option>
+              <option value="falta">Falta em estoque</option>
+              <option value="baixo">Estoque baixo</option>
+              <option value="ok">Estoque OK</option>
+              <option value="positivo">Saldo positivo</option>
+              <option value="sem_minimo">Sem mínimo cadastrado</option>
+            </select>
+            <button class="btn btn-secondary" onclick="limparFiltrosProdutos()">Limpar filtros</button>
+          </div>
           <div class="flex gap-2">
             <button class="btn btn-secondary" onclick="openModalImportCSV()">📥 Importar CSV</button>
             <button class="btn btn-primary" onclick="openModalProduto()">+ Novo Produto</button>
           </div>
         </div>
+        <div id="est-produtos-resumo" style="color:var(--muted);font-size:13px;margin:-8px 0 12px 2px"></div>
         <div id="est-alertas-banner"></div>
         <div class="table-wrap">
           <div class="table-head"><span class="table-head-title">Produtos em Estoque</span></div>
