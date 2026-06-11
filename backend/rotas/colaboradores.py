@@ -32,6 +32,17 @@ def _garantir_tabela_tipos(conn):
             criado_em TEXT DEFAULT (datetime('now'))
         )
     """)
+    # Colunas de controle por tipo (compatível com bancos antigos)
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(colaborador_tipos)").fetchall()]
+    primeira = "aparece_producao" not in cols
+    if "aparece_producao" not in cols:
+        conn.execute("ALTER TABLE colaborador_tipos ADD COLUMN aparece_producao INTEGER DEFAULT 0")
+    if "concorre_premio" not in cols:
+        conn.execute("ALTER TABLE colaborador_tipos ADD COLUMN concorre_premio INTEGER DEFAULT 1")
+    if primeira:
+        conn.execute("UPDATE colaborador_tipos SET aparece_producao=1, concorre_premio=1 WHERE LOWER(nome)='operador'")
+        conn.execute("UPDATE colaborador_tipos SET aparece_producao=0 WHERE LOWER(nome)='auxiliar'")
+        conn.execute("UPDATE colaborador_tipos SET aparece_producao=1, concorre_premio=0 WHERE nome LIKE '%lider%' OR nome LIKE '%líder%'")
     for tipo_padrao in ("operador", "auxiliar"):
         conn.execute("INSERT OR IGNORE INTO colaborador_tipos (nome, ativo) VALUES (?, 1)", (tipo_padrao,))
     for row in conn.execute("SELECT DISTINCT tipo FROM colaboradores WHERE COALESCE(tipo,'')<>''").fetchall():
@@ -46,6 +57,27 @@ def listar_tipos():
     rows = conn.execute("SELECT * FROM colaborador_tipos WHERE ativo=1 ORDER BY CASE nome WHEN 'operador' THEN 0 WHEN 'auxiliar' THEN 1 ELSE 2 END, nome").fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+class TipoFlagsIn(BaseModel):
+    aparece_producao: Optional[int] = None
+    concorre_premio: Optional[int] = None
+
+@router.put("/tipos/{id}/flags")
+def atualizar_flags_tipo(id: int, flags: TipoFlagsIn):
+    conn = get_conn()
+    _garantir_tabela_tipos(conn)
+    row = conn.execute("SELECT id FROM colaborador_tipos WHERE id=?", (id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "Tipo não encontrado")
+    if flags.aparece_producao is not None:
+        conn.execute("UPDATE colaborador_tipos SET aparece_producao=? WHERE id=?", (1 if flags.aparece_producao else 0, id))
+    if flags.concorre_premio is not None:
+        conn.execute("UPDATE colaborador_tipos SET concorre_premio=? WHERE id=?", (1 if flags.concorre_premio else 0, id))
+    conn.commit()
+    atual = conn.execute("SELECT * FROM colaborador_tipos WHERE id=?", (id,)).fetchone()
+    conn.close()
+    return {"mensagem": "Configuração atualizada", "tipo": dict(atual)}
 
 @router.post("/tipos")
 def criar_tipo(tipo: TipoColaboradorIn):
@@ -83,16 +115,31 @@ def deletar_tipo(id: int):
     return {"mensagem": "Tipo desativado"}
 
 @router.get("/")
-def listar(tipo: Optional[str] = None):
+def listar(tipo: Optional[str] = None, contexto: Optional[str] = None):
     conn = get_conn()
-    if tipo:
+    if contexto == "producao":
+        # Colaboradores cujos TIPOS estão habilitados a aparecer na Produção Diária
+        _garantir_tabela_tipos(conn)
         rows = conn.execute("""
+            SELECT c.*, m.nome as maquina_nome
+            FROM colaboradores c
+            LEFT JOIN maquinas m ON c.maquina_id = m.id
+            WHERE c.ativo = 1 AND LOWER(c.tipo) IN (
+                SELECT LOWER(nome) FROM colaborador_tipos WHERE aparece_producao = 1
+            )
+            ORDER BY c.nome
+        """).fetchall()
+    elif tipo:
+        # Aceita um ou mais tipos separados por vírgula (ex.: "operador,lider")
+        tipos = [t.strip().lower() for t in tipo.split(",") if t.strip()]
+        placeholders = ",".join("?" for _ in tipos)
+        rows = conn.execute(f"""
             SELECT c.*, m.nome as maquina_nome 
             FROM colaboradores c
             LEFT JOIN maquinas m ON c.maquina_id = m.id
-            WHERE c.tipo = ? AND c.ativo = 1
+            WHERE LOWER(c.tipo) IN ({placeholders}) AND c.ativo = 1
             ORDER BY c.nome
-        """, (tipo,)).fetchall()
+        """, tipos).fetchall()
     else:
         rows = conn.execute("""
             SELECT c.*, m.nome as maquina_nome 

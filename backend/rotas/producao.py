@@ -47,14 +47,16 @@ def registrar(p: ProducaoIn):
     mes = p.data[:7]
     conn = get_conn()
 
-    # Verificar duplicata
-    existe = conn.execute(
-        "SELECT id FROM producao_diaria WHERE colaborador_id=? AND data=?",
-        (p.colaborador_id, p.data)
-    ).fetchone()
-    if existe:
-        conn.close()
-        raise HTTPException(400, "Já existe produção lançada para este colaborador nesta data")
+    # Verificar duplicata apenas se o mesmo produto for lançado duas vezes no mesmo dia
+    # Permite múltiplos produtos diferentes no mesmo dia (novo comportamento do modal)
+    if p.produto_estoque_id:
+        existe = conn.execute("""
+            SELECT id FROM producao_diaria 
+            WHERE colaborador_id=? AND data=? AND produto_estoque_id=?
+        """, (p.colaborador_id, p.data, p.produto_estoque_id)).fetchone()
+        if existe:
+            conn.close()
+            raise HTTPException(400, "Já existe produção lançada para este colaborador com este produto nesta data")
 
     c = conn.cursor()
 

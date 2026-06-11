@@ -17,6 +17,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def add_no_cache_header(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
+
+# Rota estável para importação — fora de /api/pedidos para não conflitar com /{id}
+@app.post("/api/importar-pedido-arquivo", dependencies=[Depends(get_current_user)])
+async def importar_pedido_arquivo_estavel(file: UploadFile = File(...)):
+    from rotas.pedidos import _processar_arquivo_pedido
+    return await _processar_arquivo_pedido(file)
+
 # Rota de autenticação aberta (internamente possui endpoints abertos e fechados)
 app.include_router(auth.router,           prefix="/api/auth",           tags=["Autenticação"])
 
@@ -52,6 +68,8 @@ def root(request: Request):
     if not validar_sessao_db(session_id):
         return RedirectResponse(url="/login")
     return FileResponse(os.path.join(frontend_path, "index.html"))
+
+
 
 @app.get("/favicon.ico")
 def favicon():

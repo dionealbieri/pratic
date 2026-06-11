@@ -31,14 +31,18 @@ def premiacao_operadores(mes: str):
         SELECT 
             c.id as colaborador_id,
             c.nome as colaborador,
-            COUNT(CASE WHEN p.producao > 0 THEN 1 END) as dias_trabalhados,
+            c.tipo as tipo,
+            COALESCE((SELECT concorre_premio FROM colaborador_tipos WHERE LOWER(nome)=LOWER(c.tipo)), 1) as concorre_premio,
+            COUNT(DISTINCT CASE WHEN p.producao > 0 THEN p.data END) as dias_trabalhados,
             SUM(CASE WHEN p.producao > 0 THEN p.producao ELSE 0 END) as total_producao,
-            AVG(CASE WHEN p.producao > 0 THEN p.producao ELSE NULL END) as media_diaria,
+            SUM(CASE WHEN p.producao > 0 THEN p.producao ELSE 0 END) * 1.0 / NULLIF(COUNT(DISTINCT CASE WHEN p.producao > 0 THEN p.data END), 0) as media_diaria,
             SUM(p.excedente) as excedente_total,
             p.meta as meta
         FROM producao_diaria p
         JOIN colaboradores c ON p.colaborador_id = c.id
-        WHERE p.mes_referencia = ? AND c.tipo = 'operador'
+        WHERE p.mes_referencia = ? AND LOWER(c.tipo) IN (
+            SELECT LOWER(nome) FROM colaborador_tipos WHERE aparece_producao = 1
+        )
         GROUP BY c.id
         ORDER BY total_producao DESC
     """, (mes,)).fetchall()
@@ -49,11 +53,20 @@ def premiacao_operadores(mes: str):
     for r in rows:
         d = dict(r)
         media = d["media_diaria"] or 0
-        d["elegivel"] = media >= (d["meta"] or 8000)
-        valor = premios_por_posicao.get(ranking, premio_2) if d["elegivel"] else 0
-        d["valor_premio"] = valor
-        d["ranking"] = ranking
-        ranking += 1
+        concorre = bool(d.get("concorre_premio"))
+        d["eh_lider"] = not concorre
+        d["atingiu_meta"] = media >= (d["meta"] or 8000)
+        if not concorre:
+            # Tipo que produz mas não concorre ao prêmio (ex.: operador líder)
+            d["elegivel"] = False
+            d["valor_premio"] = 0
+            d["ranking"] = None
+        else:
+            d["elegivel"] = d["atingiu_meta"]
+            valor = premios_por_posicao.get(ranking, premio_2) if d["elegivel"] else 0
+            d["valor_premio"] = valor
+            d["ranking"] = ranking
+            ranking += 1
         result.append(d)
     return result
 
@@ -117,14 +130,18 @@ def dashboard(mes: str):
         SELECT 
             c.id as colaborador_id,
             c.nome as colaborador,
-            COUNT(CASE WHEN p.producao > 0 THEN 1 END) as dias_trabalhados,
+            c.tipo as tipo,
+            COALESCE((SELECT concorre_premio FROM colaborador_tipos WHERE LOWER(nome)=LOWER(c.tipo)), 1) as concorre_premio,
+            COUNT(DISTINCT CASE WHEN p.producao > 0 THEN p.data END) as dias_trabalhados,
             SUM(p.producao) as total_producao,
-            AVG(CASE WHEN p.producao > 0 THEN p.producao ELSE NULL END) as media_diaria,
+            SUM(p.producao) * 1.0 / NULLIF(COUNT(DISTINCT CASE WHEN p.producao > 0 THEN p.data END), 0) as media_diaria,
             SUM(p.excedente) as excedente_total,
             p.meta as meta
         FROM producao_diaria p
         JOIN colaboradores c ON p.colaborador_id = c.id
-        WHERE p.mes_referencia = ? AND c.tipo = 'operador'
+        WHERE p.mes_referencia = ? AND LOWER(c.tipo) IN (
+            SELECT LOWER(nome) FROM colaborador_tipos WHERE aparece_producao = 1
+        )
         GROUP BY c.id
         ORDER BY total_producao DESC
     """, (mes,)).fetchall()
@@ -163,16 +180,22 @@ def dashboard(mes: str):
     """, (mes,)).fetchone()
     custo_perdas_geral = custo_perdas_row["custo"]
     
-    # 3. Aderência à Meta
-    dias_meta = conn.execute("""
-        SELECT 
-            COUNT(*) as total_dias,
-            COUNT(CASE WHEN producao >= meta THEN 1 END) as batidas
+    # 3. Aderência à Meta — contada por DIA de calendário (data distinta), não por lançamento.
+    # Como há mais de um operador por dia, o dia é considerado "trabalhado" quando houve
+    # produção > 0, e conta como "meta atingida" quando a média de produção por operador
+    # naquele dia foi maior ou igual à meta.
+    dias_aderencia = conn.execute("""
+        SELECT data,
+               SUM(producao) * 1.0 / COUNT(*) as media_dia,
+               AVG(meta) as meta_dia
         FROM producao_diaria
         WHERE mes_referencia = ? AND producao > 0
-    """, (mes,)).fetchone()
-    total_dias_meta = dias_meta["total_dias"]
-    dias_meta_batidas = dias_meta["batidas"]
+        GROUP BY data
+    """, (mes,)).fetchall()
+    total_dias_meta = len(dias_aderencia)
+    dias_meta_batidas = sum(
+        1 for d in dias_aderencia if (d["media_dia"] or 0) >= (d["meta_dia"] or 8000)
+    )
     aderencia_meta_percentual = round((dias_meta_batidas / total_dias_meta * 100), 1) if total_dias_meta > 0 else 0.0
     
     # 4. Pedidos Pendentes e Atrasados
@@ -257,10 +280,18 @@ def dashboard(mes: str):
     for r in operadores:
         d = dict(r)
         media = d["media_diaria"] or 0
-        d["elegivel"] = media >= (d["meta"] or 8000)
-        d["valor_premio"] = premios_por_posicao.get(pos, premio_2) if d["elegivel"] else 0
-        total_premios += d["valor_premio"]
-        pos += 1
+        concorre = bool(d.get("concorre_premio"))
+        d["eh_lider"] = not concorre
+        d["atingiu_meta"] = media >= (d["meta"] or 8000)
+        if not concorre:
+            # Tipo que produz mas não concorre ao prêmio (ex.: operador líder)
+            d["elegivel"] = False
+            d["valor_premio"] = 0
+        else:
+            d["elegivel"] = d["atingiu_meta"]
+            d["valor_premio"] = premios_por_posicao.get(pos, premio_2) if d["elegivel"] else 0
+            total_premios += d["valor_premio"]
+            pos += 1
         ops.append(d)
 
     aux_list = [dict(r) for r in auxiliares]
@@ -281,6 +312,8 @@ def dashboard(mes: str):
         "total_sobras_geral": total_sobras_geral,
         "custo_perdas_geral": custo_perdas_geral,
         "aderencia_meta_percentual": aderencia_meta_percentual,
+        "dias_acima_meta": dias_meta_batidas,
+        "total_dias_trabalhados": total_dias_meta,
         "pedidos_pendentes": pedidos_pendentes,
         "pedidos_atrasados": pedidos_atrasados,
         "pedidos_criticos": pedidos_criticos_list,

@@ -301,6 +301,27 @@ def init_db():
     for row in conn.execute("SELECT DISTINCT tipo FROM colaboradores WHERE COALESCE(tipo,'')<>''").fetchall():
         conn.execute("INSERT OR IGNORE INTO colaborador_tipos (nome, ativo) VALUES (?, 1)", (row[0],))
 
+    # Migração: controle por tipo de colaborador
+    #   aparece_producao = aparece na seleção da Produção Diária e conta nos totais/ranking
+    #   concorre_premio  = concorre ao prêmio de operador
+    cols_tipos = [r[1] for r in conn.execute("PRAGMA table_info(colaborador_tipos)").fetchall()]
+    primeira_migracao_flags = "aparece_producao" not in cols_tipos
+    if "aparece_producao" not in cols_tipos:
+        conn.execute("ALTER TABLE colaborador_tipos ADD COLUMN aparece_producao INTEGER DEFAULT 0")
+    if "concorre_premio" not in cols_tipos:
+        conn.execute("ALTER TABLE colaborador_tipos ADD COLUMN concorre_premio INTEGER DEFAULT 1")
+    if primeira_migracao_flags:
+        # Defaults aplicados só na primeira migração (não sobrescreve escolhas futuras do gestor)
+        conn.execute("UPDATE colaborador_tipos SET aparece_producao=1, concorre_premio=1 WHERE LOWER(nome)='operador'")
+        conn.execute("UPDATE colaborador_tipos SET aparece_producao=0 WHERE LOWER(nome)='auxiliar'")
+        # Tipos de liderança (lider, líder, operador lider, operador líder, etc.):
+        # produzem como operador, mas não concorrem ao prêmio.
+        conn.execute("""
+            UPDATE colaborador_tipos
+               SET aparece_producao=1, concorre_premio=0
+             WHERE nome LIKE '%lider%' OR nome LIKE '%líder%'
+        """)
+
     colaboradores_sql = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='colaboradores'").fetchone()
     if colaboradores_sql and "CHECK(tipo IN" in (colaboradores_sql[0] or ""):
         # A recriação precisa ocorrer fora de transação e com legacy_alter_table ligado,
@@ -358,7 +379,7 @@ def init_db():
         ("empresa_cidade", "", "Cidade da empresa"),
         ("empresa_uf", "", "UF da empresa"),
         ("empresa_logo", "", "Logo da empresa em base64"),
-        ("perm_gestor", "dashboard,producao,premiacao,colaboradores,maquinas,pedidos,estoque,epi,graficos,relatorios,configuracoes,backup,permissoes,empresa,mobile,estoque_mobile", "Permissões do perfil Gestor"),
+        ("perm_gestor", "dashboard,producao,premiacao,colaboradores,maquinas,pedidos,estoque,epi,saldo-demanda,graficos,relatorios,configuracoes,backup,perm-usuarios,permissoes,empresa,mobile,estoque_mobile", "Permissões do perfil Gestor"),
         ("perm_producao", "dashboard,producao,premiacao,colaboradores,maquinas,epi,relatorios", "Permissões do perfil Produção"),
         ("perm_comercial", "dashboard,pedidos,relatorios", "Permissões do perfil Comercial"),
         ("perm_estoque", "dashboard,estoque,relatorios,estoque_mobile", "Permissões do perfil Estoque"),
@@ -368,6 +389,18 @@ def init_db():
             "INSERT OR IGNORE INTO configuracoes (chave, valor, descricao) VALUES (?, ?, ?)",
             (chave, valor, descricao)
         )
+
+    # Tabela de permissões por usuário (separada por causa do UNIQUE constraint)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS usuario_permissoes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            usuario_id INTEGER NOT NULL,
+            modulo TEXT NOT NULL,
+            acao TEXT NOT NULL,
+            permitido INTEGER DEFAULT 1,
+            UNIQUE(usuario_id, modulo, acao)
+        )
+    """)
 
     conn.commit()
     conn.close()

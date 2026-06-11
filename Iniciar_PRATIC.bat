@@ -10,6 +10,9 @@ echo.
 echo  Iniciando servidor, aguarde...
 echo.
 
+echo  Limpando processos antigos na porta 8000...
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8000 ^| findstr LISTENING') do taskkill /f /pid %%a >nul 2>&1
+
 cd /d "%~dp0backend"
 
 start /b py main.py

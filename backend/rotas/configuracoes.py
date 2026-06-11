@@ -145,6 +145,43 @@ def listar():
     conn.close()
     return [dict(r) for r in rows]
 
+@router.post("/limpar/{tipo}")
+def limpar_dados(tipo: str):
+    conn = get_conn()
+    try:
+        if tipo == 'producao':
+            conn.execute("DELETE FROM producao_diaria")
+            conn.execute("DELETE FROM premiacao_operador")
+            conn.execute("DELETE FROM premiacao_auxiliar")
+            msg = "Produção diária e premiações removidas"
+        elif tipo == 'pedidos':
+            conn.execute("DELETE FROM pedidos_itens")
+            conn.execute("DELETE FROM pedidos")
+            msg = "Pedidos e itens removidos"
+        elif tipo == 'estoque_mov':
+            conn.execute("DELETE FROM estoque_movimentacoes")
+            # Zerar saldos
+            conn.execute("UPDATE estoque_saldo SET quantidade = 0")
+            msg = "Movimentações de estoque removidas e saldos zerados"
+        elif tipo == 'tudo':
+            conn.execute("DELETE FROM producao_diaria")
+            conn.execute("DELETE FROM premiacao_operador")
+            conn.execute("DELETE FROM premiacao_auxiliar")
+            conn.execute("DELETE FROM pedidos_itens")
+            conn.execute("DELETE FROM pedidos")
+            conn.execute("DELETE FROM estoque_movimentacoes")
+            conn.execute("UPDATE estoque_saldo SET quantidade = 0")
+            conn.execute("DELETE FROM epi_entregas")
+            msg = "Todos os dados operacionais removidos"
+        else:
+            raise HTTPException(400, "Tipo inválido")
+        conn.commit()
+        conn.close()
+        return {"mensagem": msg}
+    except Exception as e:
+        conn.close()
+        raise HTTPException(500, str(e))
+
 @router.put("/{chave}")
 def atualizar(chave: str, config: ConfigIn):
     conn = get_conn()
@@ -165,3 +202,4 @@ def buscar(chave: str):
     if not row:
         return {"chave": chave, "valor": ""}
     return dict(row)
+

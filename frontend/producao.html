@@ -215,7 +215,9 @@
           <option value="Quebra">Quebra</option>
           <option value="Defeito">Defeito</option>
           <option value="Contaminação">Contaminação</option>
-          <option value="Transporte">Transporte</option>
+          <option value="Mal formado">Mal formado</option>
+          <option value="Rebarba">Rebarba</option>
+          <option value="Fora de especificação">Fora de especificação</option>
           <option value="Outros">Outros</option>
         </select>
       </div>
@@ -356,6 +358,9 @@ let charts = {};
 
 async function req(path, method='GET', body=null) {
   const opts = { method, headers:{'Content-Type':'application/json'} };
+  if (method === 'GET') {
+    opts.cache = 'no-store';
+  }
   if (body) opts.body = JSON.stringify(body);
   const r = await fetch(API + path, opts);
   if (r.status === 401) {
@@ -549,12 +554,13 @@ async function loadDashboard() {
   const data = await req('/premiacao/dashboard/' + mes);
   const totalProd = data.operadores.reduce((s,o) => s+(o.total_producao||0), 0);
   const elegiveis = data.operadores.filter(o => o.elegivel).length;
+  const totalConcorrentes = data.operadores.filter(o => !o.eh_lider).length;
 
   document.getElementById('dash-cards').innerHTML = `
     <div class="card"><div class="card-label">Total Produzido</div><div class="card-value accent">${fmtNum(totalProd)} K</div><div class="card-sub">${mesLabel(mes)}</div></div>
     <div class="card"><div class="card-label">Dias Registrados</div><div class="card-value info">${data.total_dias_registrados}</div><div class="card-sub">dias com lançamento</div></div>
     <div class="card"><div class="card-label">Média Diária Geral</div><div class="card-value info">${fmtNum(data.media_geral)} K</div><div class="card-sub">total ÷ dias</div></div>
-    <div class="card"><div class="card-label">Operadores Premiados</div><div class="card-value success">${elegiveis}/${data.operadores.length}</div><div class="card-sub">acima da meta</div></div>
+    <div class="card"><div class="card-label">Operadores Premiados</div><div class="card-value success">${elegiveis}/${totalConcorrentes}</div><div class="card-sub">acima da meta</div></div>
     <div class="card"><div class="card-label">Total em Prêmios</div><div class="card-value accent">${fmtBRL(data.total_premios)}</div><div class="card-sub">operadores + auxiliares</div></div>
   `;
 
@@ -566,15 +572,15 @@ async function loadDashboard() {
         <div class="rank-detail">Média: ${fmtNum(Math.round(op.media_diaria||0))} | Total: ${fmtNum(op.total_producao)} | Dias: ${op.dias_trabalhados}</div>
       </div>
       <div class="rank-premio">
-        ${op.elegivel ? `<div class="rank-valor">${fmtBRL(op.valor_premio)}</div><span class="pill pill-success" style="font-size:11px">✓ Premiado</span>` : `<span class="pill pill-danger">Abaixo da meta</span>`}
+        ${op.eh_lider ? `<span class="pill pill-info" style="font-size:11px">Líder · não concorre</span>` : op.elegivel ? `<div class="rank-valor">${fmtBRL(op.valor_premio)}</div><span class="pill pill-success" style="font-size:11px">✓ Premiado</span>` : `<span class="pill pill-danger">Abaixo da meta</span>`}
       </div>
     </div>`).join('');
 
   document.getElementById('dash-operadores').innerHTML = data.operadores.map(op => `
-    <div class="card" style="border-left:3px solid ${op.elegivel?'var(--success)':'var(--danger)'}">
+    <div class="card" style="border-left:3px solid ${op.eh_lider?'var(--accent2)':op.elegivel?'var(--success)':'var(--danger)'}">
       <div class="flex justify-between items-center" style="margin-bottom:10px">
         <div style="font-family:var(--fh);font-size:15px;font-weight:700">${op.colaborador}</div>
-        ${op.elegivel ? '<span class="pill pill-success">✓ Premiado</span>' : '<span class="pill pill-danger">Abaixo da meta</span>'}
+        ${op.eh_lider ? '<span class="pill pill-info">Líder · não concorre</span>' : op.elegivel ? '<span class="pill pill-success">✓ Premiado</span>' : '<span class="pill pill-danger">Abaixo da meta</span>'}
       </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
         <div><div class="card-label">Total</div><div style="font-family:var(--fh);font-size:18px;font-weight:800;color:var(--accent)">${fmtNum(op.total_producao)}</div></div>
@@ -595,7 +601,7 @@ async function loadProducao() {
 
   const filtroEl = document.getElementById('prod-filtro-col');
   if (filtroEl.options.length <= 1) {
-    const cols = await req('/colaboradores/?tipo=operador');
+    const cols = await req('/colaboradores/?contexto=producao');
     cols.forEach(c => { const o = document.createElement('option'); o.value=c.id; o.textContent=c.nome; filtroEl.appendChild(o); });
   }
   const colId = filtroEl.value;
@@ -628,11 +634,11 @@ async function loadProducao() {
 let prodItens = [];
 let prodEstoqueCache = [];
 let temAcessoSimplificado = false;
-const TIPOS_PERDA_MOD = ['Quebra','Defeito','Contaminação','Transporte','Outros'];
+const TIPOS_PERDA_MOD = ['Quebra','Defeito','Contaminação','Mal formado','Rebarba','Fora de especificação','Outros'];
 
 async function openModalProducao() {
   const [mqs, cols, prods, pedidos] = await Promise.all([
-    req('/maquinas/'), req('/colaboradores/?tipo=operador'),
+    req('/maquinas/'), req('/colaboradores/?contexto=producao'),
     req('/estoque/produtos').catch(()=>[]),
     req('/pedidos/').catch(()=>[])
   ]);
@@ -855,7 +861,9 @@ async function loadPremiacao() {
         <div class="rank-num ${i===0?'gold':i===1?'silver':''}">${i+1}º</div>
         <div class="rank-info"><div class="rank-name">${op.colaborador}</div>
         <div class="rank-detail">Média: ${fmtNum(Math.round(op.media_diaria||0))} pçs/dia | ${op.dias_trabalhados} dias</div></div>
-        <div class="rank-premio">${op.elegivel
+        <div class="rank-premio">${op.eh_lider
+          ? `<span class="pill pill-info" style="font-size:11px">Líder · não concorre</span>`
+          : op.elegivel
           ? `<div class="rank-valor">${fmtBRL(op.valor_premio)}</div><span class="pill pill-success" style="font-size:11px">✓ Elegível</span>`
           : `<span class="pill pill-danger">Abaixo da meta</span>`}</div>
       </div>`).join('')

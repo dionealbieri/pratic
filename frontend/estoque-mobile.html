@@ -342,6 +342,9 @@ let prodIdAtual = null;
 
 async function req(path, method='GET', body=null) {
   const opts = { method, headers:{'Content-Type':'application/json'} };
+  if (method === 'GET') {
+    opts.cache = 'no-store';
+  }
   if (body) opts.body = JSON.stringify(body);
   const r = await fetch(API + path, opts);
   if (r.status === 401) {

@@ -19,7 +19,7 @@ def _periodo_where(alias: str = "p", mes_ini: Optional[str] = None, mes_fim: Opt
 def evolucao_mensal(mes_ini: Optional[str] = None, mes_fim: Optional[str] = None):
     conn = get_conn()
     extra_where, params = _periodo_where("p", mes_ini, mes_fim)
-    where_sql = " AND ".join(["c.tipo = 'operador'"] + extra_where)
+    where_sql = " AND ".join(["LOWER(c.tipo) IN (SELECT LOWER(nome) FROM colaborador_tipos WHERE aparece_producao = 1)"] + extra_where)
     rows = conn.execute(f"""
         SELECT 
             p.mes_referencia,
@@ -59,7 +59,7 @@ def producao_diaria_mes(mes: str):
             p.excedente
         FROM producao_diaria p
         JOIN colaboradores c ON p.colaborador_id = c.id
-        WHERE p.mes_referencia = ? AND c.tipo = 'operador'
+        WHERE p.mes_referencia = ? AND LOWER(c.tipo) IN (SELECT LOWER(nome) FROM colaborador_tipos WHERE aparece_producao = 1)
         ORDER BY p.data ASC, c.nome ASC
     """, (mes,)).fetchall()
     conn.close()
@@ -73,7 +73,7 @@ def comparativo_operadores():
     """).fetchall()
     operadores = conn.execute("""
         SELECT DISTINCT c.id, c.nome FROM colaboradores c
-        WHERE c.tipo = 'operador' AND c.ativo = 1 ORDER BY c.nome
+        WHERE LOWER(c.tipo) IN (SELECT LOWER(nome) FROM colaborador_tipos WHERE aparece_producao = 1) AND c.ativo = 1 ORDER BY c.nome
     """).fetchall()
 
     resultado = []
@@ -102,7 +102,7 @@ def comparativo_operadores():
 def ranking_historico(mes_ini: Optional[str] = None, mes_fim: Optional[str] = None):
     conn = get_conn()
     extra_where, params = _periodo_where("p", mes_ini, mes_fim)
-    where_sql = " AND ".join(["c.tipo = 'operador'"] + extra_where)
+    where_sql = " AND ".join(["LOWER(c.tipo) IN (SELECT LOWER(nome) FROM colaborador_tipos WHERE aparece_producao = 1)"] + extra_where)
     rows = conn.execute(f"""
         SELECT 
             c.nome as colaborador,
@@ -141,7 +141,7 @@ def ranking_historico(mes_ini: Optional[str] = None, mes_fim: Optional[str] = No
 def resumo_periodo(mes_ini: Optional[str] = None, mes_fim: Optional[str] = None):
     conn = get_conn()
     extra_where, params = _periodo_where("p", mes_ini, mes_fim)
-    where_sql = " AND ".join(["c.tipo = 'operador'"] + extra_where)
+    where_sql = " AND ".join(["LOWER(c.tipo) IN (SELECT LOWER(nome) FROM colaborador_tipos WHERE aparece_producao = 1)"] + extra_where)
 
     resumo = conn.execute(f"""
         SELECT

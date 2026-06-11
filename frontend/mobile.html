@@ -453,6 +453,9 @@ let perdaAtiva = false;
 
 async function req(path, method='GET', body=null) {
   const opts = { method, headers: {'Content-Type':'application/json'} };
+  if (method === 'GET') {
+    opts.cache = 'no-store';
+  }
   if (body) opts.body = JSON.stringify(body);
   const r = await fetch(API + path, opts);
   if (r.status === 401) {
@@ -485,7 +488,7 @@ function showFormAlert(msg, type='danger') {
 // ── SELEÇÃO DE OPERADOR
 async function loadOperadores() {
   try {
-    const ops = await req('/colaboradores/?tipo=operador');
+    const ops = await req('/colaboradores/?contexto=producao');
     const list = document.getElementById('op-list');
     if (!ops.length) { list.innerHTML = '<div class="empty">Nenhum operador cadastrado</div>'; return; }
     list.innerHTML = ops.map(op => `

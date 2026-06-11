@@ -48,6 +48,9 @@
     <a class="nav-item" onclick="showPage('estoque')" style="cursor:pointer">
       <span class="icon">📦</span> Estoque <span id="nav-alerta-badge" style="display:none;background:var(--danger);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">!</span>
     </a>
+    <a class="nav-item" onclick="showPage('saldo-demanda')" style="cursor:pointer">
+      <span class="icon">📊</span> Saldo vs Demanda <span id="nav-svd-badge" style="display:none;background:var(--danger);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">!</span>
+    </a>
     <a class="nav-item" onclick="showPage('epi')" style="cursor:pointer">
       <span class="icon">🦺</span> EPI <span id="nav-epi-badge" style="display:none;background:var(--danger);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">!</span>
     </a>
@@ -117,6 +120,7 @@
     <!-- DASHBOARD -->
     <div class="page active" id="page-dashboard">
       <div id="dash-alerta-estoque"></div>
+      <div id="dash-alerta-svd"></div>
       <div class="month-bar">
         <label>Mês de referência:</label>
         <input type="month" id="dash-mes" onchange="loadDashboard()">
@@ -292,12 +296,15 @@
               <option value="entregue">Entregue</option>
             </select>
           </div>
-          <button class="btn btn-primary" onclick="openModalPedido()">+ Novo Pedido</button>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-secondary" onclick="openModalImportarPedido()">📎 Importar Pedido</button>
+            <button class="btn btn-primary" onclick="openModalPedido()">+ Novo Pedido</button>
+          </div>
         </div>
         <div class="table-wrap">
           <div class="table-head"><span class="table-head-title">Pedidos</span></div>
           <table>
-            <thead><tr><th>Nº Pedido</th><th>Cliente</th><th>Prazo</th><th>Dias</th><th>Itens</th><th>Status</th><th></th></tr></thead>
+            <thead><tr><th>Nº Pedido</th><th>Cliente</th><th>Vendedor</th><th>Prazo</th><th>Dias</th><th>Itens</th><th>Status</th><th></th></tr></thead>
             <tbody id="ped-tbody"></tbody>
           </table>
         </div>
@@ -452,6 +459,31 @@
             <input type="file" id="restore-file" accept=".db" style="display:none" onchange="confirmarRestore(this.files[0])">
           </div>
           <div id="backup-alert"></div>
+        </div>
+
+        <div class="card" style="border:1px solid rgba(239,68,68,.3)">
+          <div class="section-title" style="margin-top:0;color:var(--danger)">🗑️ Limpar Dados</div>
+          <p style="font-size:13px;color:var(--muted);margin-bottom:16px;line-height:1.6">
+            Remove dados operacionais mantendo cadastros. Útil para iniciar um novo período ou limpar dados de teste.
+          </p>
+          <div style="display:flex;flex-direction:column;gap:10px">
+            <button class="btn btn-secondary" onclick="limparDados('producao')" style="border-color:rgba(239,68,68,.4);color:var(--danger);text-align:left">
+              🏭 Limpar Produção Diária
+            </button>
+            <button class="btn btn-secondary" onclick="limparDados('pedidos')" style="border-color:rgba(239,68,68,.4);color:var(--danger);text-align:left">
+              🧾 Limpar Pedidos
+            </button>
+            <button class="btn btn-secondary" onclick="limparDados('estoque_mov')" style="border-color:rgba(239,68,68,.4);color:var(--danger);text-align:left">
+              📦 Limpar Movimentações de Estoque
+            </button>
+            <button class="btn btn-secondary" onclick="limparDados('tudo')" style="border-color:rgba(239,68,68,.6);color:var(--danger);font-weight:700;text-align:left">
+              ⚠️ Limpar TUDO (manter cadastros)
+            </button>
+          </div>
+          <div id="limpar-alert" style="margin-top:12px"></div>
+        </div>
+
+        <div style="display:none" id="backup-alert-placeholder">
         </div>
 
       </div>
@@ -621,17 +653,52 @@
       </div>
     </div>
 
+
     <!-- PERMISSÕES -->
     <div class="page" id="page-permissoes">
       <div style="max-width:900px">
         <!-- Sub-abas -->
         <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap">
           <button class="btn btn-secondary" id="perm-tab-config" onclick="switchPermissoesTab('config')" style="border-color:var(--accent);color:var(--accent)">🔐 Controle de Perfis</button>
-          <button class="btn btn-secondary" id="perm-tab-usuarios" onclick="switchPermissoesTab('usuarios')">👥 Usuários Cadastrados</button>
+          <button class="btn btn-secondary" id="perm-tab-usuarios" onclick="switchPermissoesTab('usuarios')">👥 Usuários</button>
+          <button class="btn btn-secondary" id="perm-tab-permissoes-usr" onclick="switchPermissoesTab('permissoes-usr')">👤 Permissões por Usuário</button>
+        </div>
+
+        <!-- ABA: PERMISSÕES POR USUÁRIO -->
+        <div id="perm-content-permissoes-usr" style="display:none">
+          <div class="section-title" style="margin-bottom:8px;margin-top:0">👤 Permissões por Usuário</div>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:20px">
+            Defina exatamente o que cada usuário pode ver, criar, editar e deletar em cada módulo.
+          </p>
+          <div class="card" style="margin-bottom:20px">
+            <div class="flex items-center gap-3">
+              <label style="font-weight:600;white-space:nowrap">Selecionar usuário:</label>
+              <select id="perm-usr-select" onchange="loadPermissoesUsuario()" style="flex:1;max-width:300px">
+                <option value="">— Selecione um usuário —</option>
+              </select>
+              <div id="perm-usr-info" style="font-size:12px;color:var(--muted)"></div>
+            </div>
+          </div>
+          <div id="perm-usr-tabela" style="display:none">
+            <div class="card">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+                <div style="font-family:var(--font-head);font-weight:700">Permissões do usuário</div>
+                <div class="flex gap-2">
+                  <button class="btn btn-sm btn-secondary" onclick="permUsuarioTodos(true)">✅ Liberar tudo</button>
+                  <button class="btn btn-sm btn-secondary" onclick="permUsuarioTodos(false)">❌ Bloquear tudo</button>
+                </div>
+              </div>
+              <div id="perm-usr-grid"></div>
+              <div style="margin-top:16px;display:flex;gap:10px;justify-content:flex-end;align-items:center">
+                <div id="perm-usr-alert"></div>
+                <button class="btn btn-primary" onclick="salvarPermissoesUsuario()">💾 Salvar Permissões</button>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- ABA: CONTROLE DE PERFIS -->
-        <div id="perm-content-config">
+        <div id="perm-content-config" style="display:block">
           <div class="section-title" style="margin-bottom:20px;margin-top:0">🔐 Controle de Acesso por Perfil</div>
           <p style="color:var(--muted);font-size:13px;margin-bottom:24px;line-height:1.6">
             Defina quais páginas cada perfil pode acessar. As alterações são aplicadas imediatamente — 
@@ -698,6 +765,93 @@
     </div>
 
     <!-- GRÁFICOS -->
+    <!-- SALDO VS DEMANDA -->
+    <div class="page" id="page-saldo-demanda">
+
+      <!-- KPI Cards -->
+      <div class="cards-grid" id="svd-kpi-cards" style="margin-bottom:20px"></div>
+
+      <!-- Alertas -->
+      <div id="svd-alerta-banner"></div>
+
+      <!-- Filtros + Ações -->
+      <div class="flex items-center justify-between mb-4" style="flex-wrap:wrap;gap:10px">
+        <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+          <select id="svd-filtro-cat" onchange="loadSaldoDemanda()" style="min-width:180px">
+            <option value="">Todas as categorias</option>
+          </select>
+          <select id="svd-filtro-marca" onchange="loadSaldoDemanda()" style="min-width:160px">
+            <option value="">Todas as marcas</option>
+          </select>
+          <select id="svd-filtro-sit" onchange="loadSaldoDemanda()" style="min-width:160px">
+            <option value="">Todas as situações</option>
+            <option value="critico">🔴 Crítico</option>
+            <option value="atencao">🟡 Atenção</option>
+            <option value="ok">🟢 OK</option>
+            <option value="sem_demanda">⚫ Sem demanda</option>
+          </select>
+          <button class="btn btn-secondary" onclick="loadSaldoDemanda()">↻ Atualizar</button>
+        </div>
+        <div class="flex gap-2">
+          <button class="btn btn-secondary" onclick="gerarListaCompras()">🛒 Lista de Compras</button>
+          <button class="btn btn-secondary" onclick="exportarSVD('excel')">⬇ Excel</button>
+          <button class="btn btn-secondary" onclick="exportarSVD('pdf')">⬇ PDF</button>
+        </div>
+      </div>
+
+      <!-- Última atualização -->
+      <div id="svd-ultima-atualizacao" style="font-size:12px;color:var(--muted);margin-bottom:12px"></div>
+
+      <!-- Tabela principal -->
+      <div class="table-wrap">
+        <div class="table-head">
+          <span class="table-head-title">Saldo vs Demanda por Produto</span>
+        </div>
+        <table id="svd-table">
+          <thead>
+            <tr>
+              <th>Produto</th>
+              <th>Categoria</th>
+              <th>Saldo Atual</th>
+              <th>Pedidos Abertos</th>
+              <th>Em Produção</th>
+              <th>Total Demanda</th>
+              <th>Saldo Projetado</th>
+              <th>Cobertura</th>
+              <th>Prazo 7d / 15d / 30d</th>
+              <th>Situação</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="svd-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- MODAL DETALHE PRODUTO -->
+    <div class="modal-overlay" id="modal-svd-detalhe">
+      <div class="modal" style="max-width:720px">
+        <div class="modal-title" id="modal-svd-title">Pedidos do Produto</div>
+        <div id="modal-svd-content"></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('modal-svd-detalhe')">Fechar</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL LISTA DE COMPRAS -->
+    <div class="modal-overlay" id="modal-lista-compras">
+      <div class="modal" style="max-width:620px">
+        <div class="modal-title">🛒 Lista de Compras</div>
+        <div id="modal-lista-compras-content"></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" onclick="closeModal('modal-lista-compras')">Fechar</button>
+          <button class="btn btn-secondary" onclick="exportarListaCompras('excel')">⬇ Excel</button>
+          <button class="btn btn-primary" onclick="exportarListaCompras('pdf')">⬇ PDF</button>
+        </div>
+      </div>
+    </div>
+
     <div class="page" id="page-graficos">
       <!-- Filtros -->
       <div class="flex items-center justify-between mb-4" style="flex-wrap:wrap;gap:10px">
@@ -727,6 +881,24 @@
           </div>
           <div id="graf-kpi-anual" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px"></div>
           <canvas id="chart-anual" height="100"></canvas>
+        </div>
+
+        <!-- COMPARATIVO ANUAL -->
+        <div class="card" style="padding:20px;margin-bottom:20px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+            <div>
+              <div style="font-family:var(--font-head);font-weight:700">📊 Produção Total Mensal — Comparativo Anual</div>
+              <div style="font-size:12px;color:var(--muted);margin-top:2px">Soma de todos os operadores • Com linha de meta mensal</div>
+            </div>
+            <div class="flex gap-2 items-center">
+              <label style="font-size:12px;color:var(--muted)">Ano 1:</label>
+              <select id="graf-comp-ano1" onchange="loadGraficoComparativo()" style="min-width:90px"></select>
+              <label style="font-size:12px;color:var(--muted)">Ano 2:</label>
+              <select id="graf-comp-ano2" onchange="loadGraficoComparativo()" style="min-width:90px"></select>
+            </div>
+          </div>
+          <canvas id="chart-comparativo-anual" height="100"></canvas>
+          <div id="graf-comp-insights" style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:16px"></div>
         </div>
 
         <!-- LINHA 1: Total anual + Média diária -->
@@ -913,7 +1085,7 @@
         </div>
         <div class="table-wrap">
           <div class="table-head"><span class="table-head-title">Pedidos</span></div>
-          <table><thead><tr><th>Nº Pedido</th><th>Cliente</th><th>Prazo</th><th>Dias</th><th>Itens</th><th>Status</th></tr></thead>
+          <table><thead><tr><th>Nº Pedido</th><th>Cliente</th><th>Vendedor</th><th>Prazo</th><th>Dias</th><th>Itens</th><th>Status</th></tr></thead>
           <tbody id="rel-ped-tbody"></tbody></table>
         </div>
       </div>
@@ -944,84 +1116,95 @@
 
 <!-- MODAL PRODUÇÃO -->
 <div class="modal-overlay" id="modal-producao">
-  <div class="modal" style="max-width:700px;width:96vw">
-    <div class="modal-title" id="modal-prod-title">Registrar Produção</div>
-    <input type="hidden" id="prod-edit-id">
+  <div class="modal" style="max-width:720px;width:98vw;max-height:95vh;display:flex;flex-direction:column;padding:0">
 
-    <div class="form-grid" style="margin-bottom:16px">
-      <div class="form-group"><label>Data</label><input type="date" id="prod-data"></div>
-      <div class="form-group"><label>Colaborador</label><select id="prod-colaborador"></select></div>
-      <div class="form-group"><label>Máquina</label><select id="prod-maquina"></select></div>
-      <div class="form-group"><label>Meta do dia</label><input type="number" id="prod-meta" value="8000"></div>
-      <div class="form-group" style="grid-column:1/-1">
-        <label>Nº Pedido <span style="color:var(--muted);font-size:11px">(opcional)</span></label>
-        <div class="flex gap-2">
-          <select id="prod-pedido" style="flex:1"><option value="">— Sem pedido vinculado —</option></select>
-          <input type="text" id="prod-pedido-manual" placeholder="Ou número manual" style="flex:1">
+    <!-- Cabeçalho fixo -->
+    <div style="padding:20px 24px 0;flex-shrink:0">
+      <div class="modal-title" id="modal-prod-title" style="margin-bottom:16px">Registrar Produção</div>
+      <input type="hidden" id="prod-edit-id">
+      <div class="form-grid" style="margin-bottom:12px">
+        <div class="form-group"><label>Data</label><input type="date" id="prod-data"></div>
+        <div class="form-group"><label>Colaborador</label><select id="prod-colaborador"></select></div>
+        <div class="form-group"><label>Máquina</label><select id="prod-maquina"></select></div>
+        <div class="form-group"><label>Meta do dia</label><input type="number" id="prod-meta" value="8000"></div>
+        <div class="form-group" style="grid-column:1/-1">
+          <label>Nº Pedido <span style="color:var(--muted);font-size:11px">(opcional)</span></label>
+          <div class="flex gap-2">
+            <select id="prod-pedido" onchange="onProdPedidoChange()" style="flex:1"><option value="">— Sem pedido vinculado —</option></select>
+            <input type="text" id="prod-pedido-manual" placeholder="Ou número manual" style="flex:1">
+          </div>
         </div>
       </div>
-    </div>
-
-    <!-- Toggle Lançamento Simplificado -->
-    <div id="prod-toggle-container" style="margin-bottom:14px;display:none">
-      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600">
-        <input type="checkbox" id="prod-toggle-simplificado" style="width:16px;height:16px;accent-color:var(--accent)" onchange="toggleFormSimplificado()">
-        ⚡ Lançamento Simplificado (Informar apenas a quantidade total sem detalhar produtos)
-      </label>
-    </div>
-
-    <!-- Seção Simplificada -->
-    <div id="prod-secao-simplificada" class="form-grid" style="display:none;margin-top:12px;margin-bottom:12px">
-      <div class="form-group">
-        <label>Quantidade Produzida</label>
-        <input type="number" id="prod-simples-qtd" placeholder="0" min="0" oninput="atualizarSimplificadoData()">
-      </div>
-      <div class="form-group">
-        <label>Quantidade de Perda</label>
-        <input type="number" id="prod-simples-perda" placeholder="0" min="0" oninput="atualizarSimplificadoData()">
-      </div>
-      <div class="form-group">
-        <label>Quantidade de Sobra</label>
-        <input type="number" id="prod-simples-sobra" placeholder="0" min="0" oninput="atualizarSimplificadoData()">
-      </div>
-      <div class="form-group">
-        <label>Motivo da Perda</label>
-        <select id="prod-simples-tipo-perda" onchange="atualizarSimplificadoData()">
-          <option value="Quebra">Quebra</option>
-          <option value="Defeito">Defeito</option>
-          <option value="Contaminação">Contaminação</option>
-          <option value="Transporte">Transporte</option>
-          <option value="Outros">Outros</option>
-        </select>
+      <!-- Toggle Lançamento Simplificado -->
+      <div id="prod-toggle-container" style="margin-bottom:12px;display:none">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600">
+          <input type="checkbox" id="prod-toggle-simplificado" style="width:16px;height:16px;accent-color:var(--accent)" onchange="toggleFormSimplificado()">
+          ⚡ Lançamento Simplificado (Informar apenas a quantidade total sem detalhar produtos)
+        </label>
       </div>
     </div>
 
-    <!-- Seção Detalhada -->
-    <div id="prod-secao-detalhada">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-        <div style="font-family:var(--font-head);font-weight:700;font-size:14px">Produtos Produzidos</div>
-        <button class="btn btn-sm btn-neon" onclick="addItemProducao()">+ Adicionar Produto</button>
+    <!-- Área com scroll -->
+    <div style="flex:1;overflow-y:auto;padding:0 24px;min-height:0">
+
+      <!-- Seção Simplificada -->
+      <div id="prod-secao-simplificada" class="form-grid" style="display:none;margin-bottom:12px">
+        <div class="form-group">
+          <label>Quantidade Produzida</label>
+          <input type="number" id="prod-simples-qtd" placeholder="0" min="0" oninput="atualizarSimplificadoData()">
+        </div>
+        <div class="form-group">
+          <label>Quantidade de Perda</label>
+          <input type="number" id="prod-simples-perda" placeholder="0" min="0" oninput="atualizarSimplificadoData()">
+        </div>
+        <div class="form-group">
+          <label>Quantidade de Sobra</label>
+          <input type="number" id="prod-simples-sobra" placeholder="0" min="0" oninput="atualizarSimplificadoData()">
+        </div>
+        <div class="form-group">
+          <label>Motivo da Perda</label>
+          <select id="prod-simples-tipo-perda" onchange="atualizarSimplificadoData()">
+            <option value="Quebra">Quebra</option>
+            <option value="Defeito">Defeito</option>
+            <option value="Contaminação">Contaminação</option>
+            <option value="Mal formado">Mal formado</option>
+            <option value="Rebarba">Rebarba</option>
+            <option value="Fora de especificação">Fora de especificação</option>
+            <option value="Outros">Outros</option>
+          </select>
+        </div>
       </div>
-      <div class="prod-header-row" style="display:grid;grid-template-columns:minmax(0, 2fr) 80px 80px 80px 95px 28px;gap:6px;margin-bottom:6px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">
-        <span>Produto do Estoque</span>
-        <span style="text-align:center">Produção</span>
-        <span style="text-align:center">Perda</span>
-        <span style="text-align:center">Sobra</span>
-        <span style="text-align:center">Tipo Perda</span>
-        <span></span>
+
+      <!-- Seção Detalhada -->
+      <div id="prod-secao-detalhada">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <div style="font-family:var(--font-head);font-weight:700;font-size:14px">Produtos Produzidos</div>
+          <button class="btn btn-sm btn-neon" onclick="addItemProducao()">+ Adicionar Produto</button>
+        </div>
+        <div style="display:grid;grid-template-columns:minmax(0,2fr) 70px 70px 70px 110px 28px;gap:6px;margin-bottom:6px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">
+          <span>Produto do Estoque</span>
+          <span style="text-align:center">Prod.</span>
+          <span style="text-align:center">Perda</span>
+          <span style="text-align:center">Sobra</span>
+          <span style="text-align:center">Tipo Perda</span>
+          <span></span>
+        </div>
+        <div id="prod-itens-list"></div>
       </div>
-      <div id="prod-itens-list"></div>
     </div>
 
-    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-top:12px;display:flex;justify-content:space-between;align-items:center">
-      <span style="font-size:13px;color:var(--muted)">Total produzido no dia:</span>
-      <span style="font-family:var(--font-head);font-size:20px;font-weight:800;color:var(--accent)" id="prod-total-label">0</span>
+    <!-- Rodapé fixo -->
+    <div style="padding:12px 24px;flex-shrink:0;border-top:1px solid var(--border)">
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:13px;color:var(--muted)">Total produzido no dia:</span>
+        <span style="font-family:var(--font-head);font-size:20px;font-weight:800;color:var(--accent)" id="prod-total-label">0</span>
+      </div>
+      <div style="display:flex;justify-content:flex-end;gap:10px">
+        <button class="btn btn-secondary" onclick="closeModal('modal-producao')">Cancelar</button>
+        <button class="btn btn-primary" id="prod-save-btn" onclick="salvarProducao()">Salvar</button>
+      </div>
     </div>
 
-    <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="closeModal('modal-producao')">Cancelar</button>
-      <button class="btn btn-primary" id="prod-save-btn" onclick="salvarProducao()">Salvar</button>
-    </div>
   </div>
 </div>
 
@@ -1331,6 +1514,28 @@
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal('modal-categoria')">Cancelar</button>
       <button class="btn btn-primary" onclick="salvarCategoria()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- MODAL IMPORTAR PEDIDO -->
+<div class="modal-overlay" id="modal-importar-pedido">
+  <div class="modal" style="max-width:680px;width:95vw">
+    <div class="modal-title">Importar Pedido por Arquivo</div>
+    <p style="color:var(--muted);font-size:13px;margin-top:-4px;margin-bottom:14px">
+      Envie um PDF, JPG, PNG, WEBP, BMP, TIFF, TXT ou CSV do pedido. O sistema tenta identificar automaticamente código do pedido, cliente, vendedor, observações, descrição dos itens e quantidades.
+    </p>
+    <div id="pedido-drop-area" onclick="document.getElementById('pedido-arquivo').click()" ondragover="event.preventDefault();this.style.borderColor='var(--accent)'" ondragleave="this.style.borderColor='rgba(255,255,255,.18)'" ondrop="handleDropPedidoArquivo(event)" style="border:2px dashed rgba(255,255,255,.18);border-radius:14px;padding:24px;text-align:center;background:rgba(255,255,255,.03);cursor:pointer">
+      <div style="font-size:34px;margin-bottom:8px">📄</div>
+      <div style="font-family:var(--font-head);font-weight:800;margin-bottom:6px">Solte o arquivo aqui ou clique para buscar</div>
+      <div id="pedido-arquivo-nome" style="font-size:13px;color:var(--muted)">Nenhum arquivo selecionado</div>
+      <input type="file" id="pedido-arquivo" accept=".pdf,.jpg,.jpeg,.png,.webp,.bmp,.tif,.tiff,.txt,.csv" onchange="selecionarPedidoArquivo(this.files[0])" style="display:none">
+    </div>
+    <div id="pedido-import-preview" style="display:none;margin-top:14px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.10);border-radius:12px;padding:12px;font-size:13px;color:var(--muted)"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-importar-pedido')">Cancelar</button>
+      <button class="btn btn-primary" id="btn-importar-pedido" onclick="importarPedidoArquivo()">Importar e Cadastrar</button>
     </div>
   </div>
 </div>
@@ -1661,7 +1866,7 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="js/app.js"></script>
+<script src="js/app.js?v=20260609-fuzzy-match-fix"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');

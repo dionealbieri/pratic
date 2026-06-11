@@ -410,3 +410,108 @@ def relatorio_perdas(mes: Optional[str] = None):
     rows = conn.execute(query, params).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+# ─── SALDO VS DEMANDA ────────────────────────────────────────────────────────
+
+@router.get("/saldo-vs-demanda")
+def saldo_vs_demanda(categoria_id: Optional[int] = None):
+    conn = get_conn()
+    # Buscar todos os produtos ativos com saldo
+    query = """
+        SELECT 
+            ep.id, ep.codigo, ep.nome, ep.marca, ep.unidade,
+            ep.estoque_minimo, ec.nome as categoria_nome,
+            COALESCE(es.quantidade, 0) as saldo_atual
+        FROM estoque_produtos ep
+        LEFT JOIN estoque_categorias ec ON ep.categoria_id = ec.id
+        LEFT JOIN estoque_saldo es ON es.produto_id = ep.id
+        WHERE ep.ativo = 1
+    """
+    params = []
+    if categoria_id:
+        query += " AND ep.categoria_id = ?"
+        params.append(categoria_id)
+    query += " ORDER BY ec.nome, ep.nome"
+    produtos = conn.execute(query, params).fetchall()
+
+    resultado = []
+    for p in produtos:
+        pid = p["id"]
+        # Demanda: pedidos abertos e em produção
+        demanda = conn.execute("""
+            SELECT 
+                COALESCE(SUM(CASE WHEN ped.status IN ('aberto') THEN pi.quantidade - pi.qtd_produzida ELSE 0 END), 0) as qtd_aberto,
+                COALESCE(SUM(CASE WHEN ped.status = 'em_producao' THEN pi.quantidade - pi.qtd_produzida ELSE 0 END), 0) as qtd_em_producao,
+                COALESCE(SUM(CASE WHEN ped.status IN ('aberto','em_producao') THEN pi.quantidade - pi.qtd_produzida ELSE 0 END), 0) as total_demanda
+            FROM pedidos_itens pi
+            JOIN pedidos ped ON pi.pedido_id = ped.id
+            WHERE pi.produto_id = ? AND ped.status IN ('aberto','em_producao')
+              AND pi.quantidade > pi.qtd_produzida
+        """, (pid,)).fetchone()
+
+        # Prazo mais urgente
+        prazo_urgente = conn.execute("""
+            SELECT 
+                MIN(ped.prazo_entrega) as prazo_mais_urgente,
+                CAST(MIN(julianday(ped.prazo_entrega) - julianday('now')) AS INTEGER) as dias_restantes
+            FROM pedidos_itens pi
+            JOIN pedidos ped ON pi.pedido_id = ped.id
+            WHERE pi.produto_id = ? AND ped.status IN ('aberto','em_producao')
+              AND pi.quantidade > pi.qtd_produzida
+        """, (pid,)).fetchone()
+
+        saldo = p["saldo_atual"]
+        total_demanda = demanda["total_demanda"] or 0
+        saldo_projetado = saldo - total_demanda
+        cobertura = round((saldo / total_demanda * 100), 1) if total_demanda > 0 else 100
+
+        if total_demanda == 0:
+            situacao = "sem_demanda"
+        elif saldo_projetado < 0 or cobertura < 20:
+            situacao = "critico"
+        elif cobertura < 50:
+            situacao = "atencao"
+        else:
+            situacao = "ok"
+
+        resultado.append({
+            "id": pid,
+            "codigo": p["codigo"],
+            "nome": p["nome"],
+            "marca": p["marca"],
+            "unidade": p["unidade"],
+            "categoria": p["categoria_nome"] or "—",
+            "estoque_minimo": p["estoque_minimo"],
+            "saldo_atual": saldo,
+            "qtd_aberto": demanda["qtd_aberto"] or 0,
+            "qtd_em_producao": demanda["qtd_em_producao"] or 0,
+            "total_demanda": total_demanda,
+            "saldo_projetado": saldo_projetado,
+            "cobertura": cobertura,
+            "situacao": situacao,
+            "prazo_urgente": prazo_urgente["prazo_mais_urgente"],
+            "dias_urgente": int(prazo_urgente["dias_restantes"]) if prazo_urgente["dias_restantes"] is not None else None,
+        })
+
+    conn.close()
+    return resultado
+
+@router.get("/saldo-vs-demanda/{produto_id}/pedidos")
+def detalhe_produto_pedidos(produto_id: int):
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT 
+            ped.numero_pedido, ped.prazo_entrega, ped.status,
+            pc.razao_social as cliente,
+            pi.descricao, pi.quantidade, pi.qtd_produzida, pi.unidade,
+            pi.quantidade - pi.qtd_produzida as saldo_item,
+            CAST(julianday(ped.prazo_entrega) - julianday('now') AS INTEGER) as dias_restantes
+        FROM pedidos_itens pi
+        JOIN pedidos ped ON pi.pedido_id = ped.id
+        LEFT JOIN pedidos_clientes pc ON ped.cliente_id = pc.id
+        WHERE pi.produto_id = ? AND ped.status IN ('aberto','em_producao')
+          AND pi.quantidade > pi.qtd_produzida
+        ORDER BY ped.prazo_entrega ASC
+    """, (produto_id,)).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]

@@ -226,3 +226,99 @@ def deletar_usuario(id: int, current_user = Depends(verificar_gestor)):
         return {"mensagem": "Usuário excluído com sucesso"}
     finally:
         conn.close()
+
+# ─── PERMISSÕES POR USUÁRIO ───────────────────────────────────────────────────
+
+MODULOS_ACOES = {
+    'dashboard':      ['ver'],
+    'producao':       ['ver','criar','editar','deletar'],
+    'premiacao':      ['ver','criar','editar','deletar'],
+    'colaboradores':  ['ver','criar','editar','deletar'],
+    'maquinas':       ['ver','criar','editar','deletar'],
+    'pedidos':        ['ver','criar','editar','deletar','importar'],
+    'estoque':        ['ver','criar','editar','deletar','movimentar'],
+    'epi':            ['ver','criar','editar','deletar'],
+    'saldo-demanda':  ['ver'],
+    'graficos':       ['ver'],
+    'relatorios':     ['ver','exportar'],
+    'configuracoes':  ['ver','editar'],
+    'backup':         ['backup','restaurar','limpar'],
+    'permissoes':     ['ver','editar'],
+    'empresa':        ['ver','editar'],
+}
+
+PERMISSOES_GESTOR = {modulo: acoes for modulo, acoes in MODULOS_ACOES.items()}
+
+@router.get("/usuarios/{id}/permissoes")
+def get_permissoes_usuario(id: int, current_user = Depends(verificar_gestor)):
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT modulo, acao, permitido FROM usuario_permissoes WHERE usuario_id = ?", (id,)
+    ).fetchall()
+    conn.close()
+    # Se não tem permissões definidas, retornar estrutura vazia
+    result = {}
+    for modulo, acoes in MODULOS_ACOES.items():
+        result[modulo] = {}
+        for acao in acoes:
+            result[modulo][acao] = False
+    # Sobrescrever com o que está no banco
+    for r in rows:
+        if r['modulo'] in result and r['acao'] in result[r['modulo']]:
+            result[r['modulo']][r['acao']] = bool(r['permitido'])
+    return result
+
+@router.put("/usuarios/{id}/permissoes")
+def salvar_permissoes_usuario(id: int, body: dict, current_user = Depends(verificar_gestor)):
+    conn = get_conn()
+    # Verificar se usuário existe
+    usr = conn.execute("SELECT id, role FROM usuarios WHERE id = ?", (id,)).fetchone()
+    if not usr:
+        conn.close()
+        raise HTTPException(404, "Usuário não encontrado")
+    # Salvar cada permissão
+    for modulo, acoes in body.items():
+        if modulo not in MODULOS_ACOES:
+            continue
+        for acao, permitido in acoes.items():
+            if acao not in MODULOS_ACOES.get(modulo, []):
+                continue
+            conn.execute("""
+                INSERT INTO usuario_permissoes (usuario_id, modulo, acao, permitido)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(usuario_id, modulo, acao) DO UPDATE SET permitido = excluded.permitido
+            """, (id, modulo, acao, 1 if permitido else 0))
+    conn.commit()
+    conn.close()
+    return {"mensagem": "Permissões salvas com sucesso"}
+
+@router.get("/me/permissoes")
+def get_minhas_permissoes(current_user = Depends(get_current_user)):
+    conn = get_conn()
+    usuario_id = current_user['id']
+    role = current_user['role']
+    rows = conn.execute(
+        "SELECT modulo, acao, permitido FROM usuario_permissoes WHERE usuario_id = ?",
+        (usuario_id,)
+    ).fetchall()
+    conn.close()
+
+    # Gestor tem tudo liberado
+    if role == 'gestor':
+        result = {}
+        for modulo, acoes in MODULOS_ACOES.items():
+            result[modulo] = {acao: True for acao in acoes}
+        return result
+
+    # Se tem permissões definidas no banco, usar elas
+    if rows:
+        result = {}
+        for modulo, acoes in MODULOS_ACOES.items():
+            result[modulo] = {acao: False for acao in acoes}
+        for r in rows:
+            if r['modulo'] in result:
+                result[r['modulo']][r['acao']] = bool(r['permitido'])
+        return result
+
+    # Sem permissões definidas — retornar tudo negado
+    return {modulo: {acao: False for acao in acoes} for modulo, acoes in MODULOS_ACOES.items()}
