@@ -34,6 +34,7 @@ function showAlert(msg, type = 'success') {
 const PAGINAS_SISTEMA = [
   { key:'dashboard',     label:'📊 Dashboard'         },
   { key:'producao',      label:'🏭 Produção Diária'   },
+  { key:'producao_simplificada', label:'⚡ Lançamento Simplificado' },
   { key:'premiacao',     label:'🏆 Premiação'          },
   { key:'pedidos',       label:'🧾 Pedidos'            },
   { key:'estoque',       label:'📦 Estoque'            },
@@ -64,6 +65,7 @@ const PERFIS = [
 ];
 
 let permissoesAtuais = {};
+let modoSimplificadoPerfil = false; // definido pelo Controle de Acesso (perfil tem 'producao_simplificada')
 let chartDashEvolucaoInstance = null;
 let chartDashPerdasTipoInstance = null;
 
@@ -186,6 +188,11 @@ async function carregarAcessoPrincipal() {
     paginasLiberadas = me.permissions
       ? me.permissions.split(',').map(p => p.trim()).filter(p => PAGE_META_MAIN[p])
       : (perfilAtual === 'gestor' ? Object.keys(PAGE_META_MAIN) : ['dashboard']);
+    // Modo de lançamento (simplificado x detalhado) vem do Controle de Acesso, por perfil.
+    // Lê da string crua porque 'producao_simplificada' não é uma página navegável.
+    modoSimplificadoPerfil = me.permissions
+      ? me.permissions.split(',').map(p => p.trim()).includes('producao_simplificada')
+      : false;
     
     const path = window.location.pathname;
     const params = new URLSearchParams(window.location.search);
@@ -758,15 +765,13 @@ async function openModalProducao() {
   document.getElementById('modal-prod-title').textContent = 'Registrar Produção';
   document.getElementById('prod-save-btn').textContent = 'Salvar';
 
-  // Toggle Visibility Check
-  const allowed = perfilAtual === 'gestor' || paginasLiberadas.includes('producao_simplificada');
+  // Modo de lançamento definido pelo Controle de Acesso (por perfil), não escolha do usuário.
   const toggleContainer = document.getElementById('prod-toggle-container');
-  if (toggleContainer) toggleContainer.style.display = allowed ? 'block' : 'none';
+  if (toggleContainer) toggleContainer.style.display = 'none';
 
   const checkbox = document.getElementById('prod-toggle-simplificado');
   if (checkbox) {
-    const saved = localStorage.getItem('prod-simplificado');
-    checkbox.checked = allowed && (saved === null ? true : saved === 'true');
+    checkbox.checked = modoSimplificadoPerfil;
   }
 
   prodItens = [{ produto_id: null, producao: 0, perda: 0, sobra: 0, tipo_perda: 'Quebra' }];
@@ -1048,6 +1053,8 @@ async function editarProducao(id, colId, maqId, data, meta, producao, produtoEst
   document.getElementById('prod-save-btn').textContent = 'Atualizar';
 
   const isSimplificado = !produtoEstoqueId;
+  const toggleContainerEdit = document.getElementById('prod-toggle-container');
+  if (toggleContainerEdit) toggleContainerEdit.style.display = 'none';
   const checkbox = document.getElementById('prod-toggle-simplificado');
   if (checkbox) {
     checkbox.checked = isSimplificado;
@@ -3202,6 +3209,97 @@ document.addEventListener('DOMContentLoaded', async () => {
 const grafCharts = {};
 function destroyGrafChart(id) { if(grafCharts[id]){grafCharts[id].destroy();delete grafCharts[id];} }
 
+// ── Helpers de melhoria dos Gráficos ─────────────────────────────────────────
+let _grafPluginPronto = false;
+// Escolhe a cor do rótulo conforme a luminância da barra: escuro em cores claras, branco em escuras.
+function _hexLum(hex) {
+  if (typeof hex !== 'string') return 0;
+  hex = hex.replace('#','').slice(0,6);
+  if (hex.length < 6) return 0;
+  const r=parseInt(hex.slice(0,2),16), g=parseInt(hex.slice(2,4),16), b=parseInt(hex.slice(4,6),16);
+  return (0.299*r + 0.587*g + 0.114*b) / 255;
+}
+function _dlBg(ctx) {
+  let bg = ctx.dataset.backgroundColor;
+  if (Array.isArray(bg)) bg = bg[ctx.dataIndex];
+  return bg;
+}
+function _dlColor(ctx)  { return _hexLum(_dlBg(ctx)) > 0.55 ? '#000000' : '#ffffff'; }
+function _dlStroke(ctx) { return _dlColor(ctx) === '#ffffff' ? '#000000' : '#ffffff'; }
+
+function _grafInitPlugin() {
+  if (_grafPluginPronto) return;
+  try {
+    if (window.Chart && window.ChartDataLabels) {
+      Chart.register(window.ChartDataLabels);
+      // Rótulos desligados por padrão; cada gráfico que quiser ativa explicitamente.
+      Chart.defaults.set('plugins.datalabels', { display: false });
+    }
+  } catch(e) {}
+  _grafPluginPronto = true;
+}
+
+// Garante que o canvas esteja dentro de uma caixa de altura fixa e posição relativa,
+// para que maintainAspectRatio:false respeite a altura (sem isso, o Chart.js estica).
+function ensureChartBox(canvasId, altura) {
+  const c = document.getElementById(canvasId);
+  if (!c) return;
+  let box = c.parentElement;
+  if (!box || !box.classList || !box.classList.contains('graf-box')) {
+    box = document.createElement('div');
+    box.className = 'graf-box';
+    box.style.position = 'relative';
+    box.style.width = '100%';
+    c.parentNode.insertBefore(box, c);
+    box.appendChild(c);
+  }
+  box.style.height = altura + 'px';
+  // remove eventual mensagem de vazio/erro anterior
+  const msg = box.querySelector('.graf-msg');
+  if (msg) msg.remove();
+  c.style.display = '';
+}
+
+// Mostra mensagem (vazio ou erro) dentro da caixa do gráfico, escondendo o canvas.
+function grafBoxMsg(canvasId, texto, isErro) {
+  destroyGrafChart(canvasId.replace('chart-',''));
+  const c = document.getElementById(canvasId);
+  if (!c) return;
+  const box = c.parentElement;
+  if (!box) return;
+  c.style.display = 'none';
+  let msg = box.querySelector('.graf-msg');
+  if (!msg) {
+    msg = document.createElement('div');
+    msg.className = 'graf-msg';
+    msg.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;font-size:13px;padding:12px';
+    box.appendChild(msg);
+  }
+  msg.style.color = isErro ? 'var(--danger)' : 'var(--muted)';
+  msg.textContent = texto;
+}
+
+// Overlay de carregamento sobre toda a área de gráficos.
+function grafLoading(mostrar) {
+  const cont = document.getElementById('graf-content');
+  if (!cont) return;
+  let ov = document.getElementById('graf-loading-overlay');
+  if (mostrar) {
+    if (!ov) {
+      cont.style.position = cont.style.position || 'relative';
+      ov = document.createElement('div');
+      ov.id = 'graf-loading-overlay';
+      ov.style.cssText = 'position:absolute;inset:0;background:rgba(10,12,18,.55);backdrop-filter:blur(1px);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:20;border-radius:12px';
+      ov.innerHTML = '<div class="spinner"></div><div style="font-size:13px;color:var(--muted)">Carregando gráficos…</div>';
+      cont.appendChild(ov);
+    }
+    ov.style.display = 'flex';
+  } else if (ov) {
+    ov.style.display = 'none';
+  }
+}
+
+
 async function loadGraficoComparativo() {
   const ano1El = document.getElementById('graf-comp-ano1');
   const ano2El = document.getElementById('graf-comp-ano2');
@@ -3227,10 +3325,12 @@ async function loadGraficoComparativo() {
 
     const canvas = document.getElementById('chart-comparativo-anual');
     if(!canvas) return;
+    _grafInitPlugin();
+    ensureChartBox('chart-comparativo-anual', 320);
     grafCharts['comparativo-anual']=new Chart(canvas,{
       type:'bar',data:{labels:MESES,datasets},
-      options:{responsive:true,
-        plugins:{legend:{labels:{color:tc}},tooltip:{callbacks:{label:ctx=>`${ctx.dataset.label}: ${fmtNum(ctx.raw)} peças`}}},
+      options:{responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{labels:{color:tc}},tooltip:{callbacks:{label:ctx=>`${ctx.dataset.label}: ${fmtNum(ctx.raw)} peças`}},datalabels:{display:ctx=>ctx.dataset.type!=='line'&&(ctx.dataset.data[ctx.dataIndex]||0)>0,anchor:'center',align:'center',rotation:-90,clamp:true,color:_dlColor,textStrokeColor:_dlStroke,textStrokeWidth:3,font:{size:11,weight:'700'},formatter:v=>fmtNum(v)}},
         scales:{x:{ticks:{color:tc},grid:{color:gc}},y:{ticks:{color:tc,callback:v=>fmtNum(v)},grid:{color:gc},title:{display:true,text:'Total de peças',color:tc}}}
       }
     });
@@ -3308,6 +3408,8 @@ async function loadGraficoAnual() {
 
     // Gráfico anual com 3 datasets: produção, perda, sobra
     destroyGrafChart('anual');
+    _grafInitPlugin();
+    ensureChartBox('chart-anual', 340);
     grafCharts['anual'] = new Chart(document.getElementById('chart-anual'), {
       type: 'bar',
       data: {
@@ -3338,6 +3440,7 @@ async function loadGraficoAnual() {
       },
       options: {
         responsive: true,
+        maintainAspectRatio: false,
         plugins: { legend: { labels: { color: tc } },
           tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${fmtNum(ctx.raw)}` } }
         },
@@ -3378,9 +3481,23 @@ async function loadGraficos() {
     }
   });
   // Carregar gráficos anuais
+  _grafInitPlugin();
+  grafLoading(true);
+  // Caixas de altura fixa (para maintainAspectRatio:false respeitar a altura)
+  ensureChartBox('chart-total-mes', 360);
+  ensureChartBox('chart-evolucao-graf', 300);
+  ensureChartBox('chart-comparativo', 300);
+  ensureChartBox('chart-perda-idx', 280);
+  ensureChartBox('chart-dias-meta', 280);
+  ensureChartBox('chart-excedente', 280);
+  ensureChartBox('chart-diario-graf', 340);
+  ensureChartBox('chart-ranking-graf', 340);
+  ensureChartBox('chart-pedidos-status', 280);
+  ensureChartBox('chart-prazo', 280);
+  ensureChartBox('chart-estoque-cat', 280);
   await Promise.all([loadGraficoAnual(), loadGraficoComparativo()]);
 
-  const TC = ['#f0b429','#3b82f6','#10b981','#f43f5e','#a855f7'];
+  const TC = ['#f0b429','#3b82f6','#10b981','#f43f5e','#a855f7','#06b6d4','#f97316','#8b5cf6','#84cc16','#ec4899'];
   const gc = '#2a2f3f', tc = '#6b7280';
   const ml = m => { const[y,mo]=m.split('-');return['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][+mo-1]+'/'+y.slice(2); };
 
@@ -3423,7 +3540,7 @@ async function loadGraficos() {
         label:op, data:meses.map(m=>{const r=evolucao.find(r=>r.colaborador===op&&r.mes_referencia===m);return r?r.total_producao:0;}),
         backgroundColor:TC[i%TC.length]+'bb', borderColor:TC[i%TC.length], borderWidth:1, borderRadius:4
       }))},
-      options:{responsive:true,plugins:{legend:{labels:{color:tc}},tooltip:{callbacks:{label:ctx=>`${ctx.dataset.label}: ${fmtNum(ctx.raw)} pçs`}}},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:tc}},tooltip:{callbacks:{label:ctx=>`${ctx.dataset.label}: ${fmtNum(ctx.raw)} pçs`}}},
         scales:{x:{stacked:true,ticks:{color:tc},grid:{color:gc}},y:{stacked:true,ticks:{color:tc,callback:v=>fmtNum(v)},grid:{color:gc}}}}
     });
 
@@ -3436,7 +3553,7 @@ async function loadGraficos() {
         data:meses.map(m=>{const r=evolucao.find(r=>r.colaborador===op&&r.mes_referencia===m);return r?Math.round(r.media_diaria||0):null;}),
         tension:0.4, fill:true, pointRadius:5, pointHoverRadius:8, spanGaps:true
       }))},
-      options:{responsive:true,plugins:{legend:{labels:{color:tc}}},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:tc}}},
         scales:{x:{ticks:{color:tc},grid:{color:gc}},y:{ticks:{color:tc,callback:v=>fmtNum(v)},grid:{color:gc}}}}
     });
 
@@ -3447,11 +3564,11 @@ async function loadGraficos() {
       data:{
         labels:ops,
         datasets:[
-          {label:'Média Geral', data:ops.map(op=>{const r=ranking.find(r=>r.colaborador===op);return Math.round(r?.media_geral||0);}), backgroundColor:ops.map((_,i)=>TC[i%TC.length]+'cc'), borderColor:ops.map((_,i)=>TC[i%TC.length]), borderWidth:1, borderRadius:6},
+          {label:'Média Geral', data:ops.map(op=>{const r=ranking.find(r=>r.colaborador===op);return Math.round(r?.media_geral||0);}), backgroundColor:ops.map((_,i)=>TC[i%TC.length]+'cc'), borderColor:ops.map((_,i)=>TC[i%TC.length]), borderWidth:1, borderRadius:6, datalabels:{display:true,anchor:'center',align:'center',rotation:-90,clamp:true,color:_dlColor,textStrokeColor:_dlStroke,textStrokeWidth:3,font:{size:12,weight:'700'},formatter:v=>v>0?fmtNum(v):''}},
           {label:'Meta média', data:ops.map(op=>{const r=ranking.find(r=>r.colaborador===op);return Math.round(r?.media_meta||0);}), type:'line', borderColor:'#ef4444', borderDash:[6,3], borderWidth:2, pointRadius:3, fill:false}
         ]
       },
-      options:{responsive:true,plugins:{legend:{labels:{color:tc}}},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:tc}}},
         scales:{x:{ticks:{color:tc},grid:{color:gc}},y:{ticks:{color:tc,callback:v=>fmtNum(v)},grid:{color:gc}}}}
     });
 
@@ -3467,7 +3584,7 @@ async function loadGraficos() {
         });
         return {label:op, borderColor:TC[i%TC.length], backgroundColor:'transparent', data:dados, tension:0.3, pointRadius:4, spanGaps:true};
       })},
-      options:{responsive:true,plugins:{legend:{labels:{color:tc}}},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:tc}}},
         scales:{x:{ticks:{color:tc},grid:{color:gc}},y:{ticks:{color:tc,callback:v=>v+'%'},grid:{color:gc},title:{display:true,text:'% perda',color:tc}}}}
     });
 
@@ -3483,7 +3600,7 @@ async function loadGraficos() {
         }),
         backgroundColor:TC[i%TC.length]+'99', borderColor:TC[i%TC.length], borderWidth:1, borderRadius:4
       }))},
-      options:{responsive:true,plugins:{legend:{labels:{color:tc}}},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:tc}}},
         scales:{x:{ticks:{color:tc},grid:{color:gc}},y:{ticks:{color:tc},grid:{color:gc},title:{display:true,text:'dias',color:tc}}}}
     });
 
@@ -3498,7 +3615,7 @@ async function loadGraficos() {
         borderColor:meses.map(m=>{const r=evolucao.find(r=>r.colaborador===op&&r.mes_referencia===m);return (((r?.excedente_total ?? ((r?.excedente_positivo||0)+(r?.excedente_negativo||0))) || 0)>=0)?TC[i%TC.length]:'#ef4444';}),
         borderWidth:1, borderRadius:3
       }))},
-      options:{responsive:true,plugins:{legend:{labels:{color:tc}}},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:tc}}},
         scales:{x:{ticks:{color:tc},grid:{color:gc}},y:{ticks:{color:tc,callback:v=>fmtNum(v)},grid:{color:gc}}}}
     });
 
@@ -3511,7 +3628,7 @@ async function loadGraficos() {
     dsets.push({label:`Meta (${fmtNum(metaDia)})`,data:dias.map(()=>metaDia),type:'line',borderColor:'#ef4444',borderDash:[6,3],borderWidth:2,pointRadius:0,fill:false});
     grafCharts['diario-graf'] = new Chart(document.getElementById('chart-diario-graf'), {
       type:'bar', data:{labels:dias.map(fmtDate),datasets:dsets},
-      options:{responsive:true,plugins:{legend:{labels:{color:tc}}},
+      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:tc}}},
         scales:{x:{ticks:{color:tc,maxRotation:45},grid:{color:gc}},y:{ticks:{color:tc,callback:v=>fmtNum(v)},grid:{color:gc}}}}
     });
 
@@ -3524,49 +3641,70 @@ async function loadGraficos() {
         data:ranking.map(r=>Math.round(r.media_geral||0)),
         backgroundColor:ranking.map((_,i)=>TC[i%TC.length]+'cc'), borderColor:ranking.map((_,i)=>TC[i%TC.length]), borderWidth:1, borderRadius:6
       }]},
-      options:{indexAxis:'y',responsive:true,plugins:{legend:{display:false}},
+      options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},datalabels:{display:true,anchor:'center',align:'center',clamp:true,color:_dlColor,textStrokeColor:_dlStroke,textStrokeWidth:3,font:{size:13,weight:'700'},formatter:v=>v>0?fmtNum(v):''}},
         scales:{x:{ticks:{color:tc,callback:v=>fmtNum(v)},grid:{color:gc}},y:{ticks:{color:tc},grid:{color:gc}}}}
     });
+
+    // Estado "sem dados" — substitui gráficos vazios por mensagem
+    if (evolucao.length === 0) ['chart-total-mes','chart-evolucao-graf','chart-comparativo','chart-perda-idx','chart-dias-meta','chart-excedente'].forEach(id=>grafBoxMsg(id,'Sem dados de produção no período selecionado'));
+    if (diario.length === 0) grafBoxMsg('chart-diario-graf','Sem lançamentos neste mês');
+    if (ranking.length === 0) grafBoxMsg('chart-ranking-graf','Sem dados para o ranking');
 
     // 9. Pedidos por status (rosca)
     try {
       const pedidos=await api('/pedidos/');
       const sc={aberto:0,em_producao:0,produzido:0,entregue:0};
       pedidos.forEach(p=>{if(sc[p.status]!==undefined)sc[p.status]++;});
-      destroyGrafChart('pedidos-status');
-      grafCharts['pedidos-status'] = new Chart(document.getElementById('chart-pedidos-status'), {
-        type:'doughnut',
-        data:{labels:['Aberto','Em produção','Produzido','Entregue'], datasets:[{data:Object.values(sc), backgroundColor:['#3b82f6cc','#f0b429cc','#10b981cc','#6b7280cc'], borderWidth:0}]},
-        options:{responsive:true,plugins:{legend:{labels:{color:tc},position:'bottom'}}}
-      });
+      const dlRosca={display:ctx=>(ctx.dataset.data[ctx.dataIndex]||0)>0,color:_dlColor,textStrokeColor:_dlStroke,textStrokeWidth:3,font:{weight:'700',size:13},formatter:v=>v>0?v:''};
+      if (pedidos.length === 0) {
+        grafBoxMsg('chart-pedidos-status','Nenhum pedido cadastrado');
+        grafBoxMsg('chart-prazo','Nenhum pedido cadastrado');
+      } else {
+        destroyGrafChart('pedidos-status');
+        grafCharts['pedidos-status'] = new Chart(document.getElementById('chart-pedidos-status'), {
+          type:'doughnut',
+          data:{labels:['Aberto','Em produção','Produzido','Entregue'], datasets:[{data:Object.values(sc), backgroundColor:['#3b82f6cc','#f0b429cc','#10b981cc','#6b7280cc'], borderWidth:0}]},
+          options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:tc},position:'bottom'},datalabels:dlRosca}}
+        });
 
-      // 10. Prazo: no prazo vs atrasados
-      const noPrazo=pedidos.filter(p=>p.status!=='entregue'&&Math.round(p.dias_restantes)>=0).length;
-      const atrasados=pedidos.filter(p=>p.status!=='entregue'&&Math.round(p.dias_restantes)<0).length;
-      const entregues=pedidos.filter(p=>p.status==='entregue').length;
-      destroyGrafChart('prazo');
-      grafCharts['prazo'] = new Chart(document.getElementById('chart-prazo'), {
-        type:'doughnut',
-        data:{labels:['No prazo','Atrasados','Entregues'], datasets:[{data:[noPrazo,atrasados,entregues], backgroundColor:['#10b981cc','#ef4444cc','#6b7280cc'], borderWidth:0}]},
-        options:{responsive:true,plugins:{legend:{labels:{color:tc},position:'bottom'}}}
-      });
-    } catch(e){}
+        // 10. Prazo: no prazo vs atrasados
+        const noPrazo=pedidos.filter(p=>p.status!=='entregue'&&Math.round(p.dias_restantes)>=0).length;
+        const atrasados=pedidos.filter(p=>p.status!=='entregue'&&Math.round(p.dias_restantes)<0).length;
+        const entregues=pedidos.filter(p=>p.status==='entregue').length;
+        destroyGrafChart('prazo');
+        grafCharts['prazo'] = new Chart(document.getElementById('chart-prazo'), {
+          type:'doughnut',
+          data:{labels:['No prazo','Atrasados','Entregues'], datasets:[{data:[noPrazo,atrasados,entregues], backgroundColor:['#10b981cc','#ef4444cc','#6b7280cc'], borderWidth:0}]},
+          options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:tc},position:'bottom'},datalabels:dlRosca}}
+        });
+      }
+    } catch(e){
+      grafBoxMsg('chart-pedidos-status','Erro ao carregar pedidos',true);
+      grafBoxMsg('chart-prazo','Erro ao carregar pedidos',true);
+    }
 
     // 11. Estoque por categoria
     try {
       const prods=await api('/estoque/produtos');
       const cm={};
       prods.forEach(p=>{const c=p.categoria_nome||'Sem categoria';if(!cm[c])cm[c]=0;cm[c]+=p.quantidade_atual||0;});
-      destroyGrafChart('estoque-cat');
-      grafCharts['estoque-cat'] = new Chart(document.getElementById('chart-estoque-cat'), {
-        type:'bar',
-        data:{labels:Object.keys(cm), datasets:[{label:'Saldo', data:Object.values(cm), backgroundColor:'#3b82f6cc', borderColor:'#3b82f6', borderWidth:1, borderRadius:4}]},
-        options:{responsive:true,plugins:{legend:{display:false}},
-          scales:{x:{ticks:{color:tc},grid:{color:gc}},y:{ticks:{color:tc,callback:v=>fmtNum(v)},grid:{color:gc}}}}
-      });
-    } catch(e){}
+      if (Object.keys(cm).length === 0) {
+        grafBoxMsg('chart-estoque-cat','Nenhum produto em estoque');
+      } else {
+        destroyGrafChart('estoque-cat');
+        grafCharts['estoque-cat'] = new Chart(document.getElementById('chart-estoque-cat'), {
+          type:'bar',
+          data:{labels:Object.keys(cm), datasets:[{label:'Saldo', data:Object.values(cm), backgroundColor:'#3b82f6cc', borderColor:'#3b82f6', borderWidth:1, borderRadius:4}]},
+           options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},datalabels:{display:true,anchor:'center',align:'center',rotation:-90,clamp:true,color:_dlColor,textStrokeColor:_dlStroke,textStrokeWidth:3,font:{size:12,weight:'700'},formatter:v=>v>0?fmtNum(v):''}},
+            scales:{x:{ticks:{color:tc},grid:{color:gc}},y:{ticks:{color:tc,callback:v=>fmtNum(v)},grid:{color:gc}}}}
+        });
+      }
+    } catch(e){
+      grafBoxMsg('chart-estoque-cat','Erro ao carregar estoque',true);
+    }
 
   } catch(e) { showAlert('Erro ao carregar gráficos: '+e.message,'danger'); }
+  finally { grafLoading(false); }
 }
 
 function exportarGraficoPDF() {
@@ -5025,11 +5163,9 @@ function renderPermUsuarioGrid(perms) {
       return `<div style="display:flex;justify-content:center;align-items:center">
         <label class="toggle-switch" style="cursor:pointer;position:relative;display:inline-block;width:40px;height:22px">
           <input type="checkbox" id="perm_${modulo}_${acao}" ${ativo?'checked':''}
-            onchange="if(!permUsuarioAtual['${modulo}'])permUsuarioAtual['${modulo}']={};permUsuarioAtual['${modulo}']['${acao}']=this.checked"
-            style="opacity:0;width:0;height:0">
-          <span style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:${ativo?'var(--accent)':'var(--surface2)'};border:1px solid ${ativo?'var(--accent)':'var(--border)'};border-radius:22px;transition:.3s" 
-            id="span_${modulo}_${acao}"
-            onclick="const cb=document.getElementById('perm_${modulo}_${acao}');cb.checked=!cb.checked;this.style.background=cb.checked?'var(--accent)':'var(--surface2)';this.style.borderColor=cb.checked?'var(--accent)':'var(--border)';this.querySelector('span').style.left=cb.checked?'20px':'2px';if(!permUsuarioAtual['${modulo}'])permUsuarioAtual['${modulo}']={};permUsuarioAtual['${modulo}']['${acao}']=cb.checked">
+            onchange="permToggleChanged('${modulo}','${acao}',this.checked)"
+            style="opacity:0;width:0;height:0;position:absolute">
+          <span id="span_${modulo}_${acao}" style="position:absolute;top:0;left:0;right:0;bottom:0;background:${ativo?'var(--accent)':'var(--surface2)'};border:1px solid ${ativo?'var(--accent)':'var(--border)'};border-radius:22px;transition:.3s;pointer-events:none">
             <span style="position:absolute;height:16px;width:16px;left:${ativo?'20':'2'}px;bottom:2px;background:white;border-radius:50%;transition:.3s"></span>
           </span>
         </label>
@@ -5043,6 +5179,18 @@ function renderPermUsuarioGrid(perms) {
   }).join('');
 
   el.innerHTML = html;
+}
+
+function permToggleChanged(modulo, acao, checked) {
+  if (!permUsuarioAtual[modulo]) permUsuarioAtual[modulo] = {};
+  permUsuarioAtual[modulo][acao] = checked;
+  const span = document.getElementById(`span_${modulo}_${acao}`);
+  if (span) {
+    span.style.background = checked ? 'var(--accent)' : 'var(--surface2)';
+    span.style.borderColor = checked ? 'var(--accent)' : 'var(--border)';
+    const dot = span.querySelector('span');
+    if (dot) dot.style.left = checked ? '20px' : '2px';
+  }
 }
 
 function permUsuarioTodos(liberar) {

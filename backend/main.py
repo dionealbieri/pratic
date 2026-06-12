@@ -115,18 +115,44 @@ def fazer_backup():
     now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_name = f"pratic_backup_{now}.db"
     backup_path = os.path.join(tempfile.gettempdir(), backup_name)
-    shutil.copy2(db_path, backup_path)
+    
+    # Executa o backup atômico via API oficial do sqlite3
+    src = sqlite3.connect(db_path)
+    dst = sqlite3.connect(backup_path)
+    with dst:
+        src.backup(dst)
+    dst.close()
+    src.close()
+    
     return FileResponse(path=backup_path, filename=backup_name, media_type="application/octet-stream")
 
 @app.post("/api/restore", dependencies=[Depends(get_current_user)])
 async def restaurar_backup(file: UploadFile = File(...)):
     db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "banco", "pratic.db"))
     now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    
+    # Salva uma cópia física de segurança (backup anterior)
     shutil.copy2(db_path, db_path + f".bak_{now}")
+    
+    # Salva o arquivo de restore temporariamente
     contents = await file.read()
-    with open(db_path, "wb") as f:
+    temp_db_path = os.path.join(tempfile.gettempdir(), f"restore_{now}.db")
+    with open(temp_db_path, "wb") as f:
         f.write(contents)
-    return {"mensagem": "Banco de dados restaurado com sucesso! Reinicie o servidor."}
+        
+    # Restaura o banco de dados via API oficial do sqlite3 (mantém os handles do servidor seguros)
+    try:
+        src = sqlite3.connect(temp_db_path)
+        dst = sqlite3.connect(db_path)
+        with dst:
+            src.backup(dst)
+        dst.close()
+        src.close()
+    finally:
+        if os.path.exists(temp_db_path):
+            os.remove(temp_db_path)
+            
+    return {"mensagem": "Banco de dados restaurado com sucesso!"}
 
 @app.post("/api/empresa/logo", dependencies=[Depends(get_current_user)])
 async def upload_logo(file: UploadFile = File(...)):

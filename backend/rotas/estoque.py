@@ -119,9 +119,13 @@ def atualizar_categoria(id: int, c: CategoriaIn):
 @router.delete("/categorias/{id}")
 def deletar_categoria(id: int):
     conn = get_conn()
-    conn.execute("DELETE FROM estoque_categorias WHERE id=?", (id,))
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("DELETE FROM estoque_categorias WHERE id=?", (id,))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=400, detail="Não é possível remover esta categoria, pois existem produtos vinculados a ela.")
+    finally:
+        conn.close()
     return {"mensagem": "Categoria removida"}
 
 # ─── PRODUTOS ─────────────────────────────────────────────────────────────────

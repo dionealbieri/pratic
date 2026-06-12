@@ -152,19 +152,60 @@ def _reverter_estoque_producao(conn, prod_id: int):
     
     colaborador_id = p["colaborador_id"]
     data = p["data"]
+    produto_estoque_id = p["produto_estoque_id"]
+    perda_quantidade = p["perda_quantidade"] or 0
     
     col = conn.execute("SELECT nome FROM colaboradores WHERE id = ?", (colaborador_id,)).fetchone()
     col_nome = col["nome"] if col else "Operador"
     
-    motivos = ('Produção diária automática', 'Sobra de produção', 'Perda na produção', 'Perda registrada via mobile')
-    
-    query = """
-        SELECT * FROM estoque_movimentacoes 
-        WHERE data = ? 
-          AND responsavel = ? 
-          AND motivo IN (?, ?, ?, ?)
-    """
-    movs = conn.execute(query, (data, col_nome, *motivos)).fetchall()
+    # Se for registro de produto único, filtramos por produto_id para não afetar outros lançamentos do mesmo operador no mesmo dia
+    if produto_estoque_id:
+        query = """
+            SELECT * FROM estoque_movimentacoes 
+            WHERE data = ? 
+              AND responsavel = ? 
+              AND produto_id = ?
+              AND (motivo LIKE 'Produção diária automática%' 
+                   OR motivo LIKE 'Sobra de produção%' 
+                   OR motivo LIKE 'Perda na produção%' 
+                   OR motivo LIKE 'Perda registrada via mobile%')
+        """
+        params = (data, col_nome, produto_estoque_id)
+    else:
+        # Se produto_estoque_id for nulo, mas houver perda registrada no mobile (sem produto principal),
+        # a perda foi vinculada ao primeiro_produto ativo.
+        if perda_quantidade > 0:
+            primeiro_produto = conn.execute("SELECT id FROM estoque_produtos WHERE ativo=1 LIMIT 1").fetchone()
+            if primeiro_produto:
+                # Se for esse caso de perda avulsa, removemos apenas esse produto
+                query = """
+                    SELECT * FROM estoque_movimentacoes 
+                    WHERE data = ? 
+                      AND responsavel = ? 
+                      AND produto_id = ?
+                      AND (motivo LIKE 'Produção diária automática%' 
+                           OR motivo LIKE 'Sobra de produção%' 
+                           OR motivo LIKE 'Perda na produção%' 
+                           OR motivo LIKE 'Perda registrada via mobile%')
+                """
+                params = (data, col_nome, primeiro_produto["id"])
+            else:
+                return
+        else:
+            # Caso de múltiplos produtos (produto_estoque_id é nulo e sem perda avulsa):
+            # Revertemos todos os movimentos daquele operador naquela data que comecem com os motivos de produção
+            query = """
+                SELECT * FROM estoque_movimentacoes 
+                WHERE data = ? 
+                  AND responsavel = ? 
+                  AND (motivo LIKE 'Produção diária automática%' 
+                       OR motivo LIKE 'Sobra de produção%' 
+                       OR motivo LIKE 'Perda na produção%' 
+                       OR motivo LIKE 'Perda registrada via mobile%')
+            """
+            params = (data, col_nome)
+            
+    movs = conn.execute(query, params).fetchall()
     
     for m in movs:
         m_id = m["id"]

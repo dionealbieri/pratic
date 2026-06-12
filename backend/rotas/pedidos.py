@@ -585,6 +585,7 @@ def criar_pedido(p: PedidoIn):
             (pedido_id, produto_id, descricao, quantidade, unidade, qtd_produzida, status)
             VALUES (?,?,?,?,?,0,'aberto')""",
             (pedido_id, item.produto_id, item.descricao, item.quantidade, item.unidade))
+    _auto_vincular_itens(conn)
     conn.commit()
     conn.close()
     return {"id": pedido_id, "mensagem": "Pedido criado"}
@@ -615,6 +616,7 @@ def atualizar_pedido(id: int, p: PedidoIn):
             VALUES (?,?,?,?,?,?,?)""",
             (id, item.produto_id, item.descricao, item.quantidade, item.unidade, qtd_produzida, status))
             
+    _auto_vincular_itens(conn)
     conn.commit()
     conn.close()
     return {"mensagem": "Pedido atualizado"}

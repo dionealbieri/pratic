@@ -654,22 +654,13 @@ async function openModalProducao() {
   document.getElementById('modal-prod-title').textContent = 'Registrar Produção';
   document.getElementById('prod-save-btn').textContent = 'Salvar';
 
-  // Toggle Visibility Check
-  let me;
-  try { me = await req('/auth/me'); } catch(e){}
-  const allowed = (me && me.role === 'gestor') || temAcessoSimplificado;
+  // Modo de lançamento definido pelo Controle de Acesso (por perfil), não escolha do usuário.
   const toggleContainer = document.getElementById('prod-toggle-container');
-  if (toggleContainer) toggleContainer.style.display = allowed ? 'block' : 'none';
+  if (toggleContainer) toggleContainer.style.display = 'none';
 
   const checkbox = document.getElementById('prod-toggle-simplificado');
   if (checkbox) {
-    if (allowed) {
-      checkbox.checked = true;
-      checkbox.disabled = (me && me.role !== 'gestor');
-    } else {
-      checkbox.checked = false;
-      checkbox.disabled = false;
-    }
+    checkbox.checked = temAcessoSimplificado;
   }
 
   prodItens = [{ produto_id: null, producao: 0, perda: 0, sobra: 0, tipo_perda: 'Quebra' }];
