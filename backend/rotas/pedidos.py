@@ -97,9 +97,15 @@ def _extract_text_from_file(path: str, filename: str) -> str:
         try:
             img = Image.open(path)
             try:
-                return pytesseract.image_to_string(img, lang="por+eng")
-            except Exception:
-                return pytesseract.image_to_string(img)
+                try:
+                    return pytesseract.image_to_string(img, lang="por+eng")
+                except Exception:
+                    return pytesseract.image_to_string(img)
+            except Exception as ocr_err:
+                err_msg = str(ocr_err)
+                if "tesseract is not installed" in err_msg.lower() or "not found" in err_msg.lower() or "no such file" in err_msg.lower():
+                    raise HTTPException(400, "O Tesseract OCR não está instalado no servidor de produção (online). Para corrigir, execute no terminal do servidor: 'sudo apt-get update && sudo apt-get install -y tesseract-ocr' (Linux/Ubuntu) ou instale o Tesseract OCR e configure o PATH (Windows).")
+                raise HTTPException(400, f"Erro no processamento OCR da imagem: {ocr_err}")
         except HTTPException:
             raise
         except Exception as e:

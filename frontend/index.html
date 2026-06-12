@@ -192,7 +192,7 @@
             </select>
           </div>
         </div>
-        <button class="btn btn-primary" onclick="openModalProducao()">+ Registrar Produção</button>
+        <button class="btn btn-primary" onclick="openModalProducao()" data-perm-criar="producao">+ Registrar Produção</button>
       </div>
       <div class="table-wrap">
         <div class="table-head">
@@ -221,7 +221,7 @@
           <div id="prem-operadores"></div>
         </div>
         <div>
-          <div class="section-title">Auxiliares <button class="btn btn-sm btn-secondary" onclick="openModalAuxiliar()" style="font-size:11px;margin-left:8px">+ Adicionar</button></div>
+          <div class="section-title">Auxiliares <button class="btn btn-sm btn-secondary" onclick="openModalAuxiliar()" style="font-size:11px;margin-left:8px" data-perm-criar="premiacao">+ Adicionar</button></div>
           <div id="prem-auxiliares"></div>
         </div>
       </div>
@@ -232,8 +232,8 @@
       <div class="flex items-center justify-between mb-4">
         <div></div>
         <div class="flex gap-2">
-          <button type="button" class="btn btn-secondary" onclick="openModalTipoColaborador()">+ Cadastrar Tipo</button>
-          <button type="button" class="btn btn-primary" onclick="openModalColaborador()">+ Novo Colaborador</button>
+          <button type="button" class="btn btn-secondary" onclick="openModalTipoColaborador()" data-perm-criar="colaboradores">+ Cadastrar Tipo</button>
+          <button type="button" class="btn btn-primary" onclick="openModalColaborador()" data-perm-criar="colaboradores">+ Novo Colaborador</button>
         </div>
       </div>
       <div class="table-wrap">
@@ -249,7 +249,7 @@
     <div class="page" id="page-maquinas">
       <div class="flex items-center justify-between mb-4">
         <div></div>
-        <button class="btn btn-primary" onclick="openModalMaquina()">+ Nova Máquina</button>
+        <button class="btn btn-primary" onclick="openModalMaquina()" data-perm-criar="maquinas">+ Nova Máquina</button>
       </div>
       <div class="table-wrap">
         <div class="table-head"><span class="table-head-title">Máquinas</span></div>
@@ -298,8 +298,8 @@
             </select>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button class="btn btn-secondary" onclick="openModalImportarPedido()">📎 Importar Pedido</button>
-            <button class="btn btn-primary" onclick="openModalPedido()">+ Novo Pedido</button>
+            <button class="btn btn-secondary" onclick="openModalImportarPedido()" data-perm-importar="pedidos">📎 Importar Pedido</button>
+            <button class="btn btn-primary" onclick="openModalPedido()" data-perm-criar="pedidos">+ Novo Pedido</button>
           </div>
         </div>
         <div class="table-wrap">
@@ -315,7 +315,7 @@
       <div id="ped-tab-clientes" style="display:none">
         <div class="flex items-center justify-between mb-4">
           <input type="text" id="ped-busca-cliente" placeholder="Buscar por nome ou CNPJ..." onkeyup="loadClientes()" style="max-width:300px">
-          <button class="btn btn-primary" onclick="openModalCliente()">+ Novo Cliente</button>
+          <button class="btn btn-primary" onclick="openModalCliente()" data-perm-criar="pedidos">+ Novo Cliente</button>
         </div>
         <div class="table-wrap">
           <div class="table-head"><span class="table-head-title">Clientes</span></div>
@@ -356,8 +356,8 @@
             <button class="btn btn-secondary" onclick="limparFiltrosProdutos()">Limpar filtros</button>
           </div>
           <div class="flex gap-2">
-            <button class="btn btn-secondary" onclick="openModalImportCSV()">📥 Importar CSV</button>
-            <button class="btn btn-primary" onclick="openModalProduto()">+ Novo Produto</button>
+            <button class="btn btn-secondary" onclick="openModalImportCSV()" data-perm-movimentar="estoque">📥 Importar CSV</button>
+            <button class="btn btn-primary" onclick="openModalProduto()" data-perm-criar="estoque">+ Novo Produto</button>
           </div>
         </div>
         <div id="est-produtos-resumo" style="color:var(--muted);font-size:13px;margin:-8px 0 12px 2px"></div>
@@ -383,7 +383,7 @@
               <option value="ajuste">Ajustes</option>
             </select>
           </div>
-          <button class="btn btn-primary" onclick="openModalMovimentacao()">+ Nova Movimentação</button>
+          <button class="btn btn-primary" onclick="openModalMovimentacao()" data-perm-movimentar="estoque">+ Nova Movimentação</button>
         </div>
         <div class="table-wrap">
           <div class="table-head"><span class="table-head-title">Histórico de Movimentações</span></div>
@@ -401,7 +401,7 @@
             <label>Mês:</label>
             <input type="month" id="est-perdas-mes" onchange="loadPerdas()">
           </div>
-          <button class="btn btn-primary" onclick="openModalPerda()">+ Registrar Perda</button>
+          <button class="btn btn-primary" onclick="openModalPerda()" data-perm-movimentar="estoque">+ Registrar Perda</button>
         </div>
         <div class="table-wrap">
           <div class="table-head"><span class="table-head-title">Registro de Perdas</span></div>
@@ -416,7 +416,7 @@
       <div id="est-tab-categorias" style="display:none">
         <div class="flex items-center justify-between mb-4">
           <div></div>
-          <button class="btn btn-primary" onclick="openModalCategoria()">+ Nova Categoria</button>
+          <button class="btn btn-primary" onclick="openModalCategoria()" data-perm-criar="estoque">+ Nova Categoria</button>
         </div>
         <div class="table-wrap">
           <div class="table-head"><span class="table-head-title">Categorias</span></div>
@@ -529,7 +529,7 @@
           </div>
           <div class="flex gap-2">
             <button class="btn btn-secondary" onclick="gerarComprovante()">🖨️ Comprovante</button>
-            <button class="btn btn-primary" onclick="openModalEntrega()">+ Registrar Entrega</button>
+            <button class="btn btn-primary" onclick="openModalEntrega()" data-perm-criar="epi">+ Registrar Entrega</button>
           </div>
         </div>
         <div class="table-wrap">
@@ -545,7 +545,7 @@
       <div id="epi-content-cadastro" style="display:none">
         <div class="flex items-center justify-between mb-4">
           <div></div>
-          <button class="btn btn-primary" onclick="openModalEPI()">+ Novo EPI</button>
+          <button class="btn btn-primary" onclick="openModalEPI()" data-perm-criar="epi">+ Novo EPI</button>
         </div>
         <div class="table-wrap">
           <div class="table-head"><span class="table-head-title">EPIs Cadastrados</span></div>

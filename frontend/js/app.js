@@ -194,6 +194,10 @@ async function carregarAcessoPrincipal() {
       window.location.href = '/login?change_password=1';
       return;
     }
+    // Carregar permissões por usuário logado
+    await carregarMinhasPermissoes();
+    aplicarPermissoesUI();
+
     const elNomeTxt = document.getElementById('topbar-user-name-txt');
     if (elNomeTxt) elNomeTxt.textContent = me.nome;
     
@@ -733,8 +737,8 @@ async function loadProducao() {
         <td>${fmtNum(r.producao)}</td>
         <td class="${cls}">${signal}${fmtNum(exc)}</td>
         <td class="flex gap-2">
-          <button class="btn btn-sm btn-secondary" onclick="editarProducao(${r.id}, ${r.colaborador_id}, ${r.maquina_id}, '${r.data}', ${r.meta}, ${r.producao}, ${r.produto_estoque_id || 'null'}, ${r.perda_quantidade || 0}, ${r.sobra_quantidade || 0}, '${r.pedido_numero || ''}')">✏️</button>
-          <button class="btn btn-sm btn-danger" onclick="deletarProducao(${r.id})">✕</button>
+          ${temPermissao('producao', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="editarProducao(${r.id}, ${r.colaborador_id}, ${r.maquina_id}, '${r.data}', ${r.meta}, ${r.producao}, ${r.produto_estoque_id || 'null'}, ${r.perda_quantidade || 0}, ${r.sobra_quantidade || 0}, '${r.pedido_numero || ''}')">✏️</button>` : ''}
+          ${temPermissao('producao', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="deletarProducao(${r.id})">✕</button>` : ''}
         </td>
       </tr>`;
     }).join('');
@@ -1308,7 +1312,7 @@ async function loadPremiacao() {
           </div>
           <div class="rank-premio">
             <div class="rank-valor">${fmtBRL(a.valor_bonus)}</div>
-            <button class="btn btn-sm btn-danger" onclick="removerAuxiliar(${a.id})" style="margin-top:4px">✕</button>
+            ${temPermissao('premiacao', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="removerAuxiliar(${a.id})" style="margin-top:4px">✕</button>` : ''}
           </div>
         </div>`).join('')
       : '<p class="text-muted">Nenhum auxiliar premiado.</p>';
@@ -1428,7 +1432,7 @@ async function renderTiposColaborador() {
         <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer">
           <input type="checkbox" ${t.concorre_premio ? 'checked' : ''} onchange="toggleFlagTipo(${t.id},'concorre_premio',this.checked)"> Concorre ao prêmio
         </label>
-        ${['operador','auxiliar'].includes(t.nome) ? '' : `<button class="btn btn-sm btn-danger" style="padding:2px 8px" onclick="deletarTipoColaborador(${t.id})">×</button>`}
+        ${['operador','auxiliar'].includes(t.nome) ? '' : (temPermissao('colaboradores', 'deletar') ? `<button class="btn btn-sm btn-danger" style="padding:2px 8px" onclick="deletarTipoColaborador(${t.id})">×</button>` : '')}
       </div>
     </div>
   `).join('') : '<span style="color:var(--muted)">Nenhum tipo cadastrado</span>';
@@ -1486,8 +1490,8 @@ async function loadColaboradores() {
       <td>${c.maquina_nome || '—'}</td>
       <td><span class="pill pill-success">Ativo</span></td>
       <td class="flex gap-2">
-        <button class="btn btn-sm btn-secondary" onclick="editColaborador(${c.id})">Editar</button>
-        <button class="btn btn-sm btn-danger" onclick="deletarColaborador(${c.id})">Remover</button>
+        ${temPermissao('colaboradores', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="editColaborador(${c.id})">Editar</button>` : ''}
+        ${temPermissao('colaboradores', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="deletarColaborador(${c.id})">Remover</button>` : ''}
       </td>
     </tr>
   `).join('');
@@ -1573,8 +1577,8 @@ async function loadMaquinas() {
       <td>${fmtNum(m.meta_padrao)} pçs/dia</td>
       <td><span class="pill ${m.ativa ? 'pill-success' : 'pill-danger'}">${m.ativa ? 'Ativa' : 'Inativa'}</span></td>
       <td class="flex gap-2">
-        <button class="btn btn-sm btn-secondary" onclick="editMaquina(${m.id})">Editar</button>
-        <button class="btn btn-sm btn-danger" onclick="deletarMaquina(${m.id})">Desativar</button>
+        ${temPermissao('maquinas', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="editMaquina(${m.id})">Editar</button>` : ''}
+        ${temPermissao('maquinas', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="deletarMaquina(${m.id})">Desativar</button>` : ''}
       </td>
     </tr>
   `).join('');
@@ -2508,8 +2512,8 @@ async function loadEntregas() {
       <td><span class="pill ${st.pill}">${st.label}</span></td>
       <td class="flex gap-2">
         <button class="btn btn-sm btn-secondary" title="Gerar comprovante deste funcionário" onclick="gerarComprovante(${r.colaborador_id})">🖨️</button>
-        <button class="btn btn-sm btn-secondary" onclick="renovarEPI(${r.id},${r.colaborador_id},${r.epi_id})">🔄</button>
-        <button class="btn btn-sm btn-danger" onclick="deletarEntrega(${r.id})">✕</button>
+        ${temPermissao('epi', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="renovarEPI(${r.id},${r.colaborador_id},${r.epi_id})">🔄</button>` : ''}
+        ${temPermissao('epi', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="deletarEntrega(${r.id})">✕</button>` : ''}
       </td>
     </tr>`;
   }).join('');
@@ -2525,8 +2529,8 @@ async function loadEPILista() {
     <td style="color:var(--muted)">${r.descricao||'—'}</td>
     <td><span class="pill ${r.ativo?'pill-success':'pill-danger'}">${r.ativo?'Ativo':'Inativo'}</span></td>
     <td class="flex gap-2">
-      <button class="btn btn-sm btn-secondary" onclick="editEPI(${r.id},'${r.nome.replace(/'/g,"\\'")}','${r.categoria||''}','${r.descricao||''}')">✏️</button>
-      <button class="btn btn-sm btn-danger" onclick="deletarEPI(${r.id})">✕</button>
+      ${temPermissao('epi', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="editEPI(${r.id},'${r.nome.replace(/'/g,"\\'")}','${r.categoria||''}','${r.descricao||''}')">✏️</button>` : ''}
+      ${temPermissao('epi', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="deletarEPI(${r.id})">✕</button>` : ''}
     </td>
   </tr>`).join('');
 }
@@ -2909,8 +2913,8 @@ async function loadFila() {
               <span class="pill ${STATUS_PILL_PED[i.status]}" style="margin-left:8px;font-size:10px">${STATUS_LABEL_PED[i.status]}</span>
             </div>
             <div class="flex gap-2" style="flex-shrink:0;margin-left:8px">
-              ${prox?`<button class="btn btn-sm btn-secondary" onclick="avancarItemStatus(${i.id},'${prox}',${i.quantidade})">${STATUS_NEXT_LABEL_PED[i.status]}</button>`:''}
-              <button class="btn btn-sm btn-danger" onclick="removerItemFila(${i.id})">✕</button>
+              ${prox && temPermissao('producao', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="avancarItemStatus(${i.id},'${prox}',${i.quantidade})">${STATUS_NEXT_LABEL_PED[i.status]}</button>` : ''}
+              ${temPermissao('producao', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="removerItemFila(${i.id})">✕</button>` : ''}
             </div>
           </div>
           <div style="font-size:12px;color:var(--muted);margin-bottom:5px">
@@ -3010,8 +3014,8 @@ async function loadPedidos() {
       <td><span class="pill ${STATUS_PILL_PED[p.status]}">${STATUS_LABEL_PED[p.status]}</span></td>
       <td class="flex gap-2">
         <button class="btn btn-sm btn-secondary" onclick="verDetalhesPedido(${p.id})">Ver</button>
-        <button class="btn btn-sm btn-secondary" onclick="editPedido(${p.id})">✏️</button>
-        <button class="btn btn-sm btn-danger" onclick="deletarPedido(${p.id})">✕</button>
+        ${temPermissao('pedidos', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="editPedido(${p.id})">✏️</button>` : ''}
+        ${temPermissao('pedidos', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="deletarPedido(${p.id})">✕</button>` : ''}
       </td>
     </tr>`;
   }).join('');
@@ -3258,8 +3262,8 @@ async function loadClientes() {
     <td>${c.cidade?c.cidade+'/'+c.uf:'—'}</td>
     <td>${c.total_pedidos||0}</td>
     <td class="flex gap-2">
-      <button class="btn btn-sm btn-secondary" onclick="editCliente(${c.id})">Editar</button>
-      <button class="btn btn-sm btn-danger" onclick="deletarCliente(${c.id})">✕</button>
+      ${temPermissao('pedidos', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="editCliente(${c.id})">Editar</button>` : ''}
+      ${temPermissao('pedidos', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="deletarCliente(${c.id})">✕</button>` : ''}
     </td>
   </tr>`).join('');
 }
@@ -4261,9 +4265,9 @@ async function loadProdutos() {
       <td>${fmtNum(p.estoque_minimo || 0)}</td>
       <td><span class="pill ${st.classe}">${st.texto}</span></td>
       <td class="flex gap-2">
-        <button class="btn btn-sm btn-secondary" onclick="openModalMovimentacao(${p.id})">📦 Mov.</button>
-        <button class="btn btn-sm btn-secondary" onclick="editProduto(${p.id})">✏️</button>
-        <button class="btn btn-sm btn-danger" onclick="deletarProduto(${p.id})">✕</button>
+        ${temPermissao('estoque', 'movimentar') ? `<button class="btn btn-sm btn-secondary" onclick="openModalMovimentacao(${p.id})">📦 Mov.</button>` : ''}
+        ${temPermissao('estoque', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="editProduto(${p.id})">✏️</button>` : ''}
+        ${temPermissao('estoque', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="deletarProduto(${p.id})">✕</button>` : ''}
       </td>
     </tr>`;
   }).join('');
@@ -4411,7 +4415,7 @@ async function loadMovimentacoes() {
       <td>${fmtNum(m.saldo_anterior || 0)}</td>
       <td>${fmtNum(m.saldo_posterior || 0)}</td>
       <td>${m.responsavel || '—'}</td>
-      <td><button class="btn btn-sm btn-danger" onclick="deletarMovimentacao(${m.id})">✕</button></td>
+      <td>${temPermissao('estoque', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="deletarMovimentacao(${m.id})">✕</button>` : ''}</td>
     </tr>`).join('');
 }
 
@@ -4493,8 +4497,8 @@ async function loadCategoriasEstoque() {
       <td><strong>${c.nome || ''}</strong></td>
       <td>${c.descricao || '—'}</td>
       <td class="flex gap-2">
-        <button class="btn btn-sm btn-secondary" onclick="editCategoria(${c.id})">✏️</button>
-        <button class="btn btn-sm btn-danger" onclick="deletarCategoria(${c.id})">✕</button>
+        ${temPermissao('estoque', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="editCategoria(${c.id})">✏️</button>` : ''}
+        ${temPermissao('estoque', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="deletarCategoria(${c.id})">✕</button>` : ''}
       </td>
     </tr>`).join('');
 }
@@ -5619,5 +5623,15 @@ function aplicarPermissoesUI() {
   document.querySelectorAll('[data-perm-deletar]').forEach(el => {
     const modulo = el.getAttribute('data-perm-deletar');
     if (!temPermissao(modulo, 'deletar')) el.style.display = 'none';
+  });
+  // Ocultar botões de importar
+  document.querySelectorAll('[data-perm-importar]').forEach(el => {
+    const modulo = el.getAttribute('data-perm-importar');
+    if (!temPermissao(modulo, 'importar')) el.style.display = 'none';
+  });
+  // Ocultar botões de movimentar
+  document.querySelectorAll('[data-perm-movimentar]').forEach(el => {
+    const modulo = el.getAttribute('data-perm-movimentar');
+    if (!temPermissao(modulo, 'movimentar')) el.style.display = 'none';
   });
 }
