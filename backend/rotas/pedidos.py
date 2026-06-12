@@ -228,6 +228,177 @@ def _parse_pedido_text(texto: str) -> dict:
     }
 
 
+# ─── IMPORTAÇÃO ESPECÍFICA: PEDIDO DO SAC COMMERCE / SOFTLINE ─────────────────
+# Esse PDF coloca cada rótulo e cada valor em linhas separadas; por isso usa um
+# leitor próprio. A detecção é automática (mesmo botão de importar do sistema).
+
+_UNIDADES_SAC = {"und", "unid", "un", "kg", "g", "litro", "lt", "l", "metro", "mt",
+                 "m", "caixa", "cx", "pacote", "pct", "pc", "pç", "pçs", "milheiro",
+                 "mil", "cento", "ct", "rolo", "fardo", "fd"}
+
+def _is_pedido_sac(texto: str) -> bool:
+    t = (texto or "")
+    if "softlinesistemas" in t.lower():
+        return True
+    tem_cod = bool(re.search(r"C[oó]digo do\s*\n?\s*Pedido", t, re.I))
+    tem_lanc = bool(re.search(r"Data de Lan[çc]amento", t, re.I))
+    return tem_cod and tem_lanc
+
+def _sac_is_int(s): return bool(re.fullmatch(r"\d+", s.strip()))
+def _sac_is_unidade(s): return s.strip().lower() in _UNIDADES_SAC
+def _sac_is_numero(s): return bool(re.fullmatch(r"[\d.]*\d+(?:,\d+)?", s.strip()))
+def _sac_is_money(s):
+    s = s.strip()
+    return s.startswith("R$") or bool(re.fullmatch(r"R?\$?\s*[\d.]*\d+,\d{2}", s))
+
+def _sac_valor_apos(linhas, label, ate=None):
+    """Retorna o primeiro valor não vazio APÓS uma linha-rótulo (rótulo e valor em linhas separadas)."""
+    pat = re.compile(label, re.I)
+    limite = len(linhas) if ate is None else ate
+    for i in range(limite):
+        if pat.search(linhas[i]):
+            resto = re.sub(rf".*?{label}\s*:?\s*", "", linhas[i], flags=re.I).strip()
+            if resto and not resto.endswith(":"):
+                return resto
+            for j in range(i + 1, min(i + 4, limite)):
+                cand = linhas[j].strip()
+                if cand and not cand.endswith(":") and not re.fullmatch(r"[A-Za-zÀ-ÿ ]+:", cand):
+                    return cand
+    return None
+
+def _parse_pedido_sac(texto: str) -> dict:
+    linhas = [l.strip() for l in (texto or "").splitlines()]
+    linhas = [l for l in linhas if l != ""]
+    full = "\n".join(linhas)
+
+    idx_obs = next((i for i, l in enumerate(linhas) if re.match(r"Observa[çc][ãa]o\s*:", l, re.I)), len(linhas))
+
+    numero = None
+    m = re.search(r"C[oó]digo do\s+Pedido\s*:?\s*(\d+)", full, re.I)
+    if not m:
+        m = re.search(r"Pedido\s*\n?\s*:?\s*\n?\s*(\d{3,})", full, re.I)
+    if m:
+        numero = m.group(1)
+
+    data_iso = _date_br_to_iso(_sac_valor_apos(linhas, r"Data de Lan[çc]amento") or "") or datetime.date.today().isoformat()
+
+    cliente = _sac_valor_apos(linhas, r"Cliente", ate=idx_obs)
+
+    documento = None
+    d = _sac_valor_apos(linhas, r"Documento", ate=idx_obs)
+    if d:
+        md = re.search(r"[\d.\-/]{11,}", d)
+        if md:
+            documento = md.group(0)
+
+    telefone = _sac_valor_apos(linhas, r"Celular", ate=idx_obs) or _sac_valor_apos(linhas, r"Telefone", ate=idx_obs)
+    if telefone and telefone.lower().startswith("celular"):
+        telefone = None
+
+    endereco = _sac_valor_apos(linhas, r"Endere[çc]o", ate=idx_obs)
+    bairro = _sac_valor_apos(linhas, r"Bairro", ate=idx_obs)
+    cidade = _sac_valor_apos(linhas, r"Cidade", ate=idx_obs)
+    uf = _sac_valor_apos(linhas, r"Estado", ate=idx_obs)
+    if uf:
+        mu = re.search(r"\b([A-Z]{2})\b", uf)
+        uf = mu.group(1) if mu else uf
+
+    email = None
+    me = re.search(r"[\w.+-]+@[\w-]+\.[\w.-]+", full)
+    if me:
+        email = me.group(0)
+    cep = None
+    mc = re.search(r"\b(\d{5})-?(\d{3})\b", full)
+    if mc:
+        cep = mc.group(1) + mc.group(2)
+
+    vendedor = _sac_valor_apos(linhas, r"Vendedor")
+    if vendedor and vendedor.lower().startswith("pessoa"):
+        vendedor = None
+
+    obs = None
+    if idx_obs < len(linhas):
+        partes = []
+        primeira = re.sub(r".*?Observa[çc][ãa]o\s*:?\s*", "", linhas[idx_obs], flags=re.I).strip()
+        if primeira:
+            partes.append(primeira)
+        for j in range(idx_obs + 1, min(idx_obs + 4, len(linhas))):
+            if re.match(r"(Pessoa para Contato|Vendedor|SubTotal|Produto|Quantidade Itens)", linhas[j], re.I):
+                break
+            partes.append(linhas[j])
+        obs = " ".join(partes).strip()[:1000] or None
+
+    # ── ITENS (tabela com cada célula em uma linha) ──
+    itens = []
+    inicio = None
+    for i, l in enumerate(linhas):
+        if l.strip().lower() == "produto":
+            janela = " ".join(linhas[i:i + 8]).lower()
+            if "descri" in janela and "quantidade" in janela:
+                for k in range(i + 1, min(i + 9, len(linhas))):
+                    if linhas[k].strip().lower() == "valor total":
+                        inicio = k + 1
+                        break
+                if inicio is None:
+                    inicio = i + 7
+                break
+    fim = next((i for i, l in enumerate(linhas) if l.strip().lower() == "parcelas"), len(linhas))
+    if inicio is not None:
+        regiao = linhas[inicio:fim]
+        i = 0
+        while i < len(regiao):
+            if _sac_is_int(regiao[i]):
+                desc_parts = []
+                j = i + 1
+                while j < len(regiao) and not _sac_is_unidade(regiao[j]):
+                    if _sac_is_int(regiao[j]) or _sac_is_money(regiao[j]):
+                        break
+                    desc_parts.append(regiao[j])
+                    j += 1
+                if j < len(regiao) and _sac_is_unidade(regiao[j]):
+                    unidade = regiao[j].lower()
+                    qtd_raw = regiao[j + 1] if j + 1 < len(regiao) else ""
+                    if _sac_is_numero(qtd_raw):
+                        desc = " ".join(desc_parts).strip()
+                        if desc:
+                            itens.append({"descricao": desc[:250], "quantidade": _br_to_float(qtd_raw), "unidade": unidade})
+                        i = j + 2
+                        while i < len(regiao) and _sac_is_money(regiao[i]):
+                            i += 1
+                        continue
+            i += 1
+
+    faltando = []
+    if not numero:
+        faltando.append("código do pedido")
+    if not cliente:
+        faltando.append("cliente")
+    if not itens:
+        faltando.append("itens/quantidades")
+    return {
+        "numero_pedido": numero,
+        "prazo_entrega": data_iso,
+        "cliente": {
+            "razao_social": cliente or "Cliente importado sem nome",
+            "nome_fantasia": None,
+            "cnpj": documento,
+            "email": email,
+            "telefone": telefone,
+            "cep": cep,
+            "logradouro": endereco,
+            "numero": None,
+            "complemento": None,
+            "bairro": bairro,
+            "cidade": cidade,
+            "uf": uf,
+        },
+        "vendedor": vendedor,
+        "observacoes": obs,
+        "itens": itens,
+        "faltando": faltando,
+    }
+
+
 import re as _re
 
 def _auto_vincular_itens(conn):
@@ -275,6 +446,111 @@ def _auto_vincular_itens(conn):
         if melhor_id:
             conn.execute("UPDATE pedidos_itens SET produto_id = ? WHERE id = ?", (melhor_id, item['id']))
 
+async def _resolver_cliente_id(parsed: dict, cur) -> int:
+    """Encontra (por CNPJ/razão social) ou cria o cliente do pedido. Reutilizado na importação em lote."""
+    doc = parsed["cliente"].get("cnpj")
+    doc_limpo = ''.join(filter(str.isdigit, doc)) if doc else ''
+    cliente = None
+    if doc_limpo:
+        cliente = cur.execute("SELECT id FROM pedidos_clientes WHERE cnpj=? AND ativo=1", (doc_limpo,)).fetchone()
+    if not cliente and parsed["cliente"].get("razao_social"):
+        cliente = cur.execute(
+            "SELECT id FROM pedidos_clientes WHERE UPPER(razao_social)=UPPER(?) AND ativo=1",
+            (parsed["cliente"]["razao_social"],)).fetchone()
+    if cliente:
+        return cliente["id"]
+    c = parsed["cliente"]
+    nome_ok = bool((c.get("razao_social") or "").strip()) and c.get("razao_social") != "Cliente importado sem nome"
+    if doc_limpo and len(doc_limpo) == 14 and not nome_ok:
+        cnpj_dados = await _buscar_cnpj_dados(doc_limpo)
+        if cnpj_dados:
+            c = cnpj_dados
+    cur.execute("""INSERT INTO pedidos_clientes
+        (cnpj, razao_social, nome_fantasia, email, telefone, cep, logradouro, numero, complemento, bairro, cidade, uf, observacoes)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (doc_limpo or c.get("cnpj"), c.get("razao_social") or "Cliente importado sem nome", c.get("nome_fantasia"),
+         c.get("email"), c.get("telefone"), c.get("cep"), c.get("logradouro"), c.get("numero"), c.get("complemento"),
+         c.get("bairro"), c.get("cidade"), c.get("uf"), "Cadastrado automaticamente pela importação de pedido"))
+    return cur.lastrowid
+
+
+@router.post("/importar-arquivos-lote")
+async def importar_pedidos_lote(files: List[UploadFile] = File(...)):
+    """Importa vários PDFs de pedido de uma vez: cria cliente+pedido+itens, pula duplicados (por número) e devolve um resumo."""
+    if not files:
+        raise HTTPException(400, "Selecione ao menos um arquivo")
+    resultados = []
+    criados = duplicados = erros = 0
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        for file in files:
+            nome = file.filename or "arquivo"
+            tmp_path = None
+            try:
+                suffix = os.path.splitext(nome)[1].lower()
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                    tmp.write(await file.read())
+                    tmp_path = tmp.name
+                texto = _extract_text_from_file(tmp_path, nome)
+                parsed = _parse_pedido_sac(texto) if _is_pedido_sac(texto) else _parse_pedido_text(texto)
+
+                numero = parsed.get("numero_pedido")
+                if not numero:
+                    erros += 1
+                    resultados.append({"arquivo": nome, "status": "erro",
+                                       "motivo": "Número do pedido não encontrado",
+                                       "faltando": parsed.get("faltando", [])})
+                    continue
+
+                existe = cur.execute("SELECT id FROM pedidos WHERE numero_pedido=?", (str(numero),)).fetchone()
+                if existe:
+                    duplicados += 1
+                    resultados.append({"arquivo": nome, "numero_pedido": numero,
+                                       "status": "duplicado", "pedido_id": existe["id"]})
+                    continue
+
+                cliente_id = await _resolver_cliente_id(parsed, cur)
+                cur.execute("""INSERT INTO pedidos
+                    (numero_pedido, cliente_id, prazo_entrega, vendedor, observacoes, status)
+                    VALUES (?,?,?,?,?,'aberto')""",
+                    (str(numero), cliente_id, parsed.get("prazo_entrega") or datetime.date.today().isoformat(),
+                     parsed.get("vendedor"), parsed.get("observacoes")))
+                pedido_id = cur.lastrowid
+                for it in parsed.get("itens", []):
+                    cur.execute("""INSERT INTO pedidos_itens
+                        (pedido_id, produto_id, descricao, quantidade, unidade, qtd_produzida, status)
+                        VALUES (?,?,?,?,?,0,'aberto')""",
+                        (pedido_id, None, it["descricao"], it["quantidade"], it.get("unidade") or "unidade"))
+                conn.commit()
+                criados += 1
+                resultados.append({"arquivo": nome, "numero_pedido": numero, "status": "criado",
+                                   "pedido_id": pedido_id, "cliente": parsed["cliente"].get("razao_social"),
+                                   "qtd_itens": len(parsed.get("itens", [])),
+                                   "faltando": parsed.get("faltando", [])})
+            except Exception as e:
+                conn.rollback()
+                erros += 1
+                resultados.append({"arquivo": nome, "status": "erro", "motivo": str(e)})
+            finally:
+                if tmp_path:
+                    try:
+                        os.remove(tmp_path)
+                    except Exception:
+                        pass
+        try:
+            _auto_vincular_itens(conn)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+    finally:
+        conn.close()
+    return {
+        "resumo": {"total": len(files), "criados": criados, "duplicados": duplicados, "erros": erros},
+        "resultados": resultados,
+    }
+
+
 @router.post("/importar-arquivo")
 async def importar_pedido_arquivo(file: UploadFile = File(...)):
     return await _processar_arquivo_pedido(file)
@@ -290,7 +566,10 @@ async def _processar_arquivo_pedido(file: UploadFile):
     try:
         try:
             texto = _extract_text_from_file(tmp_path, file.filename)
-            parsed = _parse_pedido_text(texto)
+            if _is_pedido_sac(texto):
+                parsed = _parse_pedido_sac(texto)
+            else:
+                parsed = _parse_pedido_text(texto)
         except Exception as e:
             print(f"[IMPORT_ERROR] Ocorreu um erro no processamento do arquivo: {e}")
             import traceback
@@ -315,7 +594,9 @@ async def _processar_arquivo_pedido(file: UploadFile):
             else:
                 c = parsed["cliente"]
                 # Se for CNPJ (14 dígitos), busca automaticamente via ReceitaWS
-                if doc_limpo and len(doc_limpo) == 14:
+                # Só consulta a ReceitaWS quando o próprio arquivo não trouxe a razão social
+                nome_ok = bool((c.get("razao_social") or "").strip()) and c.get("razao_social") != "Cliente importado sem nome"
+                if doc_limpo and len(doc_limpo) == 14 and not nome_ok:
                     cnpj_dados = await _buscar_cnpj_dados(doc_limpo)
                     if cnpj_dados:
                         c = cnpj_dados

@@ -3075,9 +3075,98 @@ async function deletarPedido(id) {
 
 
 let pedidoArquivoSelecionado = null;
+let pedidosArquivosSelecionados = [];
+
+function selecionarPedidosArquivos(fileList, append = true) {
+  const novos = Array.from(fileList || []);
+  if (!novos.length) return;
+  if (!append) pedidosArquivosSelecionados = [];
+  const chave = f => f.name + '|' + f.size;
+  const existentes = new Set(pedidosArquivosSelecionados.map(chave));
+  novos.forEach(f => { if (!existentes.has(chave(f))) { pedidosArquivosSelecionados.push(f); existentes.add(chave(f)); } });
+  pedidoArquivoSelecionado = pedidosArquivosSelecionados[0] || null;
+  renderPedidosArquivosSelecionados();
+}
+
+function limparPedidosArquivos() {
+  pedidosArquivosSelecionados = [];
+  pedidoArquivoSelecionado = null;
+  const input = document.getElementById('pedido-arquivo');
+  if (input) input.value = '';
+  renderPedidosArquivosSelecionados();
+}
+
+function renderPedidosArquivosSelecionados() {
+  const files = pedidosArquivosSelecionados;
+  const nome = document.getElementById('pedido-arquivo-nome');
+  if (nome) {
+    nome.textContent = !files.length ? 'Nenhum arquivo selecionado'
+      : files.length === 1 ? `${files[0].name} — ${(files[0].size/1024/1024).toFixed(2)} MB`
+      : `${files.length} arquivos selecionados`;
+  }
+  const preview = document.getElementById('pedido-import-preview');
+  if (!preview) return;
+  if (!files.length) { preview.style.display = 'none'; preview.innerHTML = ''; return; }
+  preview.style.display = 'block';
+  const lista = files.map(f => `• ${f.name}`).join('<br>');
+  const dica = files.length === 1
+    ? `Arraste mais arquivos para somar ao lote, ou use "Importar em lote" para criar direto.`
+    : `Arraste mais arquivos para somar ao lote.`;
+  preview.innerHTML = `<strong>${files.length} arquivo(s) prontos:</strong><br>${lista}`
+    + `<br><span style="color:var(--muted)">${dica}</span>`
+    + `<br><a href="#" onclick="limparPedidosArquivos();return false;" style="color:var(--accent)">Limpar seleção</a>`;
+}
+
+async function importarPedidosLote() {
+  if (!pedidosArquivosSelecionados.length) { showAlert('Selecione um ou mais arquivos de pedido', 'danger'); return; }
+  const btn = document.getElementById('btn-importar-pedido-lote');
+  const preview = document.getElementById('pedido-import-preview');
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Importando...'; }
+    const fd = new FormData();
+    pedidosArquivosSelecionados.forEach(f => fd.append('files', f));
+    let r = await fetch(API + '/pedidos/importar-arquivos-lote', { method: 'POST', body: fd });
+    if (r.status === 401) {
+      window.location.href = '/login?redirect=' + encodeURIComponent(window.location.pathname + window.location.search);
+      return;
+    }
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Erro ao importar em lote');
+
+    const rs = data.resumo || { criados: 0, duplicados: 0, erros: 0, total: 0 };
+    const linhas = (data.resultados || []).map(it => {
+      if (it.status === 'criado') {
+        const falta = (it.faltando && it.faltando.length) ? ` <span style="color:#f4b400">(revisar: ${it.faltando.join(', ')})</span>` : '';
+        return `<div style="color:#46d369">✅ Pedido ${it.numero_pedido} — ${it.cliente || 'cliente'} (${it.qtd_itens} item(ns))${falta}</div>`;
+      }
+      if (it.status === 'duplicado') {
+        return `<div style="color:var(--muted)">↪️ Pedido ${it.numero_pedido} já existia — ignorado</div>`;
+      }
+      return `<div style="color:#ff6b6b">⚠️ ${it.arquivo}: ${it.motivo || 'não foi possível ler'}</div>`;
+    }).join('');
+
+    if (preview) {
+      preview.style.display = 'block';
+      preview.innerHTML = `<strong>Resumo:</strong> ${rs.criados} criado(s), ${rs.duplicados} duplicado(s), ${rs.erros} com erro — de ${rs.total} arquivo(s).<hr style="border-color:rgba(255,255,255,.1)">${linhas}`;
+    }
+    showAlert(`Importação concluída: ${rs.criados} pedido(s) criado(s).`);
+    if (typeof loadPedidos === 'function') { try { await loadPedidos(); } catch(e){} }
+    pedidosArquivosSelecionados = [];
+    const input = document.getElementById('pedido-arquivo');
+    if (input) input.value = '';
+  } catch (e) {
+    showAlert(e.message || 'Erro ao importar em lote', 'danger');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Importar em lote'; }
+  }
+}
+window.selecionarPedidosArquivos = selecionarPedidosArquivos;
+window.importarPedidosLote = importarPedidosLote;
+window.limparPedidosArquivos = limparPedidosArquivos;
 
 function openModalImportarPedido() {
   pedidoArquivoSelecionado = null;
+  pedidosArquivosSelecionados = [];
   const input = document.getElementById('pedido-arquivo');
   if (input) input.value = '';
   const nome = document.getElementById('pedido-arquivo-nome');
@@ -3105,8 +3194,8 @@ function handleDropPedidoArquivo(ev) {
   ev.preventDefault();
   const area = document.getElementById('pedido-drop-area');
   if (area) area.style.borderColor = 'rgba(255,255,255,.18)';
-  const file = ev.dataTransfer?.files?.[0];
-  selecionarPedidoArquivo(file);
+  const files = ev.dataTransfer?.files;
+  if (files && files.length) selecionarPedidosArquivos(files);
 }
 
 async function importarPedidoArquivo() {
@@ -3152,6 +3241,7 @@ async function importarPedidoArquivo() {
       unidade: i.unidade || 'unidade'
     }));
     
+    await carregarProdutosEstoque();
     renderItensPedido();
     document.getElementById('modal-ped-title').textContent = 'Confirmar Pedido Importado';
     openModal('modal-pedido');
@@ -3171,6 +3261,37 @@ window.importarPedidoArquivo = importarPedidoArquivo;
 
 
 let pedidoItens=[];
+let produtosEstoque=[];
+
+async function carregarProdutosEstoque() {
+  try { produtosEstoque = await api('/estoque/produtos'); }
+  catch(e) { produtosEstoque = []; }
+  let dl = document.getElementById('produtos-datalist');
+  if (!dl) { dl = document.createElement('datalist'); dl.id = 'produtos-datalist'; document.body.appendChild(dl); }
+  const esc = s => String(s||'').replace(/"/g,'&quot;');
+  dl.innerHTML = produtosEstoque.map(p => {
+    const hint = [p.codigo, p.marca, p.categoria_nome].filter(Boolean).join(' · ');
+    return `<option value="${esc(p.nome)}">${esc(hint)}</option>`;
+  }).join('');
+}
+
+function selecionarProdutoPedidoItem(idx, valor) {
+  if (!pedidoItens[idx]) return;
+  pedidoItens[idx].descricao = valor;
+  const alvo = String(valor||'').trim().toLowerCase();
+  const matches = produtosEstoque.filter(p => String(p.nome||'').trim().toLowerCase() === alvo);
+  if (matches.length === 1) {
+    pedidoItens[idx].produto_id = matches[0].id;
+    const u = matches[0].unidade;
+    const opts = ['unidade','und','milheiro','kg','litro','metro','caixa','pacote'];
+    if (u && opts.includes(u)) { pedidoItens[idx].unidade = u; renderItensPedido(); }
+  } else {
+    pedidoItens[idx].produto_id = null;
+  }
+}
+window.selecionarProdutoPedidoItem = selecionarProdutoPedidoItem;
+window.carregarProdutosEstoque = carregarProdutosEstoque;
+
 async function openModalPedido() {
   pedidoItens=[];
   document.getElementById('ped-id').value='';
@@ -3180,6 +3301,7 @@ async function openModalPedido() {
   document.getElementById('ped-obs').value='';
   const clientes=await api('/pedidos/clientes');
   document.getElementById('ped-cliente').innerHTML=clientes.map(c=>`<option value="${c.id}">${c.razao_social}${c.nome_fantasia?' — '+c.nome_fantasia:''}</option>`).join('');
+  await carregarProdutosEstoque();
   renderItensPedido();
   document.getElementById('modal-ped-title').textContent='Novo Pedido';
   openModal('modal-pedido');
@@ -3191,10 +3313,10 @@ function renderItensPedido() {
   if(!pedidoItens.length){el.innerHTML='<p style="color:var(--muted);font-size:13px;padding:8px 0">Nenhum item</p>';return;}
   el.innerHTML=pedidoItens.map((item,idx)=>`
     <div style="display:grid;grid-template-columns:1fr auto auto auto;gap:8px;align-items:center;margin-bottom:8px">
-      <input type="text" value="${item.descricao}" placeholder="Descrição *" oninput="pedidoItens[${idx}].descricao=this.value" style="font-size:13px">
+      <input type="text" value="${item.descricao}" list="produtos-datalist" placeholder="Clique para escolher um produto do estoque ou digite *" oninput="pedidoItens[${idx}].descricao=this.value" onchange="selecionarProdutoPedidoItem(${idx}, this.value)" style="font-size:13px">
       <input type="number" value="${item.quantidade}" min="1" placeholder="Qtd" oninput="pedidoItens[${idx}].quantidade=+this.value" style="width:80px;font-size:13px">
       <select onchange="pedidoItens[${idx}].unidade=this.value" style="font-size:13px">
-        ${['unidade','kg','litro','metro','caixa','pacote'].map(u=>`<option value="${u}" ${item.unidade===u?'selected':''}>${u}</option>`).join('')}
+        ${['unidade','und','milheiro','kg','litro','metro','caixa','pacote'].map(u=>`<option value="${u}" ${item.unidade===u?'selected':''}>${u}</option>`).join('')}
       </select>
       <button class="btn btn-sm btn-danger" onclick="pedidoItens.splice(${idx},1);renderItensPedido()">✕</button>
     </div>`).join('');
@@ -3222,6 +3344,7 @@ async function editPedido(id) {
     produto_id: i.produto_id
   }));
   
+  await carregarProdutosEstoque();
   renderItensPedido();
   document.getElementById('modal-ped-title').textContent = 'Editar Pedido';
   openModal('modal-pedido');
@@ -5125,10 +5248,9 @@ async function loadSaldoDemanda() {
   try {
     svdDados = await api(url);
 
-    // Filtrar pelas categorias configuradas (salvas no localStorage)
-    const savedCatsJson = localStorage.getItem('svd_categorias_visiveis');
-    if (savedCatsJson) {
-      const allowedCatIds = JSON.parse(savedCatsJson);
+    // Filtrar pelas categorias configuradas (persistidas no backend)
+    const allowedCatIds = await _getSvdCategoriasVisiveis();
+    if (allowedCatIds) {
       svdDados = svdDados.filter(r => {
         const catIdStr = r.categoria_id === null || r.categoria_id === undefined ? "null" : String(r.categoria_id);
         return allowedCatIds.includes(catIdStr);
@@ -5412,6 +5534,29 @@ function exportarSVD(formato) {
   }
 }
 
+async function _getSvdCategoriasVisiveis() {
+  // Fonte de verdade: backend (persiste entre cargas de página e dispositivos).
+  // localStorage funciona apenas como cache local rápido.
+  try {
+    const cfg = await api('/configuracoes/svd_categorias_visiveis');
+    if (cfg && cfg.valor) {
+      try {
+        const arr = JSON.parse(cfg.valor);
+        localStorage.setItem('svd_categorias_visiveis', cfg.valor);
+        return arr;
+      } catch (e) {}
+    } else {
+      // backend vazio: usa cache local se existir
+      const local = localStorage.getItem('svd_categorias_visiveis');
+      if (local) { try { return JSON.parse(local); } catch (e) {} }
+    }
+  } catch (e) {
+    const local = localStorage.getItem('svd_categorias_visiveis');
+    if (local) { try { return JSON.parse(local); } catch (e2) {} }
+  }
+  return null; // null = todas as categorias visíveis
+}
+
 async function abrirConfigCategoriasSVD() {
   const container = document.getElementById('modal-svd-categorias-content');
   if (!container) return;
@@ -5420,12 +5565,7 @@ async function abrirConfigCategoriasSVD() {
 
   try {
     const cats = await api('/estoque/categorias');
-    const savedCatsJson = localStorage.getItem('svd_categorias_visiveis');
-    
-    let allowedCatIds = null;
-    if (savedCatsJson) {
-      allowedCatIds = JSON.parse(savedCatsJson);
-    }
+    const allowedCatIds = await _getSvdCategoriasVisiveis();
 
     let html = '';
     
@@ -5460,7 +5600,7 @@ function marcarTodasCategoriasSVD(marcar) {
   checkboxes.forEach(cb => cb.checked = marcar);
 }
 
-function aplicarCategoriasSVD() {
+async function aplicarCategoriasSVD() {
   const checkboxes = document.querySelectorAll('.svd-cat-checkbox');
   const selected = [];
   checkboxes.forEach(cb => {
@@ -5468,7 +5608,13 @@ function aplicarCategoriasSVD() {
       selected.push(cb.value);
     }
   });
-  localStorage.setItem('svd_categorias_visiveis', JSON.stringify(selected));
+  const valor = JSON.stringify(selected);
+  localStorage.setItem('svd_categorias_visiveis', valor);
+  try {
+    await api('/configuracoes/svd_categorias_visiveis', 'PUT', { valor });
+  } catch (e) {
+    showAlert('Salvo localmente, mas não foi possível gravar no servidor: ' + e.message, 'danger');
+  }
   closeModal('modal-svd-categorias');
   loadSaldoDemanda();
 }

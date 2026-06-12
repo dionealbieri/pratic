@@ -1591,18 +1591,19 @@
   <div class="modal" style="max-width:680px;width:95vw">
     <div class="modal-title">Importar Pedido por Arquivo</div>
     <p style="color:var(--muted);font-size:13px;margin-top:-4px;margin-bottom:14px">
-      Envie um PDF, JPG, PNG, WEBP, BMP, TIFF, TXT ou CSV do pedido. O sistema tenta identificar automaticamente código do pedido, cliente, vendedor, observações, descrição dos itens e quantidades.
+      Envie um ou vários PDFs de pedido (também aceita JPG, PNG, TXT, CSV). Em <strong>Importar em lote</strong>, o sistema cria os pedidos automaticamente — identificando código, cliente, vendedor, observações e itens — e pula os já cadastrados. Em <strong>Revisar 1 por 1</strong>, abre a tela de conferência para um único arquivo.
     </p>
     <div id="pedido-drop-area" onclick="document.getElementById('pedido-arquivo').click()" ondragover="event.preventDefault();this.style.borderColor='var(--accent)'" ondragleave="this.style.borderColor='rgba(255,255,255,.18)'" ondrop="handleDropPedidoArquivo(event)" style="border:2px dashed rgba(255,255,255,.18);border-radius:14px;padding:24px;text-align:center;background:rgba(255,255,255,.03);cursor:pointer">
       <div style="font-size:34px;margin-bottom:8px">📄</div>
       <div style="font-family:var(--font-head);font-weight:800;margin-bottom:6px">Solte o arquivo aqui ou clique para buscar</div>
       <div id="pedido-arquivo-nome" style="font-size:13px;color:var(--muted)">Nenhum arquivo selecionado</div>
-      <input type="file" id="pedido-arquivo" accept=".pdf,.jpg,.jpeg,.png,.webp,.bmp,.tif,.tiff,.txt,.csv" onchange="selecionarPedidoArquivo(this.files[0])" style="display:none">
+      <input type="file" id="pedido-arquivo" accept=".pdf,.jpg,.jpeg,.png,.webp,.bmp,.tif,.tiff,.txt,.csv" multiple onchange="selecionarPedidosArquivos(this.files)" style="display:none">
     </div>
     <div id="pedido-import-preview" style="display:none;margin-top:14px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.10);border-radius:12px;padding:12px;font-size:13px;color:var(--muted)"></div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal('modal-importar-pedido')">Cancelar</button>
-      <button class="btn btn-primary" id="btn-importar-pedido" onclick="importarPedidoArquivo()">Importar e Cadastrar</button>
+      <button class="btn btn-secondary" id="btn-importar-pedido" onclick="importarPedidoArquivo()">Revisar 1 por 1</button>
+      <button class="btn btn-primary" id="btn-importar-pedido-lote" onclick="importarPedidosLote()">Importar em lote</button>
     </div>
   </div>
 </div>
