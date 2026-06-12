@@ -214,6 +214,7 @@
         <label>Mês:</label>
         <input type="month" id="prem-mes" onchange="loadPremiacao()">
       </div>
+      <div class="cards-grid" id="prem-insights-cards" style="margin-bottom:24px"></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;">
         <div>
           <div class="section-title">Operadores</div>
@@ -986,6 +987,7 @@
         <button class="btn btn-secondary" id="rtab-estoque" onclick="switchRelTab('estoque')">📦 Estoque</button>
         <button class="btn btn-secondary" id="rtab-pedidos" onclick="switchRelTab('pedidos')">🧾 Pedidos</button>
         <button class="btn btn-secondary" id="rtab-epi" onclick="switchRelTab('epi')">🦺 EPI</button>
+        <button class="btn btn-secondary" id="rtab-analiticos" onclick="switchRelTab('analiticos')">📊 Analíticos</button>
       </div>
 
       <div id="rel-content-producao">
@@ -1102,6 +1104,47 @@
           <div class="table-head"><span class="table-head-title">EPIs por Funcionário</span></div>
           <table><thead><tr><th>Funcionário</th><th>EPI</th><th>Categoria</th><th>Entrega</th><th>Validade</th><th>Dias</th><th>Status</th></tr></thead>
           <tbody id="rel-epi-tbody"></tbody></table>
+        </div>
+      </div>
+
+      <div id="rel-content-analiticos" style="display:none">
+        <div class="flex items-center justify-between mb-4">
+          <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+            <select id="rel-ana-tipo" onchange="onChangeRelAnaTipo()" style="min-width:220px">
+              <option value="rendimento">📊 Rendimento e Perdas de Insumos</option>
+              <option value="evolucao">📈 Evolução Mensal da Produção</option>
+              <option value="ranking">🏆 Ranking Histórico de Operadores</option>
+            </select>
+            <input type="month" id="rel-ana-mes-ini">
+            <span style="color:var(--muted)">até</span>
+            <input type="month" id="rel-ana-mes-fim">
+            <button class="btn btn-secondary" onclick="loadRelAnaliticos()">Filtrar</button>
+          </div>
+          <div class="flex gap-2">
+            <button class="btn btn-secondary" onclick="exportarRelatorio('analiticos','excel')">⬇ Excel</button>
+            <button class="btn btn-secondary" onclick="exportarRelatorio('analiticos','pdf')">⬇ PDF</button>
+          </div>
+        </div>
+        <div class="cards-grid" id="rel-ana-cards" style="margin-bottom:20px"></div>
+        <div class="table-wrap">
+          <div class="table-head"><span class="table-head-title" id="rel-ana-title">Rendimento e Perdas de Insumos</span></div>
+          <table id="rel-ana-table">
+            <thead id="rel-ana-thead">
+              <tr>
+                <th>Código/ID</th>
+                <th>Produto/Insumo</th>
+                <th>Unidade</th>
+                <th>Produção Real</th>
+                <th>Perda Física</th>
+                <th>Sobra</th>
+                <th>Consumo Total</th>
+                <th>Índice de Perda (%)</th>
+                <th>Custo Médio</th>
+                <th>Custo Desperdiçado</th>
+              </tr>
+            </thead>
+            <tbody id="rel-ana-tbody"></tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -1867,7 +1910,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
-<script src="js/app.js?v=20260609-fuzzy-match-fix"></script>
+<script src="js/app.js?v=20260612-analytics-and-header-fix"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');

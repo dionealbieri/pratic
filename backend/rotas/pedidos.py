@@ -296,31 +296,32 @@ async def _processar_arquivo_pedido(file: UploadFile):
         cliente = None
         
         conn = get_conn()
-        cur = conn.cursor()
-        
-        if doc_limpo:
-            cliente = cur.execute("SELECT id FROM pedidos_clientes WHERE cnpj=? AND ativo=1", (doc_limpo,)).fetchone()
-        if not cliente and parsed["cliente"].get("razao_social"):
-            cliente = cur.execute("SELECT id FROM pedidos_clientes WHERE UPPER(razao_social)=UPPER(?) AND ativo=1", (parsed["cliente"]["razao_social"],)).fetchone()
+        try:
+            cur = conn.cursor()
+            
+            if doc_limpo:
+                cliente = cur.execute("SELECT id FROM pedidos_clientes WHERE cnpj=? AND ativo=1", (doc_limpo,)).fetchone()
+            if not cliente and parsed["cliente"].get("razao_social"):
+                cliente = cur.execute("SELECT id FROM pedidos_clientes WHERE UPPER(razao_social)=UPPER(?) AND ativo=1", (parsed["cliente"]["razao_social"],)).fetchone()
 
-        if cliente:
-            cliente_id = cliente["id"]
-        else:
-            c = parsed["cliente"]
-            # Se for CNPJ (14 dígitos), busca automaticamente via ReceitaWS
-            if doc_limpo and len(doc_limpo) == 14:
-                cnpj_dados = await _buscar_cnpj_dados(doc_limpo)
-                if cnpj_dados:
-                    c = cnpj_dados
-            
-            cur.execute("""INSERT INTO pedidos_clientes
-                (cnpj, razao_social, nome_fantasia, email, telefone, cep, logradouro, numero, complemento, bairro, cidade, uf, observacoes)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                (doc_limpo or c.get("cnpj"), c.get("razao_social") or "Cliente importado sem nome", c.get("nome_fantasia"), c.get("email"), c.get("telefone"), c.get("cep"), c.get("logradouro"), c.get("numero"), c.get("complemento"), c.get("bairro"), c.get("cidade"), c.get("uf"), "Cadastrado automaticamente pela importação de pedido"))
-            cliente_id = cur.lastrowid
-            conn.commit()
-            
-        conn.close()
+            if cliente:
+                cliente_id = cliente["id"]
+            else:
+                c = parsed["cliente"]
+                # Se for CNPJ (14 dígitos), busca automaticamente via ReceitaWS
+                if doc_limpo and len(doc_limpo) == 14:
+                    cnpj_dados = await _buscar_cnpj_dados(doc_limpo)
+                    if cnpj_dados:
+                        c = cnpj_dados
+                
+                cur.execute("""INSERT INTO pedidos_clientes
+                    (cnpj, razao_social, nome_fantasia, email, telefone, cep, logradouro, numero, complemento, bairro, cidade, uf, observacoes)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (doc_limpo or c.get("cnpj"), c.get("razao_social") or "Cliente importado sem nome", c.get("nome_fantasia"), c.get("email"), c.get("telefone"), c.get("cep"), c.get("logradouro"), c.get("numero"), c.get("complemento"), c.get("bairro"), c.get("cidade"), c.get("uf"), "Cadastrado automaticamente pela importação de pedido"))
+                cliente_id = cur.lastrowid
+                conn.commit()
+        finally:
+            conn.close()
         
         return {
             "cliente_id": cliente_id,

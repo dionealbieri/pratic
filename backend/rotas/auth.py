@@ -33,7 +33,7 @@ def login(data: LoginIn, response: Response):
     conn = get_conn()
     try:
         user = conn.execute("""
-            SELECT id, username, password_hash, role, nome, ativo 
+            SELECT id, username, password_hash, role, nome, ativo, deve_alterar_senha 
             FROM usuarios 
             WHERE username = ?
         """, (username_clean,)).fetchone()
@@ -73,7 +73,8 @@ def login(data: LoginIn, response: Response):
                 "id": user["id"],
                 "username": user["username"],
                 "role": user["role"],
-                "nome": user["nome"]
+                "nome": user["nome"],
+                "deve_alterar_senha": bool(user["deve_alterar_senha"])
             }
         }
     finally:
@@ -124,6 +125,7 @@ def get_me(current_user = Depends(get_current_user)):
             "username": current_user["username"],
             "role": role,
             "nome": current_user["nome"],
+            "deve_alterar_senha": bool(current_user.get("deve_alterar_senha")),
             "permissions": permissions
         }
     finally:
@@ -198,6 +200,24 @@ def atualizar_usuario(id: int, data: UserUpdateIn, current_user = Depends(verifi
     finally:
         conn.close()
 
+@router.put("/usuarios/self/password")
+def alterar_senha_propria(data: PasswordUpdateIn, current_user = Depends(get_current_user)):
+    if not data.password or len(data.password.strip()) < 3:
+        raise HTTPException(status_code=400, detail="A senha deve conter no mínimo 3 caracteres.")
+        
+    conn = get_conn()
+    try:
+        password_hash = hash_password(data.password)
+        conn.execute("""
+            UPDATE usuarios 
+            SET password_hash = ?, deve_alterar_senha = 0 
+            WHERE id = ?
+        """, (password_hash, current_user["id"]))
+        conn.commit()
+        return {"mensagem": "Senha alterada com sucesso"}
+    finally:
+        conn.close()
+
 @router.put("/usuarios/{id}/password")
 def alterar_senha_usuario(id: int, data: PasswordUpdateIn, current_user = Depends(verificar_gestor)):
     if not data.password or len(data.password.strip()) < 3:
@@ -206,7 +226,7 @@ def alterar_senha_usuario(id: int, data: PasswordUpdateIn, current_user = Depend
     conn = get_conn()
     try:
         password_hash = hash_password(data.password)
-        conn.execute("UPDATE usuarios SET password_hash = ? WHERE id = ?", (password_hash, id))
+        conn.execute("UPDATE usuarios SET password_hash = ?, deve_alterar_senha = 1 WHERE id = ?", (password_hash, id))
         conn.commit()
         return {"mensagem": "Senha alterada com sucesso"}
     finally:

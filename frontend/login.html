@@ -274,6 +274,30 @@
 
       <button type="submit" class="btn-login" id="btnSubmit">Entrar</button>
     </form>
+
+    <form id="changePasswordForm" style="display: none;">
+      <div class="form-group">
+        <label for="newPassword">Nova Senha</label>
+        <div class="input-wrapper">
+          <input type="password" id="newPassword" class="form-control" placeholder="Mínimo 3 caracteres" required autocomplete="new-password">
+          <span class="icon">🔒</span>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label for="confirmPassword">Confirmar Nova Senha</label>
+        <div class="input-wrapper">
+          <input type="password" id="confirmPassword" class="form-control" placeholder="Repita a nova senha" required autocomplete="new-password">
+          <span class="icon">🔒</span>
+        </div>
+      </div>
+
+      <button type="submit" class="btn-login" id="btnChangePassword">Alterar e Entrar</button>
+      
+      <div style="text-align: center; margin-top: 18px;">
+        <a href="#" id="lnkBackToLogin" style="color: var(--accent); font-size: 13px; text-decoration: none; font-weight: 600; transition: opacity 0.2s;">Voltar para o Login</a>
+      </div>
+    </form>
   </div>
 
   <script>
@@ -305,9 +329,26 @@
     const errorBox = document.getElementById('errorBox');
     const btnSubmit = document.getElementById('btnSubmit');
 
+    const changePasswordForm = document.getElementById('changePasswordForm');
+    const newPasswordInput = document.getElementById('newPassword');
+    const confirmPasswordInput = document.getElementById('confirmPassword');
+    const btnChangePassword = document.getElementById('btnChangePassword');
+
     // Extrair redirecionamento se houver
     const urlParams = new URLSearchParams(window.location.search);
     const redirectUrl = urlParams.get('redirect') || '/';
+
+    function showChangePasswordForm(subtitle) {
+      form.style.display = 'none';
+      changePasswordForm.style.display = 'block';
+      document.querySelector('.login-subtitle').textContent = subtitle;
+      errorBox.style.display = 'none';
+    }
+
+    // Se a URL sinalizar que é necessária a troca de senha
+    if (urlParams.get('change_password') === '1' || urlParams.get('force_password_change') === '1') {
+      showChangePasswordForm('Altere sua senha antes de prosseguir');
+    }
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -344,6 +385,11 @@
         localStorage.setItem('user_role', data.usuario.role);
         localStorage.setItem('user_username', data.usuario.username);
 
+        if (data.usuario.deve_alterar_senha) {
+          showChangePasswordForm('Altere sua senha no primeiro acesso');
+          return;
+        }
+
         // Redireciona para o painel apropriado ou destino salvo
         window.location.href = redirectUrl;
         
@@ -358,6 +404,78 @@
         errorBox.offsetHeight; /* trigger reflow */
         errorBox.style.animation = null; 
       }
+    });
+
+    changePasswordForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      errorBox.style.display = 'none';
+      const pass = newPasswordInput.value;
+      const conf = confirmPasswordInput.value;
+      
+      if (pass !== conf) {
+        errorBox.textContent = 'As senhas não coincidem.';
+        errorBox.style.display = 'block';
+        return;
+      }
+      
+      if (pass.length < 3) {
+        errorBox.textContent = 'A senha deve conter no mínimo 3 caracteres.';
+        errorBox.style.display = 'block';
+        return;
+      }
+      
+      btnChangePassword.disabled = true;
+      btnChangePassword.textContent = 'Alterando...';
+      
+      try {
+        const response = await fetch('/api/auth/usuarios/self/password', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ password: pass })
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(data.detail || 'Erro ao alterar a senha.');
+        }
+        
+        // Redireciona para o painel apropriado
+        window.location.href = redirectUrl;
+      } catch (err) {
+        errorBox.textContent = err.message;
+        errorBox.style.display = 'block';
+        btnChangePassword.disabled = false;
+        btnChangePassword.textContent = 'Alterar e Entrar';
+        
+        errorBox.style.animation = 'none';
+        errorBox.offsetHeight;
+        errorBox.style.animation = null;
+      }
+    });
+
+    document.getElementById('lnkBackToLogin').addEventListener('click', async (e) => {
+      e.preventDefault();
+      try {
+        await fetch('/api/auth/logout', { method: 'POST' });
+      } catch (err) {}
+      localStorage.clear();
+      
+      changePasswordForm.style.display = 'none';
+      form.style.display = 'block';
+      document.querySelector('.login-subtitle').textContent = 'Produção & Gestão';
+      errorBox.style.display = 'none';
+      
+      usernameInput.value = '';
+      passwordInput.value = '';
+      newPasswordInput.value = '';
+      confirmPasswordInput.value = '';
+      
+      const newUrl = window.location.protocol + "//" + window.location.host + window.location.pathname;
+      window.history.pushState({ path: newUrl }, '', newUrl);
     });
   </script>
 </body>

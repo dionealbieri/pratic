@@ -4,7 +4,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse
 import os, shutil, tempfile, datetime, base64, sqlite3
 
-from database import init_db, seed_data
+from database import init_db, seed_data, get_conn, DB_PATH
 from auth_utils import get_current_user, validar_sessao_db
 from rotas import auth, colaboradores, maquinas, producao, premiacao, configuracoes, relatorios, estoque, pedidos, epi
 
@@ -111,24 +111,25 @@ def manual(request: Request):
 
 @app.get("/api/backup", dependencies=[Depends(get_current_user)])
 def fazer_backup():
-    db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "banco", "pratic.db"))
     now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_name = f"pratic_backup_{now}.db"
     backup_path = os.path.join(tempfile.gettempdir(), backup_name)
     
     # Executa o backup atômico via API oficial do sqlite3
-    src = sqlite3.connect(db_path)
+    src = get_conn()
     dst = sqlite3.connect(backup_path)
-    with dst:
-        src.backup(dst)
-    dst.close()
-    src.close()
+    try:
+        with dst:
+            src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
     
     return FileResponse(path=backup_path, filename=backup_name, media_type="application/octet-stream")
 
 @app.post("/api/restore", dependencies=[Depends(get_current_user)])
 async def restaurar_backup(file: UploadFile = File(...)):
-    db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "banco", "pratic.db"))
+    db_path = DB_PATH
     now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     
     # Salva uma cópia física de segurança (backup anterior)
@@ -143,11 +144,13 @@ async def restaurar_backup(file: UploadFile = File(...)):
     # Restaura o banco de dados via API oficial do sqlite3 (mantém os handles do servidor seguros)
     try:
         src = sqlite3.connect(temp_db_path)
-        dst = sqlite3.connect(db_path)
-        with dst:
-            src.backup(dst)
-        dst.close()
-        src.close()
+        dst = get_conn()
+        try:
+            with dst:
+                src.backup(dst)
+        finally:
+            dst.close()
+            src.close()
     finally:
         if os.path.exists(temp_db_path):
             os.remove(temp_db_path)
@@ -160,11 +163,12 @@ async def upload_logo(file: UploadFile = File(...)):
     ext = file.filename.split(".")[-1].lower()
     b64 = base64.b64encode(contents).decode()
     data_url = f"data:image/{ext};base64,{b64}"
-    db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "banco", "pratic.db"))
-    conn = sqlite3.connect(db_path)
-    conn.execute("INSERT OR REPLACE INTO configuracoes (chave, valor, descricao) VALUES ('empresa_logo', ?, 'Logo da empresa em base64')", (data_url,))
-    conn.commit()
-    conn.close()
+    conn = get_conn()
+    try:
+        conn.execute("INSERT OR REPLACE INTO configuracoes (chave, valor, descricao) VALUES ('empresa_logo', ?, 'Logo da empresa em base64')", (data_url,))
+        conn.commit()
+    finally:
+        conn.close()
     return {"mensagem": "Logo salvo", "url": data_url[:50] + "..."}
 
 @app.on_event("startup")

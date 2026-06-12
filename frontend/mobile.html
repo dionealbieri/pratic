@@ -821,6 +821,10 @@ async function verificarAcesso() {
   let me;
   try {
     me = await req('/auth/me');
+    if (me && me.deve_alterar_senha) {
+      window.location.href = '/login?change_password=1';
+      return;
+    }
   } catch (e) {
     // Se der erro 401 (não logado), mostra tela amigável para o gestor autenticar
     document.body.innerHTML = `

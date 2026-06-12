@@ -176,11 +176,15 @@ def limpar_dados(tipo: str):
         else:
             raise HTTPException(400, "Tipo inválido")
         conn.commit()
-        conn.close()
         return {"mensagem": msg}
+    except HTTPException:
+        conn.rollback()
+        raise
     except Exception as e:
-        conn.close()
+        conn.rollback()
         raise HTTPException(500, str(e))
+    finally:
+        conn.close()
 
 @router.put("/{chave}")
 def atualizar(chave: str, config: ConfigIn):

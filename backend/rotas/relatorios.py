@@ -214,3 +214,48 @@ def resumo_anual(ano: str):
     """, (ano+'%',)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+@router.get("/rendimento-insumos")
+def relatorio_rendimento_insumos(mes_ini: Optional[str] = None, mes_fim: Optional[str] = None):
+    conn = get_conn()
+    extra_where, params = _periodo_where("p", mes_ini, mes_fim)
+    
+    # Filtramos apenas registros onde o produto de estoque está vinculado
+    where_sql = " AND ".join(["p.produto_estoque_id IS NOT NULL"] + extra_where)
+    
+    query = f"""
+        SELECT 
+            ep.id as produto_id,
+            ep.codigo as produto_codigo,
+            ep.nome as produto_nome,
+            ep.unidade,
+            SUM(p.producao) as total_produzido,
+            SUM(p.perda_quantidade) as total_perda,
+            SUM(p.sobra_quantidade) as total_sobra,
+            (SELECT COALESCE(AVG(custo_unitario), 0.0) FROM estoque_movimentacoes WHERE produto_id = ep.id AND custo_unitario IS NOT NULL) as custo_medio
+        FROM producao_diaria p
+        JOIN estoque_produtos ep ON p.produto_estoque_id = ep.id
+        WHERE {where_sql}
+        GROUP BY ep.id
+        ORDER BY total_perda DESC
+    """
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    
+    resultado = []
+    for r in rows:
+        d = dict(r)
+        prod = d["total_produzido"] or 0
+        perda = d["total_perda"] or 0
+        sobra = d["total_sobra"] or 0
+        
+        # Consumo do estoque = produção + perda - sobra
+        consumo = prod + perda - sobra
+        d["total_consumido"] = consumo
+        d["indice_perda"] = round((perda / consumo * 100), 2) if consumo > 0 else 0.0
+        
+        custo_med = d["custo_medio"] or 0.0
+        d["custo_total_perda"] = round(perda * custo_med, 2)
+        resultado.append(d)
+        
+    return resultado

@@ -30,7 +30,7 @@ def validar_sessao_db(session_id: str) -> dict:
     try:
         # Busca a sessão e o usuário associado
         row = conn.execute("""
-            SELECT s.session_id, s.expira_em, u.id, u.username, u.role, u.nome, u.ativo
+            SELECT s.session_id, s.expira_em, u.id, u.username, u.role, u.nome, u.ativo, u.deve_alterar_senha
             FROM sessoes s
             JOIN usuarios u ON s.usuario_id = u.id
             WHERE s.session_id = ?
@@ -70,5 +70,15 @@ async def get_current_user(request: Request):
     user_info = validar_sessao_db(session_id)
     if not user_info:
         raise HTTPException(status_code=401, detail="Sessão inválida ou expirada. Faça login novamente.")
+        
+    if user_info.get("deve_alterar_senha") == 1:
+        path = request.url.path
+        allowed = [
+            "/api/auth/me",
+            "/api/auth/usuarios/self/password",
+            "/api/auth/logout"
+        ]
+        if path not in allowed:
+            raise HTTPException(status_code=403, detail="Alteração de senha obrigatória no primeiro acesso.")
         
     return user_info

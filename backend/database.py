@@ -250,6 +250,7 @@ def init_db():
             role TEXT NOT NULL CHECK(role IN ('gestor', 'producao', 'comercial', 'estoque')),
             nome TEXT NOT NULL,
             ativo INTEGER DEFAULT 1,
+            deve_alterar_senha INTEGER DEFAULT 1,
             criado_em TEXT DEFAULT (datetime('now', 'localtime'))
         );
 
@@ -261,6 +262,15 @@ def init_db():
             FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE
         );
     """)
+
+    # Adicionar coluna deve_alterar_senha se não existir para bancos de dados já criados
+    try:
+        c.execute("ALTER TABLE usuarios ADD COLUMN deve_alterar_senha INTEGER DEFAULT 1")
+        # Como o banco de dados já existia, definimos deve_alterar_senha = 0 para todos os usuários atuais
+        # para que o acesso deles não seja interrompido abruptamente. Novos usuários criados herdarão 1.
+        c.execute("UPDATE usuarios SET deve_alterar_senha = 0")
+    except sqlite3.OperationalError:
+        pass
 
     # Seed de usuários padrão se a tabela de usuários estiver vazia
     c.execute("SELECT COUNT(*) FROM usuarios")
@@ -274,14 +284,14 @@ def init_db():
             return salt.hex() + "." + key.hex()
             
         default_users = [
-            ("admin", _hash_pass("admin"), "gestor", "Administrador"),
-            ("producao", _hash_pass("producao123"), "producao", "Produção"),
-            ("comercial", _hash_pass("comercial123"), "comercial", "Comercial"),
-            ("estoque", _hash_pass("estoque123"), "estoque", "Almoxarifado")
+            ("admin", _hash_pass("admin"), "gestor", "Administrador", 0),
+            ("producao", _hash_pass("producao123"), "producao", "Produção", 0),
+            ("comercial", _hash_pass("comercial123"), "comercial", "Comercial", 0),
+            ("estoque", _hash_pass("estoque123"), "estoque", "Almoxarifado", 0)
         ]
         c.executemany("""
-            INSERT INTO usuarios (username, password_hash, role, nome)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO usuarios (username, password_hash, role, nome, deve_alterar_senha)
+            VALUES (?, ?, ?, ?, ?)
         """, default_users)
 
 

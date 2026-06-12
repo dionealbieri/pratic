@@ -745,6 +745,10 @@ async function init() {
   let me;
   try {
     me = await req('/auth/me');
+    if (me && me.deve_alterar_senha) {
+      window.location.href = '/login?change_password=1';
+      return;
+    }
   } catch (e) {
     document.body.innerHTML = `
       <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0d0f14;font-family:'DM Sans',sans-serif">

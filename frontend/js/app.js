@@ -178,9 +178,22 @@ function getPerfilAtual() {
 }
 
 async function carregarAcessoPrincipal() {
+  try {
+    const r = await fetch(API + '/configuracoes/empresa', { cache: 'no-store' });
+    if (r.ok) {
+      window.empresaDados = await r.json();
+    }
+  } catch (err) {
+    console.error('Erro ao inicializar dados da empresa globalmente:', err);
+  }
+
   let me;
   try {
     me = await api('/auth/me');
+    if (me.deve_alterar_senha) {
+      window.location.href = '/login?change_password=1';
+      return;
+    }
     const elNomeTxt = document.getElementById('topbar-user-name-txt');
     if (elNomeTxt) elNomeTxt.textContent = me.nome;
     
@@ -1226,6 +1239,43 @@ async function loadPremiacao() {
       api('/premiacao/auxiliares/' + mes)
     ]);
 
+    // Cálculos para o Painel de Análise
+    const concorrentes = ops.filter(op => !op.eh_lider);
+    const elegiveis = concorrentes.filter(op => op.elegivel);
+    const totalPremioOps = elegiveis.reduce((sum, op) => sum + (op.valor_premio || 0), 0);
+    const totalPremioAuxs = auxs.reduce((sum, a) => sum + (a.valor_bonus || 0), 0);
+    const totalPremios = totalPremioOps + totalPremioAuxs;
+    
+    const pctMeta = concorrentes.length > 0 ? Math.round((elegiveis.length / concorrentes.length) * 100) : 0;
+    const melhorOp = ops.length > 0 ? ops[0] : null;
+    const mediaSetor = concorrentes.length > 0 ? Math.round(concorrentes.reduce((sum, op) => sum + (op.media_diaria || 0), 0) / concorrentes.length) : 0;
+
+    const insightsEl = document.getElementById('prem-insights-cards');
+    if (insightsEl) {
+      insightsEl.innerHTML = `
+        <div class="card" style="border-left: 3px solid var(--accent)">
+          <div class="card-label">Total em Prêmios</div>
+          <div class="card-value accent">${fmtBRL(totalPremios)}</div>
+          <div style="font-size:11px;color:var(--muted)">${fmtBRL(totalPremioOps)} Op. | ${fmtBRL(totalPremioAuxs)} Aux.</div>
+        </div>
+        <div class="card" style="border-left: 3px solid var(--success)">
+          <div class="card-label">Aderência à Meta</div>
+          <div class="card-value success">${pctMeta}%</div>
+          <div style="font-size:11px;color:var(--muted)">${elegiveis.length} de ${concorrentes.length} operadores atingiram a meta</div>
+        </div>
+        <div class="card" style="border-left: 3px solid var(--accent2)">
+          <div class="card-label">Média do Setor</div>
+          <div class="card-value info">${fmtNum(mediaSetor)}</div>
+          <div style="font-size:11px;color:var(--muted)">peças/dia por operador</div>
+        </div>
+        <div class="card" style="border-left: 3px solid var(--success)">
+          <div class="card-label">Destaque Operador</div>
+          <div class="card-value success" style="font-size:18px; line-height: 1.4">${melhorOp ? melhorOp.colaborador : '—'}</div>
+          <div style="font-size:11px;color:var(--muted)">${melhorOp ? `${fmtNum(melhorOp.total_producao)} peças no mês` : 'Nenhum lançamento'}</div>
+        </div>
+      `;
+    }
+
     document.getElementById('prem-operadores').innerHTML = ops.length
       ? ops.map((op, i) => `
         <div class="rank-card">
@@ -1605,9 +1655,13 @@ async function loadRelatorios() {
   const mesIniEl = document.getElementById('rel-prod-mes-ini');
   const mesFimEl = document.getElementById('rel-prod-mes-fim');
   const premEl = document.getElementById('rel-prem-mes');
+  const anaIniEl = document.getElementById('rel-ana-mes-ini');
+  const anaFimEl = document.getElementById('rel-ana-mes-fim');
   if (mesIniEl && !mesIniEl.value) mesIniEl.value = mes;
   if (mesFimEl && !mesFimEl.value) mesFimEl.value = mes;
   if (premEl && !premEl.value) premEl.value = mes;
+  if (anaIniEl && !anaIniEl.value) anaIniEl.value = mes;
+  if (anaFimEl && !anaFimEl.value) anaFimEl.value = mes;
   try {
     const cols = await api('/colaboradores/');
     const sel = document.getElementById('rel-prod-col');
@@ -1650,6 +1704,228 @@ async function loadRelProducao() {
     </tr>`;
   }).join('');
 }
+
+async function loadRelAnaliticos() {
+  const mesIni = document.getElementById('rel-ana-mes-ini')?.value || new Date().toISOString().slice(0,7);
+  const mesFim = document.getElementById('rel-ana-mes-fim')?.value || '';
+  const tipoAna = document.getElementById('rel-ana-tipo')?.value || 'rendimento';
+  
+  let endpoint = '';
+  if (tipoAna === 'rendimento') {
+    endpoint = '/relatorios/rendimento-insumos?';
+  } else if (tipoAna === 'evolucao') {
+    endpoint = '/relatorios/evolucao-mensal?';
+  } else if (tipoAna === 'ranking') {
+    endpoint = '/relatorios/ranking-historico?';
+  }
+  
+  if (mesIni) endpoint += 'mes_ini=' + mesIni;
+  if (mesFim) endpoint += '&mes_fim=' + mesFim;
+  
+  try {
+    const data = await api(endpoint);
+    const titleEl = document.getElementById('rel-ana-title');
+    const thead = document.getElementById('rel-ana-thead');
+    const tbody = document.getElementById('rel-ana-tbody');
+    const cardsEl = document.getElementById('rel-ana-cards');
+    
+    if (!tbody || !thead) return;
+    
+    if (tipoAna === 'rendimento') {
+      if (titleEl) titleEl.textContent = 'Rendimento e Perdas de Insumos';
+      thead.innerHTML = `
+        <tr>
+          <th>Código/ID</th>
+          <th>Produto/Insumo</th>
+          <th>Unidade</th>
+          <th>Produção Real</th>
+          <th>Perda Física</th>
+          <th>Sobra</th>
+          <th>Consumo Total</th>
+          <th>Índice de Perda (%)</th>
+          <th>Custo Médio</th>
+          <th>Custo Desperdiçado</th>
+        </tr>
+      `;
+      
+      if (!data.length) {
+        tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:24px">Nenhum registro</td></tr>';
+        if (cardsEl) cardsEl.innerHTML = `
+          <div class="card"><div class="card-label">Total Produzido</div><div class="card-value info">0</div></div>
+          <div class="card"><div class="card-label">Total Perdas</div><div class="card-value danger">0</div></div>
+          <div class="card"><div class="card-label">Custo do Desperdício</div><div class="card-value danger">${fmtBRL(0)}</div></div>
+        `;
+        return;
+      }
+      
+      const totalProduzido = data.reduce((s, r) => s + (r.total_produzido || 0), 0);
+      const totalPerda = data.reduce((s, r) => s + (r.total_perda || 0), 0);
+      const totalDesperdicio = data.reduce((s, r) => s + (r.custo_total_perda || 0), 0);
+      
+      if (cardsEl) cardsEl.innerHTML = `
+        <div class="card"><div class="card-label">Total Produzido</div><div class="card-value info">${fmtNum(totalProduzido)}</div></div>
+        <div class="card"><div class="card-label">Total Perdas</div><div class="card-value danger">${fmtNum(totalPerda)}</div></div>
+        <div class="card"><div class="card-label">Custo do Desperdício</div><div class="card-value danger">${fmtBRL(totalDesperdicio)}</div></div>
+      `;
+      
+      tbody.innerHTML = data.map(r => {
+        const prod = r.total_produzido || 0;
+        const perda = r.total_perda || 0;
+        const sobra = r.total_sobra || 0;
+        const consumo = r.total_consumido || 0;
+        const idxPerda = r.indice_perda || 0;
+        const custoMed = r.custo_medio || 0;
+        const custoTotalPerda = r.custo_total_perda || 0;
+        const unidade = r.unidade || '';
+        
+        return `<tr>
+          <td>${r.produto_codigo ? `<strong>${r.produto_codigo}</strong>` : `ID: ${r.produto_id}`}</td>
+          <td>${r.produto_nome}</td>
+          <td>${unidade}</td>
+          <td>${fmtNum(prod)}</td>
+          <td class="danger">${fmtNum(perda)}</td>
+          <td class="positive">${fmtNum(sobra)}</td>
+          <td><strong>${fmtNum(consumo)}</strong></td>
+          <td style="color:${idxPerda > 0 ? 'var(--danger)' : 'inherit'};font-weight:${idxPerda > 0 ? 'bold' : 'normal'}">${fmtNum(idxPerda)}%</td>
+          <td>${fmtBRL(custoMed)}</td>
+          <td class="danger" style="font-weight:bold">${fmtBRL(custoTotalPerda)}</td>
+        </tr>`;
+      }).join('');
+      
+    } else if (tipoAna === 'evolucao') {
+      if (titleEl) titleEl.textContent = 'Evolução Mensal da Produção';
+      thead.innerHTML = `
+        <tr>
+          <th>Mês</th>
+          <th>Colaborador</th>
+          <th>Dias Trabalhados</th>
+          <th>Produção Total</th>
+          <th>Média Diária</th>
+          <th>Meta Média</th>
+          <th>Excedente Acumulado</th>
+          <th>Total Perdas</th>
+          <th>Total Sobras</th>
+        </tr>
+      `;
+      
+      if (!data.length) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:24px">Nenhum registro</td></tr>';
+        if (cardsEl) cardsEl.innerHTML = `
+          <div class="card"><div class="card-label">Total Produzido</div><div class="card-value info">0</div></div>
+          <div class="card"><div class="card-label">Dias Trabalhados</div><div class="card-value info">0</div></div>
+          <div class="card"><div class="card-label">Total Perdas</div><div class="card-value danger">0</div></div>
+        `;
+        return;
+      }
+      
+      const totalProduzido = data.reduce((s, r) => s + (r.total_producao || 0), 0);
+      const totalPerda = data.reduce((s, r) => s + (r.total_perdas || 0), 0);
+      const totalDias = data.reduce((s, r) => s + (r.dias_trabalhados || 0), 0);
+      
+      if (cardsEl) cardsEl.innerHTML = `
+        <div class="card"><div class="card-label">Total Produzido</div><div class="card-value info">${fmtNum(totalProduzido)}</div></div>
+        <div class="card"><div class="card-label">Lançamentos / Dias</div><div class="card-value info">${fmtNum(totalDias)}</div></div>
+        <div class="card"><div class="card-label">Total Perdas</div><div class="card-value danger">${fmtNum(totalPerda)}</div></div>
+      `;
+      
+      tbody.innerHTML = data.map(r => {
+        const mes = r.mes_referencia;
+        const col = r.colaborador;
+        const dias = r.dias_trabalhados || 0;
+        const prod = r.total_producao || 0;
+        const med = r.media_diaria || 0;
+        const meta = r.meta_media || 0;
+        const exc = r.excedente_total || 0;
+        const per = r.total_perdas || 0;
+        const sob = r.total_sobras || 0;
+        
+        return `<tr>
+          <td><strong>${mesLabel(mes)}</strong></td>
+          <td><strong>${col}</strong></td>
+          <td>${fmtNum(dias)}</td>
+          <td>${fmtNum(prod)}</td>
+          <td>${fmtNum(Math.round(med))}</td>
+          <td>${fmtNum(Math.round(meta))}</td>
+          <td class="${exc>=0?'positive':'negative'}">${exc>=0?'+':''}${fmtNum(Math.round(exc))}</td>
+          <td class="danger">${per>0?fmtNum(per):'—'}</td>
+          <td class="positive">${sob>0?fmtNum(sob):'—'}</td>
+        </tr>`;
+      }).join('');
+      
+    } else if (tipoAna === 'ranking') {
+      if (titleEl) titleEl.textContent = 'Ranking Histórico de Operadores';
+      thead.innerHTML = `
+        <tr>
+          <th>Operador</th>
+          <th>Meses Ativos</th>
+          <th>Total Produzido</th>
+          <th>Média Geral</th>
+          <th>Média da Meta</th>
+          <th>Saldo Excedente</th>
+          <th>Aderência à Meta</th>
+          <th>Total Perdas</th>
+          <th>Total Sobras</th>
+          <th>Melhor Dia</th>
+        </tr>
+      `;
+      
+      if (!data.length) {
+        tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:24px">Nenhum registro</td></tr>';
+        if (cardsEl) cardsEl.innerHTML = `
+          <div class="card"><div class="card-label">Melhor Operador</div><div class="card-value success">—</div></div>
+          <div class="card"><div class="card-label">Melhor Média</div><div class="card-value info">0</div></div>
+          <div class="card"><div class="card-label">Total Geral</div><div class="card-value info">0</div></div>
+        `;
+        return;
+      }
+      
+      const melhorOp = data[0]?.colaborador || '—';
+      const melhorMed = data[0]?.media_geral || 0;
+      const totalGeral = data.reduce((s, r) => s + (r.total_geral || 0), 0);
+      
+      if (cardsEl) cardsEl.innerHTML = `
+        <div class="card" style="border-left:3px solid var(--success)"><div class="card-label">Melhor Operador</div><div class="card-value success" style="font-size:18px">${melhorOp}</div></div>
+        <div class="card" style="border-left:3px solid var(--accent)"><div class="card-label">Melhor Média Geral</div><div class="card-value info">${fmtNum(Math.round(melhorMed))} pçs/dia</div></div>
+        <div class="card" style="border-left:3px solid var(--accent2)"><div class="card-label">Total Geral Produzido</div><div class="card-value info">${fmtNum(totalGeral)}</div></div>
+      `;
+      
+      tbody.innerHTML = data.map(r => {
+        const col = r.colaborador;
+        const meses = r.meses_trabalhados || 0;
+        const total = r.total_geral || 0;
+        const med = r.media_geral || 0;
+        const meta = r.media_meta || 0;
+        const exc = r.saldo_excedente || 0;
+        const pct = r.pct_acima_meta || 0;
+        const per = r.total_perdas || 0;
+        const sob = r.total_sobras || 0;
+        const melhor = r.melhor_dia || 0;
+        
+        return `<tr>
+          <td><strong>${col}</strong></td>
+          <td>${fmtNum(meses)}</td>
+          <td><strong>${fmtNum(total)}</strong></td>
+          <td>${fmtNum(Math.round(med))}</td>
+          <td>${fmtNum(Math.round(meta))}</td>
+          <td class="${exc>=0?'positive':'negative'}">${exc>=0?'+':''}${fmtNum(Math.round(exc))}</td>
+          <td style="font-weight:bold;color:${pct>=80?'var(--success)':pct>=50?'var(--warn)':'var(--danger)'}">${fmtNum(pct)}%</td>
+          <td class="danger">${per>0?fmtNum(per):'—'}</td>
+          <td class="positive">${sob>0?fmtNum(sob):'—'}</td>
+          <td class="positive"><strong>${fmtNum(melhor)}</strong></td>
+        </tr>`;
+      }).join('');
+    }
+  } catch (err) {
+    showAlert('Erro ao carregar relatório analítico: ' + err.message, 'danger');
+  }
+}
+
+function onChangeRelAnaTipo() {
+  loadRelAnaliticos();
+}
+
+window.onChangeRelAnaTipo = onChangeRelAnaTipo;
+window.loadRelAnaliticos = loadRelAnaliticos;
 
 
 async function carregarCategoriasRelEstoque() {
@@ -1699,7 +1975,7 @@ function sairSistema() {
 // ─── TABS RELATÓRIOS ──────────────────────────────────────────────────────────
 
 function switchRelTab(tab) {
-  ['producao','premiacao','estoque','pedidos','epi'].forEach(t=>{
+  ['producao','premiacao','estoque','pedidos','epi','analiticos'].forEach(t=>{
     const el=document.getElementById('rel-content-'+t);
     const btn=document.getElementById('rtab-'+t);
     if(el) el.style.display = t===tab?'':'none';
@@ -1710,6 +1986,7 @@ function switchRelTab(tab) {
   if(tab==='estoque') loadRelEstoque();
   if(tab==='pedidos') loadRelPedidos();
   if(tab==='epi') loadRelEPI();
+  if(tab==='analiticos') loadRelAnaliticos();
 }
 
 async function loadRelPremiacao() {
@@ -1865,18 +2142,75 @@ async function loadRelEPI() {
   }).join('');
 }
 
+function _getEmpresaHeader(titulo) {
+  const emp = window.empresaDados || {};
+  const nome = emp.nome || 'PRATIC';
+  const cnpj = emp.cnpj ? `CNPJ: ${emp.cnpj}` : '';
+  const telefone = emp.telefone ? `Tel: ${emp.telefone}` : '';
+  const email = emp.email ? `E-mail: ${emp.email}` : '';
+  
+  let endereco = '';
+  if (emp.logradouro) {
+    endereco = `${emp.logradouro}`;
+    if (emp.numero) endereco += `, ${emp.numero}`;
+    if (emp.complemento) endereco += ` - ${emp.complemento}`;
+    if (emp.bairro) endereco += `, ${emp.bairro}`;
+    if (emp.cep) endereco += ` - CEP: ${emp.cep}`;
+    if (emp.cidade) {
+      endereco += `, ${emp.cidade}`;
+      if (emp.uf) endereco += `/${emp.uf.toUpperCase()}`;
+    }
+  }
+
+  const logoHtml = emp.logo 
+    ? `<img src="${emp.logo}" style="max-height: 70px; max-width: 200px; object-fit: contain; margin-right: 15px;">` 
+    : '';
+
+  const infoContato = [cnpj, telefone, email].filter(Boolean).join(' | ');
+
+  return `
+    <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 2px solid #333; padding-bottom: 12px; margin-bottom: 20px; font-family: sans-serif; color: #111;">
+      <div style="display: flex; align-items: center;">
+        ${logoHtml}
+        <div>
+          <div style="font-size: 20px; font-weight: bold; text-transform: uppercase;">${nome}</div>
+          <div style="font-size: 11px; color: #555; margin-top: 4px;">${infoContato}</div>
+          ${endereco ? `<div style="font-size: 11px; color: #555; margin-top: 2px;">${endereco}</div>` : ''}
+        </div>
+      </div>
+      <div style="text-align: right;">
+        <div style="font-size: 18px; font-weight: bold; color: #333;">${titulo}</div>
+      </div>
+    </div>
+  `;
+}
+
+function _getPrintFooter() {
+  return `
+    <div class="print-footer">
+      <span>Emitido em: ${new Date().toLocaleString('pt-BR')}</span>
+      <span>Página <span class="page-number"></span></span>
+    </div>
+  `;
+}
+
 async function exportarRelatorio(tipo, formato) {
   if (formato==='pdf') {
-    const maps={producao:'rel-prod-tbody',premiacao:'rel-prem-content',estoque:'rel-est-tbody',pedidos:'rel-ped-tbody',epi:'rel-epi-tbody'};
-    const tits={producao:'Relatório de Produção',premiacao:'Relatório de Premiação',estoque:'Relatório de Estoque',pedidos:'Relatório de Pedidos',epi:'Relatório de EPI'};
+    const maps={producao:'rel-prod-tbody',premiacao:'rel-prem-content',estoque:'rel-est-tbody',pedidos:'rel-ped-tbody',epi:'rel-epi-tbody',analiticos:'rel-ana-tbody'};
+    const tits={producao:'Relatório de Produção',premiacao:'Relatório de Premiação',estoque:'Relatório de Estoque',pedidos:'Relatório de Pedidos',epi:'Relatório de EPI',analiticos:'Relatório Analítico de Insumos'};
+    let tituloReport = tits[tipo];
+    if (tipo === 'analiticos') {
+      const elTit = document.getElementById('rel-ana-title');
+      if (elTit) tituloReport = elTit.textContent;
+    }
     const el=document.getElementById(maps[tipo]);
     const tabela=el?.closest('table')||el;
     const win=window.open('','_blank');
-    win.document.write(`<html><head><title>${tits[tipo]}</title><style>body{font-family:Arial,sans-serif;margin:20px;font-size:12px}table{width:100%;border-collapse:collapse}th{background:#333;color:#fff;padding:8px;text-align:left}td{padding:7px;border-bottom:1px solid #ddd}h2{font-size:16px}</style></head><body><h2>PRATIC — ${tits[tipo]}</h2><p style="color:#666">Gerado em: ${new Date().toLocaleString('pt-BR')}</p>${tabela?.outerHTML||'<p>Sem dados</p>'}</body></html>`);
+    win.document.write(`<html><head><title>${tituloReport}</title><style>@page{margin:0}body{font-family:Arial,sans-serif;margin:15mm 15mm 22mm 15mm;font-size:12px;counter-reset:page}table{width:100%;border-collapse:collapse}th{background:#333;color:#fff;padding:8px;text-align:left}td{padding:7px;border-bottom:1px solid #ddd}.print-footer{position:fixed;bottom:8mm;left:15mm;right:15mm;border-top:1px solid #ddd;padding-top:6px;display:flex;justify-content:space-between;font-size:10px;color:#777;font-family:Arial,sans-serif;counter-increment:page}.page-number::after{content:counter(page)}</style></head><body>${_getEmpresaHeader(tituloReport)}${tabela?.outerHTML||'<p>Sem dados</p>'}${_getPrintFooter()}</body></html>`);
     win.document.close();
     setTimeout(()=>win.print(),500);
   } else {
-    const maps={producao:'rel-prod-tbody',estoque:'rel-est-tbody',pedidos:'rel-ped-tbody',epi:'rel-epi-tbody'};
+    const maps={producao:'rel-prod-tbody',estoque:'rel-est-tbody',pedidos:'rel-ped-tbody',epi:'rel-epi-tbody',analiticos:'rel-ana-tbody'};
     const el=document.getElementById(maps[tipo]);
     if(!el) return;
     const table=el.closest('table');
@@ -1887,7 +2221,14 @@ async function exportarRelatorio(tipo, formato) {
     const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
     const a=document.createElement('a');
     a.href=URL.createObjectURL(blob);
-    a.download=`pratic_${tipo}_${new Date().toISOString().slice(0,10)}.csv`;
+    
+    let downloadName = `pratic_${tipo}_${new Date().toISOString().slice(0,10)}.csv`;
+    if (tipo === 'analiticos') {
+      const tipoAna = document.getElementById('rel-ana-tipo')?.value || 'insumos';
+      downloadName = `pratic_analiticos_${tipoAna}_${new Date().toISOString().slice(0,10)}.csv`;
+    }
+    
+    a.download=downloadName;
     a.click();
   }
 }
@@ -2448,9 +2789,9 @@ function imprimirComprovante() {
   if(!content) return;
   const win = window.open('', '_blank');
   win.document.write(`<html><head><title>Comprovante de Entrega de EPI</title><style>
-    @page { size: A4; margin: 12mm; }
+    @page { size: A4; margin: 0; }
     * { box-sizing: border-box; }
-    body { font-family: Arial, sans-serif; margin: 0; background: #fff; }
+    body { font-family: Arial, sans-serif; margin: 12mm; background: #fff; }
     table { page-break-inside: auto; }
     tr { page-break-inside: avoid; page-break-after: auto; }
     img { max-width: 100%; }
@@ -2993,6 +3334,8 @@ async function loadEmpresa() {
     const r = await fetch(API + '/configuracoes/empresa', { cache: 'no-store' });
     const dados = await r.json();
     if (!r.ok) throw new Error(dados.detail || dados.mensagem || 'Erro ao carregar dados da empresa');
+
+    window.empresaDados = dados;
 
     for (const campo of campos) {
       const el = document.getElementById('emp-' + campo);
@@ -3712,7 +4055,7 @@ function exportarGraficoPDF() {
   const canvases=document.getElementById('graf-content')?.querySelectorAll('canvas')||[];
   let imgs='';
   canvases.forEach(c=>{try{imgs+=`<img src="${c.toDataURL()}" style="width:48%;margin:1%">`;}catch(e){}});
-  win.document.write(`<html><head><title>Análise PRATIC</title><style>body{font-family:Arial;margin:20px}h2{font-size:16px;color:#333}img{display:inline-block;vertical-align:top}</style></head><body><h2>PRATIC — Análise Gráfica — ${new Date().toLocaleDateString('pt-BR')}</h2>${imgs}</body></html>`);
+  win.document.write(`<html><head><title>Análise PRATIC</title><style>@page{margin:0}body{font-family:Arial;margin:15mm 15mm 22mm 15mm;counter-reset:page}h2{font-size:16px;color:#333}img{display:inline-block;vertical-align:top}.print-footer{position:fixed;bottom:8mm;left:15mm;right:15mm;border-top:1px solid #ddd;padding-top:6px;display:flex;justify-content:space-between;font-size:10px;color:#777;font-family:Arial,sans-serif;counter-increment:page}.page-number::after{content:counter(page)}</style></head><body>${_getEmpresaHeader('Análise Gráfica')}${imgs}${_getPrintFooter()}</body></html>`);
   win.document.close();
   setTimeout(()=>win.print(),800);
 }
@@ -5001,11 +5344,11 @@ function exportarListaCompras(formato) {
   if (formato === 'pdf') {
     const win = window.open('','_blank');
     win.document.write(`<html><head><title>Lista de Compras PRATIC</title>
-      <style>body{font-family:Arial,sans-serif;margin:20px;font-size:12px}table{width:100%;border-collapse:collapse}th{background:#333;color:#fff;padding:8px;text-align:left}td{padding:7px;border-bottom:1px solid #ddd}h2{font-size:16px}</style>
+      <style>@page{margin:0}body{font-family:Arial,sans-serif;margin:15mm 15mm 22mm 15mm;font-size:12px;counter-reset:page}table{width:100%;border-collapse:collapse}th{background:#333;color:#fff;padding:8px;text-align:left}td{padding:7px;border-bottom:1px solid #ddd}.print-footer{position:fixed;bottom:8mm;left:15mm;right:15mm;border-top:1px solid #ddd;padding-top:6px;display:flex;justify-content:space-between;font-size:10px;color:#777;font-family:Arial,sans-serif;counter-increment:page}.page-number::after{content:counter(page)}</style>
       </head><body>
-      <h2>PRATIC — Lista de Compras</h2>
-      <p style="color:#666">Gerado em: ${new Date().toLocaleString('pt-BR')}</p>
+      ${_getEmpresaHeader('Lista de Compras')}
       ${table.outerHTML}
+      ${_getPrintFooter()}
       </body></html>`);
     win.document.close();
     setTimeout(() => win.print(), 500);
@@ -5031,11 +5374,11 @@ function exportarSVD(formato) {
   if (formato === 'pdf') {
     const win = window.open('','_blank');
     win.document.write(`<html><head><title>Saldo vs Demanda PRATIC</title>
-      <style>body{font-family:Arial,sans-serif;margin:20px;font-size:11px}table{width:100%;border-collapse:collapse}th{background:#333;color:#fff;padding:6px;text-align:left}td{padding:5px;border-bottom:1px solid #ddd}h2{font-size:16px}</style>
+      <style>@page{margin:0}body{font-family:Arial,sans-serif;margin:15mm 15mm 22mm 15mm;font-size:11px;counter-reset:page}table{width:100%;border-collapse:collapse}th{background:#333;color:#fff;padding:6px;text-align:left}td{padding:5px;border-bottom:1px solid #ddd}.print-footer{position:fixed;bottom:8mm;left:15mm;right:15mm;border-top:1px solid #ddd;padding-top:6px;display:flex;justify-content:space-between;font-size:10px;color:#777;font-family:Arial,sans-serif;counter-increment:page}.page-number::after{content:counter(page)}</style>
       </head><body>
-      <h2>PRATIC — Saldo vs Demanda</h2>
-      <p style="color:#666">Gerado em: ${new Date().toLocaleString('pt-BR')}</p>
+      ${_getEmpresaHeader('Saldo vs Demanda')}
       ${table.outerHTML}
+      ${_getPrintFooter()}
       </body></html>`);
     win.document.close();
     setTimeout(() => win.print(), 500);
