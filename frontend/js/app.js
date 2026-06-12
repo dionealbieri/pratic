@@ -5125,6 +5125,16 @@ async function loadSaldoDemanda() {
   try {
     svdDados = await api(url);
 
+    // Filtrar pelas categorias configuradas (salvas no localStorage)
+    const savedCatsJson = localStorage.getItem('svd_categorias_visiveis');
+    if (savedCatsJson) {
+      const allowedCatIds = JSON.parse(savedCatsJson);
+      svdDados = svdDados.filter(r => {
+        const catIdStr = r.categoria_id === null || r.categoria_id === undefined ? "null" : String(r.categoria_id);
+        return allowedCatIds.includes(catIdStr);
+      });
+    }
+
     // Popular filtro de marcas dinamicamente
     const marcaSel = document.getElementById('svd-filtro-marca');
     if (marcaSel && marcaSel.options.length <= 1) {
@@ -5400,6 +5410,67 @@ function exportarSVD(formato) {
     a.download = `saldo_demanda_${new Date().toISOString().slice(0,10)}.csv`;
     a.click();
   }
+}
+
+async function abrirConfigCategoriasSVD() {
+  const container = document.getElementById('modal-svd-categorias-content');
+  if (!container) return;
+  container.innerHTML = '<div style="color:var(--muted);text-align:center;padding:12px">Carregando...</div>';
+  openModal('modal-svd-categorias');
+
+  try {
+    const cats = await api('/estoque/categorias');
+    const savedCatsJson = localStorage.getItem('svd_categorias_visiveis');
+    
+    let allowedCatIds = null;
+    if (savedCatsJson) {
+      allowedCatIds = JSON.parse(savedCatsJson);
+    }
+
+    let html = '';
+    
+    // Opção "Sem Categoria"
+    const semCatChecked = allowedCatIds === null || allowedCatIds.includes('null');
+    html += `
+      <label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:4px;cursor:pointer;background:var(--surface2)">
+        <input type="checkbox" class="svd-cat-checkbox" value="null" ${semCatChecked ? 'checked' : ''}>
+        <span style="font-weight:600;color:var(--text)">📁 Sem Categoria</span>
+      </label>
+    `;
+
+    // Categorias cadastradas
+    cats.forEach(c => {
+      const isChecked = allowedCatIds === null || allowedCatIds.includes(String(c.id));
+      html += `
+        <label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:4px;cursor:pointer;background:var(--surface2)">
+          <input type="checkbox" class="svd-cat-checkbox" value="${c.id}" ${isChecked ? 'checked' : ''}>
+          <span>${c.nome}</span>
+        </label>
+      `;
+    });
+
+    container.innerHTML = html;
+  } catch (e) {
+    container.innerHTML = `<div style="color:var(--danger);padding:12px">Erro ao carregar categorias: ${e.message}</div>`;
+  }
+}
+
+function marcarTodasCategoriasSVD(marcar) {
+  const checkboxes = document.querySelectorAll('.svd-cat-checkbox');
+  checkboxes.forEach(cb => cb.checked = marcar);
+}
+
+function aplicarCategoriasSVD() {
+  const checkboxes = document.querySelectorAll('.svd-cat-checkbox');
+  const selected = [];
+  checkboxes.forEach(cb => {
+    if (cb.checked) {
+      selected.push(cb.value);
+    }
+  });
+  localStorage.setItem('svd_categorias_visiveis', JSON.stringify(selected));
+  closeModal('modal-svd-categorias');
+  loadSaldoDemanda();
 }
 
 // ─── LIMPAR DADOS ─────────────────────────────────────────────────────────────

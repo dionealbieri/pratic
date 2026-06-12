@@ -425,6 +425,7 @@ def saldo_vs_demanda(categoria_id: Optional[int] = None):
         SELECT 
             ep.id, ep.codigo, ep.nome, ep.marca, ep.unidade,
             ep.estoque_minimo, ec.nome as categoria_nome,
+            ep.categoria_id,
             COALESCE(es.quantidade, 0) as saldo_atual
         FROM estoque_produtos ep
         LEFT JOIN estoque_categorias ec ON ep.categoria_id = ec.id
@@ -485,6 +486,7 @@ def saldo_vs_demanda(categoria_id: Optional[int] = None):
             "marca": p["marca"],
             "unidade": p["unidade"],
             "categoria": p["categoria_nome"] or "—",
+            "categoria_id": p["categoria_id"],
             "estoque_minimo": p["estoque_minimo"],
             "saldo_atual": saldo,
             "qtd_aberto": demanda["qtd_aberto"] or 0,
