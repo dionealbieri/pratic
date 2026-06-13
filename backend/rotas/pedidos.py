@@ -266,6 +266,9 @@ def _sac_valor_apos(linhas, label, ate=None):
                     return cand
     return None
 
+# Prazo de entrega padrão para pedidos importados do SAC: data do pedido + N dias
+PRAZO_ENTREGA_PADRAO_DIAS = 15
+
 def _parse_pedido_sac(texto: str) -> dict:
     linhas = [l.strip() for l in (texto or "").splitlines()]
     linhas = [l for l in linhas if l != ""]
@@ -280,7 +283,9 @@ def _parse_pedido_sac(texto: str) -> dict:
     if m:
         numero = m.group(1)
 
-    data_iso = _date_br_to_iso(_sac_valor_apos(linhas, r"Data de Lan[çc]amento") or "") or datetime.date.today().isoformat()
+    _lanc_iso = _date_br_to_iso(_sac_valor_apos(linhas, r"Data de Lan[çc]amento") or "")
+    _base = datetime.date.fromisoformat(_lanc_iso) if _lanc_iso else datetime.date.today()
+    data_iso = (_base + datetime.timedelta(days=PRAZO_ENTREGA_PADRAO_DIAS)).isoformat()
 
     cliente = _sac_valor_apos(linhas, r"Cliente", ate=idx_obs)
 
@@ -446,6 +451,50 @@ def _auto_vincular_itens(conn):
         if melhor_id:
             conn.execute("UPDATE pedidos_itens SET produto_id = ? WHERE id = ?", (melhor_id, item['id']))
 
+_SUFIXOS_JURIDICOS = {"LTDA", "LTDA.", "EIRELI", "EPP", "ME", "MEI", "SA", "S/A",
+                      "S.A", "S.A.", "CIA", "CIA.", "EI", "INC", "EIRL"}
+
+def _abreviar_razao(razao: str) -> str:
+    """Gera um nome curto a partir da razão social (sem sufixos jurídicos)."""
+    if not razao:
+        return ""
+    tokens = re.split(r"\s+", razao.strip())
+    out = []
+    for t in tokens:
+        tu = t.upper().strip(".,-/")
+        if tu in _SUFIXOS_JURIDICOS:
+            continue
+        if t.strip() in ("-", "&", "/") and not out:
+            continue
+        out.append(t)
+    s = " ".join(out).strip(" -,/&")
+    if not s:
+        s = razao.strip()
+    return s[:60].rstrip()
+
+async def _preparar_cliente_para_cadastro(c: dict) -> dict:
+    """Para um cliente NOVO: busca os dados oficiais na Receita pelo CNPJ
+    (como o botão 'buscar') e preenche o nome fantasia com a razão social
+    abreviada quando a Receita/arquivo não trouxer fantasia."""
+    final = dict(c or {})
+    doc_limpo = ''.join(filter(str.isdigit, final.get("cnpj") or ""))
+    if len(doc_limpo) == 14:
+        receita = await _buscar_cnpj_dados(doc_limpo)
+        if receita:
+            # E-mail e telefone NÃO são sobrescritos: na Receita costumam ser do
+            # escritório de contabilidade. Mantém-se sempre o que veio do pedido.
+            for campo in ("razao_social", "nome_fantasia", "cep",
+                          "logradouro", "numero", "complemento", "bairro", "cidade", "uf"):
+                if receita.get(campo):
+                    final[campo] = receita.get(campo)
+    if not (final.get("razao_social") or "").strip():
+        final["razao_social"] = "Cliente importado sem nome"
+    if not (final.get("nome_fantasia") or "").strip():
+        final["nome_fantasia"] = _abreviar_razao(final.get("razao_social") or "")
+    final["cnpj"] = doc_limpo or final.get("cnpj")
+    return final
+
+
 async def _resolver_cliente_id(parsed: dict, cur) -> int:
     """Encontra (por CNPJ/razão social) ou cria o cliente do pedido. Reutilizado na importação em lote."""
     doc = parsed["cliente"].get("cnpj")
@@ -459,16 +508,11 @@ async def _resolver_cliente_id(parsed: dict, cur) -> int:
             (parsed["cliente"]["razao_social"],)).fetchone()
     if cliente:
         return cliente["id"]
-    c = parsed["cliente"]
-    nome_ok = bool((c.get("razao_social") or "").strip()) and c.get("razao_social") != "Cliente importado sem nome"
-    if doc_limpo and len(doc_limpo) == 14 and not nome_ok:
-        cnpj_dados = await _buscar_cnpj_dados(doc_limpo)
-        if cnpj_dados:
-            c = cnpj_dados
+    c = await _preparar_cliente_para_cadastro(parsed["cliente"])
     cur.execute("""INSERT INTO pedidos_clientes
         (cnpj, razao_social, nome_fantasia, email, telefone, cep, logradouro, numero, complemento, bairro, cidade, uf, observacoes)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        (doc_limpo or c.get("cnpj"), c.get("razao_social") or "Cliente importado sem nome", c.get("nome_fantasia"),
+        (c.get("cnpj"), c.get("razao_social"), c.get("nome_fantasia"),
          c.get("email"), c.get("telefone"), c.get("cep"), c.get("logradouro"), c.get("numero"), c.get("complemento"),
          c.get("bairro"), c.get("cidade"), c.get("uf"), "Cadastrado automaticamente pela importação de pedido"))
     return cur.lastrowid
@@ -592,19 +636,11 @@ async def _processar_arquivo_pedido(file: UploadFile):
             if cliente:
                 cliente_id = cliente["id"]
             else:
-                c = parsed["cliente"]
-                # Se for CNPJ (14 dígitos), busca automaticamente via ReceitaWS
-                # Só consulta a ReceitaWS quando o próprio arquivo não trouxe a razão social
-                nome_ok = bool((c.get("razao_social") or "").strip()) and c.get("razao_social") != "Cliente importado sem nome"
-                if doc_limpo and len(doc_limpo) == 14 and not nome_ok:
-                    cnpj_dados = await _buscar_cnpj_dados(doc_limpo)
-                    if cnpj_dados:
-                        c = cnpj_dados
-                
+                c = await _preparar_cliente_para_cadastro(parsed["cliente"])
                 cur.execute("""INSERT INTO pedidos_clientes
                     (cnpj, razao_social, nome_fantasia, email, telefone, cep, logradouro, numero, complemento, bairro, cidade, uf, observacoes)
                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (doc_limpo or c.get("cnpj"), c.get("razao_social") or "Cliente importado sem nome", c.get("nome_fantasia"), c.get("email"), c.get("telefone"), c.get("cep"), c.get("logradouro"), c.get("numero"), c.get("complemento"), c.get("bairro"), c.get("cidade"), c.get("uf"), "Cadastrado automaticamente pela importação de pedido"))
+                    (c.get("cnpj"), c.get("razao_social"), c.get("nome_fantasia"), c.get("email"), c.get("telefone"), c.get("cep"), c.get("logradouro"), c.get("numero"), c.get("complemento"), c.get("bairro"), c.get("cidade"), c.get("uf"), "Cadastrado automaticamente pela importação de pedido"))
                 cliente_id = cur.lastrowid
                 conn.commit()
         finally:
@@ -746,6 +782,32 @@ def deletar_cliente(id: int):
 
 # ─── PEDIDOS ──────────────────────────────────────────────────────────────────
 
+def _recalc_status_pedido(cur, pedido_id):
+    """Recalcula o status do pedido a partir do progresso real dos itens (qtd_produzida)."""
+    counts = cur.execute("""
+        SELECT COUNT(*) as total,
+               COUNT(CASE WHEN status='entregue' THEN 1 END) as entregues,
+               COUNT(CASE WHEN status IN ('produzido','entregue')
+                           OR (qtd_produzida >= quantidade AND quantidade > 0) THEN 1 END) as produzidos,
+               COUNT(CASE WHEN qtd_produzida > 0
+                           OR status IN ('em_producao','produzido','entregue') THEN 1 END) as iniciados
+        FROM pedidos_itens WHERE pedido_id=?
+    """, (pedido_id,)).fetchone()
+    total = counts["total"] or 0
+    if total == 0:
+        novo = 'aberto'
+    elif counts["entregues"] == total:
+        novo = 'entregue'
+    elif counts["produzidos"] == total:
+        novo = 'produzido'
+    elif counts["iniciados"] > 0:
+        novo = 'em_producao'
+    else:
+        novo = 'aberto'
+    cur.execute("UPDATE pedidos SET status=? WHERE id=?", (novo, pedido_id))
+    return novo
+
+
 @router.get("/")
 def listar_pedidos(status: Optional[str] = None, cliente_id: Optional[int] = None):
     conn = get_conn()
@@ -755,6 +817,10 @@ def listar_pedidos(status: Optional[str] = None, cliente_id: Optional[int] = Non
                c.nome_fantasia,
                COUNT(i.id) as total_itens,
                COUNT(CASE WHEN i.status = 'entregue' THEN 1 END) as itens_entregues,
+               COUNT(CASE WHEN i.status IN ('produzido','entregue')
+                           OR (i.qtd_produzida >= i.quantidade AND i.quantidade > 0) THEN 1 END) as itens_produzidos,
+               COUNT(CASE WHEN i.qtd_produzida > 0
+                           OR i.status IN ('em_producao','produzido','entregue') THEN 1 END) as itens_iniciados,
                julianday(p.prazo_entrega) - julianday('now') as dias_restantes
         FROM pedidos p
         JOIN pedidos_clientes c ON p.cliente_id = c.id
@@ -771,7 +837,41 @@ def listar_pedidos(status: Optional[str] = None, cliente_id: Optional[int] = Non
     query += " GROUP BY p.id ORDER BY p.prazo_entrega ASC"
     rows = conn.execute(query, params).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    result = []
+    for r in rows:
+        d = dict(r)
+        tot = d.get("total_itens") or 0
+        prod = d.get("itens_produzidos") or 0
+        entr = d.get("itens_entregues") or 0
+        ini = d.get("itens_iniciados") or 0
+        if tot > 0 and entr == tot:
+            d["status_efetivo"] = "entregue"
+        elif tot > 0 and prod == tot:
+            d["status_efetivo"] = "produzido"
+        elif ini > 0:
+            d["status_efetivo"] = "em_producao"
+        else:
+            d["status_efetivo"] = d.get("status") or "aberto"
+        result.append(d)
+    return result
+
+@router.post("/resync-status")
+def resync_status_pedidos():
+    """Reconcilia o status de itens e pedidos a partir do progresso real (qtd_produzida).
+    Corrige pedidos antigos que ficaram 'aberto' apesar de já produzidos."""
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute("""UPDATE pedidos_itens SET status='produzido'
+                   WHERE qtd_produzida >= quantidade AND quantidade > 0 AND status NOT IN ('entregue')""")
+    cur.execute("""UPDATE pedidos_itens SET status='em_producao'
+                   WHERE qtd_produzida > 0 AND qtd_produzida < quantidade AND status='aberto'""")
+    ped_ids = [r["id"] for r in cur.execute("SELECT id FROM pedidos").fetchall()]
+    for pid in ped_ids:
+        _recalc_status_pedido(cur, pid)
+    conn.commit()
+    conn.close()
+    return {"mensagem": "Status sincronizado", "pedidos": len(ped_ids)}
+
 
 @router.get("/alertas/resumo")
 def alertas_pedidos():
@@ -905,6 +1005,7 @@ def atualizar_pedido(id: int, p: PedidoIn):
             (id, item.produto_id, item.descricao, item.quantidade, item.unidade, qtd_produzida, status))
             
     _auto_vincular_itens(conn)
+    _recalc_status_pedido(cur, id)
     conn.commit()
     conn.close()
     return {"mensagem": "Pedido atualizado"}

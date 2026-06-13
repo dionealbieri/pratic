@@ -290,11 +290,19 @@
         <div class="flex items-center justify-between mb-4">
           <div class="flex gap-2 items-center">
             <select id="ped-status-filtro" onchange="loadPedidos()" style="min-width:150px">
+              <option value="ativos">Ativos (não entregues)</option>
               <option value="">Todos os status</option>
               <option value="aberto">Aberto</option>
               <option value="em_producao">Em produção</option>
               <option value="produzido">Produzido</option>
               <option value="entregue">Entregue</option>
+            </select>
+            <select id="ped-prazo-filtro" onchange="loadPedidos()" style="min-width:150px">
+              <option value="">Todos os prazos</option>
+              <option value="hoje">Vence hoje</option>
+              <option value="semana">Próximos 7 dias</option>
+              <option value="mes">Este mês</option>
+              <option value="atrasados">Atrasados</option>
             </select>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">

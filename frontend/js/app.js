@@ -2811,6 +2811,9 @@ const STATUS_LABEL_PED={aberto:'📋 Aberto',em_producao:'🏭 Em produção',pr
 const STATUS_PILL_PED={aberto:'pill-info',em_producao:'pill-warn',produzido:'pill-success',entregue:'pill-success'};
 const STATUS_NEXT_PED={aberto:'em_producao',em_producao:'produzido',produzido:'entregue',entregue:null};
 const STATUS_NEXT_LABEL_PED={aberto:'→ Iniciar',em_producao:'→ Produzido',produzido:'→ Entregue',entregue:null};
+// Considera o item como produzido pela quantidade real, não só pelo campo status (evita divergência)
+const _itemProduzido = i => (((i.qtd_produzida||0) >= i.quantidade) && i.quantidade>0) || i.status==='produzido' || i.status==='entregue';
+const _itemStatusEf = i => i.status==='entregue' ? 'entregue' : (_itemProduzido(i) ? 'produzido' : ((i.qtd_produzida||0)>0 ? 'em_producao' : 'aberto'));
 
 function switchPedidosTab(tab) {
   ['fila','pedidos','clientes'].forEach(t=>{
@@ -2898,22 +2901,23 @@ async function loadFila() {
       const diasCor=dias<0?'var(--danger)':dias<=3?'var(--danger)':dias<=7?'var(--warn)':'var(--success)';
       const diasLabel=dias<0?`⚠ Vencido há ${Math.abs(dias)}d`:dias===0?'⚠ Vence hoje!':`${dias}d restantes`;
       const urgente = dias <= 3;
-      const produzidos = g.itens.filter(i=>i.status==='produzido'||i.status==='entregue').length;
+      const produzidos = g.itens.filter(_itemProduzido).length;
       const totalItens = g.itens.length;
       const pctGeral = Math.round((produzidos/totalItens)*100);
       const cardId = 'fila-card-' + p.pedido_id;
 
       const itensList = g.itens.map(i=>{
         const pct=Math.min(100,Math.round((i.qtd_produzida/i.quantidade)*100));
-        const prox=STATUS_NEXT_PED[i.status];
+        const stEf=_itemStatusEf(i);
+        const prox=STATUS_NEXT_PED[stEf];
         return `<div style="padding:10px 0;border-bottom:1px solid var(--border)">
           <div class="flex items-center justify-between" style="margin-bottom:6px">
             <div style="flex:1;min-width:0">
               <span style="font-weight:600;font-size:13px">${i.descricao}</span>
-              <span class="pill ${STATUS_PILL_PED[i.status]}" style="margin-left:8px;font-size:10px">${STATUS_LABEL_PED[i.status]}</span>
+              <span class="pill ${STATUS_PILL_PED[stEf]}" style="margin-left:8px;font-size:10px">${STATUS_LABEL_PED[stEf]}</span>
             </div>
             <div class="flex gap-2" style="flex-shrink:0;margin-left:8px">
-              ${prox && temPermissao('producao', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="avancarItemStatus(${i.id},'${prox}',${i.quantidade})">${STATUS_NEXT_LABEL_PED[i.status]}</button>` : ''}
+              ${prox && temPermissao('producao', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="avancarItemStatus(${i.id},'${prox}',${i.quantidade})">${STATUS_NEXT_LABEL_PED[stEf]}</button>` : ''}
               ${temPermissao('producao', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="removerItemFila(${i.id})">✕</button>` : ''}
             </div>
           </div>
@@ -2995,12 +2999,48 @@ async function removerItemFila(id) {
   loadFila();
 }
 
+function _diasAtePrazo(prazoStr) {
+  const s = String(prazoStr || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const [y, m, d] = s.split('-').map(Number);
+  const alvo = new Date(y, m - 1, d); alvo.setHours(0, 0, 0, 0);
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  return Math.round((alvo - hoje) / 86400000);
+}
+
 async function loadPedidos() {
-  const status=document.getElementById('ped-status-filtro')?.value||'';
-  let url='/pedidos/';if(status) url+='?status='+status;
-  const rows=await api(url);
-  const tbody=document.getElementById('ped-tbody');
-  if(!tbody) return;
+  const sit = document.getElementById('ped-status-filtro')?.value ?? 'ativos';
+  const prazoF = document.getElementById('ped-prazo-filtro')?.value || '';
+  let rows = await api('/pedidos/');
+  const statusDe = p => p.status_efetivo || p.status;
+
+  // Filtro de situação (usa o status real derivado da produção)
+  if (sit === 'ativos') rows = rows.filter(p => statusDe(p) !== 'entregue');
+  else if (sit) rows = rows.filter(p => statusDe(p) === sit);
+
+  // Filtro de prazo
+  if (prazoF) {
+    const hoje = new Date();
+    rows = rows.filter(p => {
+      const dias = _diasAtePrazo(p.prazo_entrega);
+      if (dias === null) return false;
+      if (prazoF === 'hoje') return dias === 0;
+      if (prazoF === 'semana') return dias >= 0 && dias <= 7;
+      if (prazoF === 'atrasados') return dias < 0 && statusDe(p) !== 'entregue';
+      if (prazoF === 'mes') {
+        const s = String(p.prazo_entrega || '').slice(0, 10).split('-').map(Number);
+        return s[0] === hoje.getFullYear() && (s[1] - 1) === hoje.getMonth();
+      }
+      return true;
+    });
+  }
+
+  const tbody = document.getElementById('ped-tbody');
+  if (!tbody) return;
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">Nenhum pedido neste filtro</td></tr>';
+    return;
+  }
   tbody.innerHTML=rows.map(p=>{
     const dias=Math.round(p.dias_restantes);
     const diasCor=dias<0?'var(--danger)':dias<=3?'var(--warn)':'var(--success)';
@@ -3010,8 +3050,8 @@ async function loadPedidos() {
       <td>${p.vendedor || '—'}</td>
       <td>${fmtDate(p.prazo_entrega)}</td>
       <td style="color:${diasCor};font-weight:700">${dias<0?'Vencido':dias+'d'}</td>
-      <td>${p.itens_entregues}/${p.total_itens}</td>
-      <td><span class="pill ${STATUS_PILL_PED[p.status]}">${STATUS_LABEL_PED[p.status]}</span></td>
+      <td>${p.itens_produzidos}/${p.total_itens}</td>
+      <td><span class="pill ${STATUS_PILL_PED[p.status_efetivo||p.status]}">${STATUS_LABEL_PED[p.status_efetivo||p.status]}</span></td>
       <td class="flex gap-2">
         <button class="btn btn-sm btn-secondary" onclick="verDetalhesPedido(${p.id})">Ver</button>
         ${temPermissao('pedidos', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="editPedido(${p.id})">✏️</button>` : ''}
@@ -3307,13 +3347,100 @@ async function openModalPedido() {
   openModal('modal-pedido');
 }
 
+// ── Seletor de produto por item do pedido (combobox com ranking por semelhança) ──
+function _scoreProduto(query, prod) {
+  const desc = (query || '').toUpperCase();
+  const nome = (prod.nome || '').toUpperCase();
+  if (!nome) return 0;
+  const normD = desc.replace(/[^A-Z0-9]/g, '').replace(/ML$/, 'M');
+  const normP = nome.replace(/[^A-Z0-9]/g, '').replace(/ML$/, 'M');
+  let score = 0;
+  if (normD && normP === normD) score += 100;
+  const numbers = desc.match(/\d+/g) || [];
+  let allNums = numbers.length > 0;
+  for (const n of numbers) { if (!nome.includes(n)) { allNums = false; break; } }
+  if (allNums && numbers.length > 0) score += 8;
+  [['CRISTAL', 6], ['CTL', 4], ['COPO', 2], ['PP', 2], ['PS', 2], ['TAMPA', 3], ['BOLHA', 3], ['RETA', 3], ['FURO', 2]].forEach(([k, w]) => {
+    if (desc.includes(k) && nome.includes(k)) score += w;
+  });
+  if (normD && (normP.includes(normD) || normD.includes(normP))) score += 10;
+  const td = desc.split(/[^A-Z0-9]+/).filter(t => t.length >= 2);
+  const tp = new Set(nome.split(/[^A-Z0-9]+/).filter(t => t.length >= 2));
+  td.forEach(t => { if (tp.has(t)) score += 1; });
+  if (prod.codigo && desc.includes(String(prod.codigo).toUpperCase())) score += 5;
+  return score;
+}
+
+function _rankProdutos(query) {
+  const arr = (produtosEstoque || []).map(p => ({ p, s: _scoreProduto(query, p) }));
+  if (query && query.trim()) arr.sort((a, b) => b.s - a.s || (a.p.nome || '').localeCompare(b.p.nome || ''));
+  else arr.sort((a, b) => (a.p.nome || '').localeCompare(b.p.nome || ''));
+  return arr;
+}
+
+function abrirProdCombo(idx) {
+  const drop = document.getElementById('ped-item-drop-' + idx);
+  if (!drop) return;
+  const q = pedidoItens[idx] ? (pedidoItens[idx].descricao || '') : '';
+  const ranked = _rankProdutos(q).slice(0, 60);
+  if (!ranked.length) {
+    drop.innerHTML = '<div style="padding:10px;color:var(--muted);font-size:12px">Nenhum produto cadastrado no estoque</div>';
+    drop.style.display = 'block';
+    return;
+  }
+  const temQuery = !!(q && q.trim());
+  drop.innerHTML = ranked.map(({ p, s }, i) => {
+    const destaque = (temQuery && i === 0 && s > 0) ? 'border-left:3px solid var(--accent);' : 'border-left:3px solid transparent;';
+    const label = _produtoLabel(p).replace(/"/g, '&quot;');
+    return `<div onmousedown="event.preventDefault();selecionarProdComboItem(${idx}, ${p.id})" title="${label}"
+      style="padding:7px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--border);${destaque}white-space:nowrap;overflow:hidden;text-overflow:ellipsis"
+      onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='transparent'">
+      ${_produtoLabel(p)} <span style="color:var(--muted)">· ${fmtNum(p.quantidade_atual || 0)} ${p.unidade || ''}</span>
+    </div>`;
+  }).join('');
+  drop.style.display = 'block';
+}
+
+function toggleProdCombo(idx) {
+  const d = document.getElementById('ped-item-drop-' + idx);
+  if (d && d.style.display === 'block') { d.style.display = 'none'; }
+  else { abrirProdCombo(idx); const inp = document.getElementById('ped-item-input-' + idx); if (inp) inp.focus(); }
+}
+
+function fecharProdCombo(idx) { const d = document.getElementById('ped-item-drop-' + idx); if (d) d.style.display = 'none'; }
+function fecharProdComboDelayed(idx) { setTimeout(() => fecharProdCombo(idx), 150); }
+
+function selecionarProdComboItem(idx, prodId) {
+  const p = (produtosEstoque || []).find(x => x.id === prodId);
+  if (!p || !pedidoItens[idx]) return;
+  pedidoItens[idx].descricao = p.nome;
+  pedidoItens[idx].produto_id = p.id;
+  const opts = ['unidade', 'und', 'milheiro', 'kg', 'litro', 'metro', 'caixa', 'pacote'];
+  if (p.unidade && opts.includes(p.unidade)) pedidoItens[idx].unidade = p.unidade;
+  fecharProdCombo(idx);
+  renderItensPedido();
+}
+window.abrirProdCombo = abrirProdCombo;
+window.toggleProdCombo = toggleProdCombo;
+window.fecharProdComboDelayed = fecharProdComboDelayed;
+window.selecionarProdComboItem = selecionarProdComboItem;
+
 function renderItensPedido() {
   const el=document.getElementById('ped-itens-list');
   if(!el) return;
   if(!pedidoItens.length){el.innerHTML='<p style="color:var(--muted);font-size:13px;padding:8px 0">Nenhum item</p>';return;}
   el.innerHTML=pedidoItens.map((item,idx)=>`
     <div style="display:grid;grid-template-columns:1fr auto auto auto;gap:8px;align-items:center;margin-bottom:8px">
-      <input type="text" value="${item.descricao}" list="produtos-datalist" placeholder="Clique para escolher um produto do estoque ou digite *" oninput="pedidoItens[${idx}].descricao=this.value" onchange="selecionarProdutoPedidoItem(${idx}, this.value)" style="font-size:13px">
+      <div style="position:relative;min-width:0">
+        <input type="text" id="ped-item-input-${idx}" value="${(item.descricao||'').replace(/"/g,'&quot;')}" autocomplete="off"
+          placeholder="Clique na seta ▼ para ver os produtos, ou digite *"
+          oninput="pedidoItens[${idx}].descricao=this.value; abrirProdCombo(${idx})"
+          onfocus="abrirProdCombo(${idx})" onblur="fecharProdComboDelayed(${idx})"
+          style="font-size:13px;width:100%;padding-right:30px">
+        <span onmousedown="event.preventDefault();toggleProdCombo(${idx})" title="Ver produtos do estoque"
+          style="position:absolute;right:6px;top:50%;transform:translateY(-50%);cursor:pointer;color:var(--text);font-size:11px;padding:4px;user-select:none">▼</span>
+        <div id="ped-item-drop-${idx}" style="display:none;position:absolute;z-index:60;left:0;right:0;top:calc(100% + 2px);background:var(--surface2);border:1px solid var(--border);border-radius:6px;max-height:240px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.45)"></div>
+      </div>
       <input type="number" value="${item.quantidade}" min="1" placeholder="Qtd" oninput="pedidoItens[${idx}].quantidade=+this.value" style="width:80px;font-size:13px">
       <select onchange="pedidoItens[${idx}].unidade=this.value" style="font-size:13px">
         ${['unidade','und','milheiro','kg','litro','metro','caixa','pacote'].map(u=>`<option value="${u}" ${item.unidade===u?'selected':''}>${u}</option>`).join('')}
@@ -3409,14 +3536,32 @@ async function editCliente(id) {
   openModal('modal-cliente');
 }
 
+function _abreviarRazao(razao){
+  if(!razao) return '';
+  const suf=new Set(['LTDA','LTDA.','EIRELI','EPP','ME','MEI','SA','S/A','S.A','S.A.','CIA','CIA.','EI','INC','EIRL']);
+  const out=[];
+  razao.trim().split(/\s+/).forEach(t=>{
+    const tu=t.toUpperCase().replace(/^[.,\-/]+|[.,\-/]+$/g,'');
+    if(suf.has(tu)) return;
+    if((t==='-'||t==='&'||t==='/')&&out.length===0) return;
+    out.push(t);
+  });
+  let s=out.join(' ').replace(/^[\s\-,/&]+|[\s\-,/&]+$/g,'');
+  if(!s) s=razao.trim();
+  return s.slice(0,60).replace(/\s+$/,'');
+}
+window._abreviarRazao=_abreviarRazao;
+
 async function buscarCNPJ() {
   const cnpj=document.getElementById('cli-cnpj')?.value.replace(/\D/g,'');
   if(cnpj?.length!==14){showAlert('CNPJ deve ter 14 dígitos','danger');return;}
   try {
     const d=await api('/pedidos/busca-cnpj/'+cnpj);
     const setV=(k,v)=>{const el=document.getElementById('cli-'+k);if(el)el.value=v||'';};
-    setV('razao',d.razao_social);setV('fantasia',d.nome_fantasia);setV('email',d.email);
-    setV('telefone',d.telefone);setV('cep',d.cep);setV('logradouro',d.logradouro);
+    setV('razao',d.razao_social);
+    setV('fantasia', d.nome_fantasia || _abreviarRazao(d.razao_social));
+    // E-mail e telefone NÃO são preenchidos pela Receita (costumam ser do contador) — preenchimento manual
+    setV('cep',d.cep);setV('logradouro',d.logradouro);
     setV('numero',d.numero);setV('bairro',d.bairro);setV('cidade',d.cidade);setV('uf',d.uf);
     showAlert('CNPJ encontrado!');
   } catch(e){showAlert('CNPJ não encontrado','danger');}
@@ -3435,7 +3580,8 @@ async function buscarCEP() {
 
 async function salvarCliente() {
   const getV=k=>{const el=document.getElementById('cli-'+k);return el?el.value:'';};
-  const body={cnpj:getV('cnpj').replace(/\D/g,''),razao_social:getV('razao'),nome_fantasia:getV('fantasia'),ie:getV('ie'),email:getV('email'),telefone:getV('telefone'),cep:getV('cep').replace(/\D/g,''),logradouro:getV('logradouro'),numero:getV('numero'),complemento:getV('complemento'),bairro:getV('bairro'),cidade:getV('cidade'),uf:getV('uf'),observacoes:getV('obs')};
+  const fantasia = (getV('fantasia').trim()) || _abreviarRazao(getV('razao'));
+  const body={cnpj:getV('cnpj').replace(/\D/g,''),razao_social:getV('razao'),nome_fantasia:fantasia,ie:getV('ie'),email:getV('email'),telefone:getV('telefone'),cep:getV('cep').replace(/\D/g,''),logradouro:getV('logradouro'),numero:getV('numero'),complemento:getV('complemento'),bairro:getV('bairro'),cidade:getV('cidade'),uf:getV('uf'),observacoes:getV('obs')};
   if(!body.razao_social){showAlert('Informe a razão social','danger');return;}
   const id=getV('id');
   try {
