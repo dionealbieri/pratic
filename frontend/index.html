@@ -304,6 +304,9 @@
               <option value="mes">Este mês</option>
               <option value="atrasados">Atrasados</option>
             </select>
+            <select id="ped-marca-filtro" onchange="loadPedidos()" style="min-width:150px">
+              <option value="">Todas as marcas</option>
+            </select>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-secondary" onclick="openModalImportarPedido()" data-perm-importar="pedidos">📎 Importar Pedido</button>
@@ -352,6 +355,9 @@
             <datalist id="est-busca-produtos-list"></datalist>
             <select id="est-filtro-cat" onchange="loadProdutos()" style="min-width:180px">
               <option value="">Todas as categorias</option>
+            </select>
+            <select id="est-filtro-marca" onchange="loadProdutos()" style="min-width:160px">
+              <option value="">Todas as marcas</option>
             </select>
             <select id="est-filtro-status" onchange="loadProdutos()" style="min-width:180px">
               <option value="">Todos os status</option>

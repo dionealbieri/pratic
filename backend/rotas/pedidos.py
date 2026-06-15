@@ -821,10 +821,12 @@ def listar_pedidos(status: Optional[str] = None, cliente_id: Optional[int] = Non
                            OR (i.qtd_produzida >= i.quantidade AND i.quantidade > 0) THEN 1 END) as itens_produzidos,
                COUNT(CASE WHEN i.qtd_produzida > 0
                            OR i.status IN ('em_producao','produzido','entregue') THEN 1 END) as itens_iniciados,
+               GROUP_CONCAT(DISTINCT pr.marca) as marcas,
                julianday(p.prazo_entrega) - julianday('now') as dias_restantes
         FROM pedidos p
         JOIN pedidos_clientes c ON p.cliente_id = c.id
         LEFT JOIN pedidos_itens i ON i.pedido_id = p.id
+        LEFT JOIN estoque_produtos pr ON pr.id = i.produto_id
         WHERE 1=1
     """
     params = []

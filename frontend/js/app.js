@@ -3008,15 +3008,36 @@ function _diasAtePrazo(prazoStr) {
   return Math.round((alvo - hoje) / 86400000);
 }
 
+function _popularFiltroMarcas(pedidos, selecionada) {
+  const sel = document.getElementById('ped-marca-filtro');
+  if (!sel) return;
+  const marcas = new Set();
+  (pedidos || []).forEach(p => {
+    (p.marcas || '').split(',').forEach(m => { const t = m.trim(); if (t) marcas.add(t); });
+  });
+  const ordenadas = Array.from(marcas).sort((a, b) => a.localeCompare(b));
+  sel.innerHTML = '<option value="">Todas as marcas</option>' +
+    ordenadas.map(m => `<option value="${m.replace(/"/g, '&quot;')}" ${m === selecionada ? 'selected' : ''}>${m}</option>`).join('');
+}
+
 async function loadPedidos() {
   const sit = document.getElementById('ped-status-filtro')?.value ?? 'ativos';
   const prazoF = document.getElementById('ped-prazo-filtro')?.value || '';
+  const marcaF = document.getElementById('ped-marca-filtro')?.value || '';
   let rows = await api('/pedidos/');
   const statusDe = p => p.status_efetivo || p.status;
+
+  // Popula o filtro de marcas a partir de todos os pedidos (antes de filtrar)
+  _popularFiltroMarcas(rows, marcaF);
 
   // Filtro de situação (usa o status real derivado da produção)
   if (sit === 'ativos') rows = rows.filter(p => statusDe(p) !== 'entregue');
   else if (sit) rows = rows.filter(p => statusDe(p) === sit);
+
+  // Filtro de marca (marca dos produtos vinculados aos itens)
+  if (marcaF) {
+    rows = rows.filter(p => (p.marcas || '').split(',').map(s => s.trim()).filter(Boolean).includes(marcaF));
+  }
 
   // Filtro de prazo
   if (prazoF) {
@@ -4441,6 +4462,7 @@ function _normBuscaProduto(v) {
 function limparFiltrosProdutos() {
   _setVal('est-busca-produto', '');
   _setVal('est-filtro-cat', '');
+  _setVal('est-filtro-marca', '');
   _setVal('est-filtro-status', '');
   loadProdutos();
 }
@@ -4456,6 +4478,7 @@ function _statusProduto(p) {
 function _filtrarProdutosEstoque(prods) {
   const busca = _normBuscaProduto(_getVal('est-busca-produto'));
   const status = _getVal('est-filtro-status');
+  const marca = _getVal('est-filtro-marca');
 
   return prods.filter(p => {
     const qtd = Number(p.quantidade_atual || 0);
@@ -4466,6 +4489,8 @@ function _filtrarProdutosEstoque(prods) {
       if (!alvo.includes(busca)) return false;
     }
 
+    if (marca && String(p.marca || '').trim() !== marca) return false;
+
     if (status === 'falta' && qtd > 0) return false;
     if (status === 'baixo' && !(min > 0 && qtd > 0 && qtd <= min)) return false;
     if (status === 'ok' && !(qtd > 0 && (min <= 0 || qtd > min))) return false;
@@ -4474,6 +4499,17 @@ function _filtrarProdutosEstoque(prods) {
 
     return true;
   });
+}
+
+function _popularFiltroMarcasEstoque(prods) {
+  const sel = document.getElementById('est-filtro-marca');
+  if (!sel) return;
+  const atual = sel.value || '';
+  const marcas = new Set();
+  (prods || []).forEach(p => { const m = String(p.marca || '').trim(); if (m) marcas.add(m); });
+  const ordenadas = Array.from(marcas).sort((a, b) => a.localeCompare(b));
+  sel.innerHTML = '<option value="">Todas as marcas</option>' +
+    ordenadas.map(m => `<option value="${m.replace(/"/g, '&quot;')}" ${m === atual ? 'selected' : ''}>${m}</option>`).join('');
 }
 
 function _atualizarSugestoesProdutos(prods) {
@@ -4500,6 +4536,7 @@ async function loadProdutos() {
 
   const todos = await api(url);
   _atualizarSugestoesProdutos(todos);
+  _popularFiltroMarcasEstoque(todos);
 
   const prods = _filtrarProdutosEstoque(todos);
   const tbody = document.getElementById('est-produtos-tbody');
