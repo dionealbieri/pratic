@@ -1154,3 +1154,48 @@ button:disabled.btn-loading {
     justify-content: center;
   }
 }
+
+/* Responsive Grid Classes for Charts and Content */
+.grid-2col {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 20px;
+}
+.grid-3col {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+.grid-asymmetric {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 20px;
+}
+
+@media (max-width: 1024px) {
+  .grid-2col, .grid-3col {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .grid-asymmetric {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .grid-2col, .grid-3col {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+}
+
+/* Enhancements for loaded components */
+.graf-box {
+  transition: all 0.3s ease;
+}
+.graf-msg {
+  animation: fadeIn 0.4s ease;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}

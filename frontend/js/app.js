@@ -328,14 +328,14 @@ document.querySelectorAll('.modal-overlay').forEach(m => {
 
 // ─── DASHBOARD ───────────────────────────────────────────────────────────────
 
-async function loadDashboard() {
+async function loadDashboard(options = {}) {
   const mesEl = document.getElementById('dash-mes');
   if (!mesEl.value) mesEl.value = currentMonth();
   const mes = mesEl.value;
   document.getElementById('topbar-mes').textContent = mesLabel(mes);
 
   const cardsEl = document.getElementById('dash-cards');
-  if (cardsEl) {
+  if (cardsEl && !(options.useCache && _cacheDashboardData && _cacheDashboardMes === mes)) {
     cardsEl.innerHTML = `
       <div class="card"><div class="skeleton skeleton-title"></div><div class="skeleton skeleton-value"></div><div class="skeleton skeleton-text"></div></div>
       <div class="card"><div class="skeleton skeleton-title"></div><div class="skeleton skeleton-value"></div><div class="skeleton skeleton-text"></div></div>
@@ -349,7 +349,15 @@ async function loadDashboard() {
   }
 
   try {
-    const data = await api('/premiacao/dashboard/' + mes);
+    const useCache = options.useCache === true;
+    let data;
+    if (useCache && _cacheDashboardData && _cacheDashboardMes === mes) {
+      data = _cacheDashboardData;
+    } else {
+      data = await api('/premiacao/dashboard/' + mes);
+      _cacheDashboardData = data;
+      _cacheDashboardMes = mes;
+    }
 
     const totalProd = data.total_producao_geral || 0;
     const elegiveis = data.operadores.filter(o => o.elegivel).length;
@@ -399,17 +407,28 @@ async function loadDashboard() {
       </div>
     `;
 
+    const colors = getChartThemeColors();
+
     // 2. GRAFICOS
     if (chartDashEvolucaoInstance) {
       chartDashEvolucaoInstance.destroy();
     }
-    const ctxEvolucao = document.getElementById('chart-dash-evolucao').getContext('2d');
+    const canvasEvolucao = document.getElementById('chart-dash-evolucao');
+    const ctxEvolucao = canvasEvolucao.getContext('2d');
     const labelsEvolucao = data.evolucao_diaria.map(item => {
       const partes = item.data.split('-');
       return `${partes[2]}/${partes[1]}`;
     });
     const producoes = data.evolucao_diaria.map(item => item.producao);
     const perdas = data.evolucao_diaria.map(item => item.perda);
+
+    const prodGradient = ctxEvolucao.createLinearGradient(0, 0, 0, 300);
+    prodGradient.addColorStop(0, hexToRgba('#3b82f6', 0.25));
+    prodGradient.addColorStop(1, 'transparent');
+    
+    const lossGradient = ctxEvolucao.createLinearGradient(0, 0, 0, 300);
+    lossGradient.addColorStop(0, hexToRgba('#ef4444', 0.20));
+    lossGradient.addColorStop(1, 'transparent');
 
     chartDashEvolucaoInstance = new Chart(ctxEvolucao, {
       type: 'line',
@@ -420,19 +439,21 @@ async function loadDashboard() {
             label: 'Produção Real',
             data: producoes,
             borderColor: '#3b82f6',
-            backgroundColor: 'rgba(59, 130, 246, 0.1)',
+            backgroundColor: prodGradient,
             borderWidth: 2,
             tension: 0.3,
-            fill: true
+            fill: true,
+            pointRadius: 3
           },
           {
             label: 'Perdas (Desperdício)',
             data: perdas,
             borderColor: '#ef4444',
-            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+            backgroundColor: lossGradient,
             borderWidth: 2,
             tension: 0.3,
-            fill: true
+            fill: true,
+            pointRadius: 3
           }
         ]
       },
@@ -442,17 +463,31 @@ async function loadDashboard() {
         plugins: {
           legend: {
             position: 'top',
-            labels: { color: '#e8eaf0', font: { family: 'DM Sans' } }
+            labels: { color: colors.textColor, font: { family: 'DM Sans', size: 12 } }
+          },
+          tooltip: {
+            mode: 'index',
+            intersect: false,
+            backgroundColor: colors.tooltipBg,
+            titleColor: colors.tooltipText,
+            bodyColor: colors.tooltipText,
+            borderColor: colors.tooltipBorder,
+            borderWidth: 1,
+            padding: 10,
+            boxPadding: 6,
+            usePointStyle: true,
+            titleFont: { family: 'DM Sans', size: 12, weight: '700' },
+            bodyFont: { family: 'DM Sans', size: 11 }
           }
         },
         scales: {
           x: {
-            grid: { color: '#2a2f3f' },
-            ticks: { color: '#6b7280' }
+            grid: { color: colors.gridColor },
+            ticks: { color: colors.textColor, font: { family: 'DM Sans', size: 11 } }
           },
           y: {
-            grid: { color: '#2a2f3f' },
-            ticks: { color: '#6b7280' }
+            grid: { color: colors.gridColor },
+            ticks: { color: colors.textColor, font: { family: 'DM Sans', size: 11 } }
           }
         }
       }
@@ -461,9 +496,12 @@ async function loadDashboard() {
     if (chartDashPerdasTipoInstance) {
       chartDashPerdasTipoInstance.destroy();
     }
-    const ctxPerdasTipo = document.getElementById('chart-dash-perdas-tipo').getContext('2d');
+    const canvasPerdasTipo = document.getElementById('chart-dash-perdas-tipo');
+    const ctxPerdasTipo = canvasPerdasTipo.getContext('2d');
     const labelsPerdasTipo = data.perdas_por_tipo.map(item => item.tipo_perda);
     const qtdsPerdasTipo = data.perdas_por_tipo.map(item => item.quantidade);
+
+    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
 
     chartDashPerdasTipoInstance = new Chart(ctxPerdasTipo, {
       type: 'doughnut',
@@ -472,19 +510,32 @@ async function loadDashboard() {
         datasets: [{
           data: qtdsPerdasTipo.length > 0 ? qtdsPerdasTipo : [1],
           backgroundColor: qtdsPerdasTipo.length > 0
-            ? ['#ef4444', '#f0b429', '#3b82f6', '#10b981', '#a855f7', '#6b7280']
-            : ['#2a2f3f'],
-          borderWidth: 1,
-          borderColor: '#161920'
+            ? ['#ef4444', '#f59e0b', '#3b82f6', '#10b981', '#a855f7', '#6b7280']
+            : [colors.gridColor],
+          borderWidth: 2,
+          borderColor: isLight ? '#ffffff' : '#161920'
         }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
+        cutout: '75%',
         plugins: {
           legend: {
             position: 'right',
-            labels: { color: '#e8eaf0', font: { family: 'DM Sans' } }
+            labels: { color: colors.textColor, font: { family: 'DM Sans', size: 11 } }
+          },
+          tooltip: {
+            backgroundColor: colors.tooltipBg,
+            titleColor: colors.tooltipText,
+            bodyColor: colors.tooltipText,
+            borderColor: colors.tooltipBorder,
+            borderWidth: 1,
+            padding: 10,
+            boxPadding: 6,
+            usePointStyle: true,
+            titleFont: { family: 'DM Sans', size: 12, weight: '700' },
+            bodyFont: { family: 'DM Sans', size: 11 }
           }
         }
       }
@@ -3843,12 +3894,115 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // ─── GRÁFICOS ─────────────────────────────────────────────────────────────────
 
+// Caches globais para evitar requisições repetidas ao alternar temas
+let _cacheDashboardData = null;
+let _cacheDashboardMes = null;
+
+let _cacheGrafPeriodo = null;
+let _cacheGrafData = null;
+let _cacheAnualData = {};
+let _cacheCompData = {};
+let _cachePedidosData = null;
+let _cacheEstoqueData = null;
+
+const OP_COLORS = ['#3b82f6', '#8b5cf6', '#06b6d4', '#f97316', '#a855f7', '#ec4899', '#6366f1', '#14b8a6', '#f59e0b', '#0284c7'];
+
+function getChartThemeColors() {
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  return {
+    gridColor: isLight ? '#cbd5e1' : '#2a2f3f',
+    textColor: isLight ? '#475569' : '#94a3b8',
+    accentColor: isLight ? '#ca8a04' : '#f0b429',
+    successColor: isLight ? '#10b981' : '#10b981',
+    dangerColor: isLight ? '#ef4444' : '#ef4444',
+    infoColor: isLight ? '#3b82f6' : '#3b82f6',
+    tooltipBg: isLight ? 'rgba(255, 255, 255, 0.96)' : 'rgba(22, 25, 32, 0.96)',
+    tooltipText: isLight ? '#0f172a' : '#e8eaf0',
+    tooltipBorder: isLight ? '#cbd5e1' : '#2a2f3f'
+  };
+}
+
+function hexToRgba(hex, alpha) {
+  if (typeof hex !== 'string') return hex;
+  hex = hex.replace('#', '');
+  if (hex.length === 3) {
+    hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+  }
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function getGradientHelper(colorHex, alphaStart = 0.85, alphaEnd = 0.25) {
+  return (context) => {
+    const chart = context.chart;
+    const { ctx, chartArea } = chart;
+    if (!chartArea) return hexToRgba(colorHex, alphaStart);
+    const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+    gradient.addColorStop(0, hexToRgba(colorHex, alphaEnd));
+    gradient.addColorStop(1, hexToRgba(colorHex, alphaStart));
+    return gradient;
+  };
+}
+
+function getChartBaseOptions(colors) {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        labels: {
+          color: colors.textColor,
+          font: { family: 'DM Sans', size: 12, weight: '500' }
+        }
+      },
+      tooltip: {
+        mode: 'index',
+        intersect: false,
+        backgroundColor: colors.tooltipBg,
+        titleColor: colors.tooltipText,
+        bodyColor: colors.tooltipText,
+        borderColor: colors.tooltipBorder,
+        borderWidth: 1,
+        padding: 12,
+        boxPadding: 8,
+        usePointStyle: true,
+        titleFont: { family: 'DM Sans', size: 13, weight: '700' },
+        bodyFont: { family: 'DM Sans', size: 12 }
+      },
+      datalabels: {
+        display: false
+      }
+    },
+    scales: {
+      x: {
+        ticks: {
+          color: colors.textColor,
+          font: { family: 'DM Sans', size: 11 }
+        },
+        grid: {
+          color: colors.gridColor
+        }
+      },
+      y: {
+        ticks: {
+          color: colors.textColor,
+          font: { family: 'DM Sans', size: 11 }
+        },
+        grid: {
+          color: colors.gridColor
+        }
+      }
+    }
+  };
+}
+
 const grafCharts = {};
 function destroyGrafChart(id) { if(grafCharts[id]){grafCharts[id].destroy();delete grafCharts[id];} }
 
 // ── Helpers de melhoria dos Gráficos ─────────────────────────────────────────
 let _grafPluginPronto = false;
-// Escolhe a cor do rótulo conforme a luminância da barra: escuro em cores claras, branco em escuras.
 function _hexLum(hex) {
   if (typeof hex !== 'string') return 0;
   hex = hex.replace('#','').slice(0,6);
@@ -3858,18 +4012,26 @@ function _hexLum(hex) {
 }
 function _dlBg(ctx) {
   let bg = ctx.dataset.backgroundColor;
+  if (typeof bg === 'function') {
+    bg = bg(ctx);
+  }
   if (Array.isArray(bg)) bg = bg[ctx.dataIndex];
   return bg;
 }
-function _dlColor(ctx)  { return _hexLum(_dlBg(ctx)) > 0.55 ? '#000000' : '#ffffff'; }
-function _dlStroke(ctx) { return _dlColor(ctx) === '#ffffff' ? '#000000' : '#ffffff'; }
+function _dlColor(ctx)  {
+  const bg = _dlBg(ctx);
+  if (typeof bg === 'string' && bg.startsWith('#')) {
+    return _hexLum(bg) > 0.55 ? '#0f172a' : '#ffffff';
+  }
+  return '#ffffff';
+}
+function _dlStroke(ctx) { return _dlColor(ctx) === '#ffffff' ? '#0f172a' : '#ffffff'; }
 
 function _grafInitPlugin() {
   if (_grafPluginPronto) return;
   try {
     if (window.Chart && window.ChartDataLabels) {
       Chart.register(window.ChartDataLabels);
-      // Rótulos desligados por padrão; cada gráfico que quiser ativa explicitamente.
       Chart.defaults.set('plugins.datalabels', { display: false });
     }
   } catch(e) {}
@@ -3937,38 +4099,83 @@ function grafLoading(mostrar) {
 }
 
 
-async function loadGraficoComparativo() {
+async function loadGraficoComparativo(options = {}) {
   const ano1El = document.getElementById('graf-comp-ano1');
   const ano2El = document.getElementById('graf-comp-ano2');
   if(!ano1El || !ano2El) return;
   const ano1 = ano1El.value;
   const ano2 = ano2El.value;
-  const gc='#2a2f3f', tc='#6b7280';
+  
+  const colors = getChartThemeColors();
   const MESES=['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
   const DIAS_UTEIS=[22,20,21,22,21,21,23,22,21,23,21,21];
   try {
-    const [dados1, dados2] = await Promise.all([
-      api('/relatorios/resumo-anual/'+ano1),
-      ano2!==ano1 ? api('/relatorios/resumo-anual/'+ano2) : Promise.resolve([])
-    ]);
+    const useCache = options.useCache === true;
+    const cacheKey = `${ano1}_${ano2}`;
+    let data;
+    if (useCache && _cacheCompData[cacheKey]) {
+      data = _cacheCompData[cacheKey];
+    } else {
+      const [dados1, dados2] = await Promise.all([
+        api('/relatorios/resumo-anual/'+ano1),
+        ano2!==ano1 ? api('/relatorios/resumo-anual/'+ano2) : Promise.resolve([])
+      ]);
+      data = [dados1, dados2];
+      _cacheCompData[cacheKey] = data;
+    }
+    const [dados1, dados2] = data;
     const totais1=MESES.map((_,i)=>{const m=`${ano1}-${String(i+1).padStart(2,'0')}`;const r=dados1.find(d=>d.mes_referencia===m);return r?(r.total_producao||0):0;});
     const totais2=MESES.map((_,i)=>{const m=`${ano2}-${String(i+1).padStart(2,'0')}`;const r=dados2.find(d=>d.mes_referencia===m);return r?(r.total_producao||0):0;});
     const metas=DIAS_UTEIS.map(d=>8000*d);
 
     destroyGrafChart('comparativo-anual');
-    const datasets=[{label:`${ano1}`,data:totais1,backgroundColor:'#f0b429cc',borderColor:'#f0b429',borderWidth:1,borderRadius:5}];
-    if(ano2!==ano1) datasets.push({label:`${ano2}`,data:totais2,backgroundColor:'#3b82f6cc',borderColor:'#3b82f6',borderWidth:1,borderRadius:5});
-    datasets.push({label:'Meta mensal',data:metas,type:'line',borderColor:'#ef4444',borderDash:[8,4],borderWidth:2,pointRadius:0,fill:false});
+    const datasets=[{
+      label:`${ano1}`,
+      data:totais1,
+      backgroundColor: getGradientHelper(colors.accentColor, 0.85, 0.25),
+      borderColor: colors.accentColor,
+      borderWidth: 1.5,
+      borderRadius: 5
+    }];
+    if(ano2!==ano1) datasets.push({
+      label:`${ano2}`,
+      data:totais2,
+      backgroundColor: getGradientHelper(colors.infoColor, 0.85, 0.25),
+      borderColor: colors.infoColor,
+      borderWidth: 1.5,
+      borderRadius: 5
+    });
+    datasets.push({label:'Meta mensal',data:metas,type:'line',borderColor:colors.dangerColor,borderDash:[8,4],borderWidth:2.5,pointRadius:0,fill:false});
 
     const canvas = document.getElementById('chart-comparativo-anual');
     if(!canvas) return;
     _grafInitPlugin();
     ensureChartBox('chart-comparativo-anual', 320);
+    
+    const baseOpts = getChartBaseOptions(colors);
     grafCharts['comparativo-anual']=new Chart(canvas,{
       type:'bar',data:{labels:MESES,datasets},
-      options:{responsive:true,maintainAspectRatio:false,
-        plugins:{legend:{labels:{color:tc}},tooltip:{callbacks:{label:ctx=>`${ctx.dataset.label}: ${fmtNum(ctx.raw)} peças`}},datalabels:{display:ctx=>ctx.dataset.type!=='line'&&(ctx.dataset.data[ctx.dataIndex]||0)>0,anchor:'center',align:'center',rotation:-90,clamp:true,color:_dlColor,textStrokeColor:_dlStroke,textStrokeWidth:3,font:{size:11,weight:'700'},formatter:v=>fmtNum(v)}},
-        scales:{x:{ticks:{color:tc},grid:{color:gc}},y:{ticks:{color:tc,callback:v=>fmtNum(v)},grid:{color:gc},title:{display:true,text:'Total de peças',color:tc}}}
+      options:{
+        ...baseOpts,
+        plugins:{
+          ...baseOpts.plugins,
+          tooltip:{
+            ...baseOpts.plugins.tooltip,
+            callbacks:{label:ctx=>`${ctx.dataset.label}: ${fmtNum(ctx.raw)} peças`}
+          },
+          datalabels:{display:ctx=>ctx.dataset.type!=='line'&&(ctx.dataset.data[ctx.dataIndex]||0)>0,anchor:'center',align:'center',rotation:0,clamp:true,color:_dlColor,textStrokeColor:_dlStroke,textStrokeWidth:3,font:{family:'DM Sans',size:11,weight:'700'},formatter:v=>fmtNum(v)}
+        },
+        scales:{
+          x:{
+            ticks:{color:colors.textColor,font:{family:'DM Sans'}},
+            grid:{color:colors.gridColor}
+          },
+          y:{
+            ticks:{color:colors.textColor,callback:v=>fmtNum(v),font:{family:'DM Sans'}},
+            grid:{color:colors.gridColor},
+            title:{display:true,text:'Total de peças',color:colors.textColor,font:{family:'DM Sans',weight:'700'}}
+          }
+        }
       }
     });
 
@@ -4002,15 +4209,21 @@ async function loadGraficoComparativo() {
   } catch(e){console.error('Erro comparativo anual:',e);}
 }
 
-async function loadGraficoAnual() {
+async function loadGraficoAnual(options = {}) {
   const anoSel = document.getElementById('graf-ano');
   if(!anoSel) return;
   const ano = anoSel.value || new Date().getFullYear().toString();
 
+  const colors = getChartThemeColors();
   try {
-    const dados = await api('/relatorios/resumo-anual/'+ano);
-    const TC = ['#f0b429','#3b82f6','#10b981','#f43f5e'];
-    const gc='#2a2f3f', tc='#6b7280';
+    const useCache = options.useCache === true;
+    let dados;
+    if (useCache && _cacheAnualData[ano]) {
+      dados = _cacheAnualData[ano];
+    } else {
+      dados = await api('/relatorios/resumo-anual/'+ano);
+      _cacheAnualData[ano] = dados;
+    }
     const ml = m => { const[,mo]=m.split('-');return['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][+mo-1]; };
 
     // KPIs anuais
@@ -4043,10 +4256,10 @@ async function loadGraficoAnual() {
       </div>
     `;
 
-    // Gráfico anual com 3 datasets: produção, perda, sobra
     destroyGrafChart('anual');
     _grafInitPlugin();
     ensureChartBox('chart-anual', 340);
+    const baseOpts = getChartBaseOptions(colors);
     grafCharts['anual'] = new Chart(document.getElementById('chart-anual'), {
       type: 'bar',
       data: {
@@ -4054,44 +4267,47 @@ async function loadGraficoAnual() {
         datasets: [
           {
             label: 'Produção', data: dados.map(r=>r.total_producao||0),
-            backgroundColor: '#f0b429cc', borderColor: '#f0b429', borderWidth: 1, borderRadius: 4,
+            backgroundColor: getGradientHelper(colors.accentColor, 0.8, 0.2), borderColor: colors.accentColor, borderWidth: 1, borderRadius: 4,
             yAxisID: 'y'
           },
           {
             label: 'Perda', data: dados.map(r=>r.total_perda||0),
-            backgroundColor: '#ef4444cc', borderColor: '#ef4444', borderWidth: 1, borderRadius: 4,
+            backgroundColor: getGradientHelper(colors.dangerColor, 0.8, 0.2), borderColor: colors.dangerColor, borderWidth: 1, borderRadius: 4,
             yAxisID: 'y'
           },
           {
             label: 'Sobra', data: dados.map(r=>r.total_sobra||0),
-            backgroundColor: '#10b981cc', borderColor: '#10b981', borderWidth: 1, borderRadius: 4,
+            backgroundColor: getGradientHelper(colors.successColor, 0.8, 0.2), borderColor: colors.successColor, borderWidth: 1, borderRadius: 4,
             yAxisID: 'y'
           },
           {
             label: 'Média/dia', data: dados.map(r=>Math.round(r.media_diaria||0)),
-            type: 'line', borderColor: '#3b82f6', backgroundColor: 'transparent',
-            borderWidth: 2, pointRadius: 5, pointBackgroundColor: '#3b82f6',
+            type: 'line', borderColor: colors.infoColor, backgroundColor: 'transparent',
+            borderWidth: 2, pointRadius: 5, pointBackgroundColor: colors.infoColor,
             tension: 0.4, yAxisID: 'y2'
           }
         ]
       },
       options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: { legend: { labels: { color: tc } },
-          tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${fmtNum(ctx.raw)}` } }
+        ...baseOpts,
+        plugins: {
+          ...baseOpts.plugins,
+          tooltip: {
+            ...baseOpts.plugins.tooltip,
+            callbacks: { label: ctx => `${ctx.dataset.label}: ${fmtNum(ctx.raw)}` }
+          }
         },
         scales: {
-          x: { ticks: { color: tc }, grid: { color: gc } },
-          y: { ticks: { color: tc, callback: v=>fmtNum(v) }, grid: { color: gc }, title: { display: true, text: 'Peças', color: tc } },
-          y2: { position: 'right', ticks: { color: '#3b82f6', callback: v=>fmtNum(v) }, grid: { display: false }, title: { display: true, text: 'Média/dia', color: '#3b82f6' } }
+          x: { ticks: { color: colors.textColor, font:{family:'DM Sans'} }, grid: { color: colors.gridColor } },
+          y: { ticks: { color: colors.textColor, callback: v=>fmtNum(v), font:{family:'DM Sans'} }, grid: { color: colors.gridColor }, title: { display: true, text: 'Peças', color: colors.textColor, font:{family:'DM Sans',weight:'700'} } },
+          y2: { position: 'right', ticks: { color: colors.infoColor, callback: v=>fmtNum(v), font:{family:'DM Sans'} }, grid: { display: false }, title: { display: true, text: 'Média/dia', color: colors.infoColor, font:{family:'DM Sans',weight:'700'} } }
         }
       }
     });
   } catch(e) { console.error('Erro gráfico anual:', e); }
 }
 
-async function loadGraficos() {
+async function loadGraficos(options = {}) {
   const mes = new Date().toISOString().slice(0,7);
   const iniEl = document.getElementById('graf-mes-ini');
   const fimEl = document.getElementById('graf-mes-fim');
@@ -4103,7 +4319,6 @@ async function loadGraficos() {
   const mesAtual = mesFim;
   const periodoQS = `?mes_ini=${encodeURIComponent(mesIni)}&mes_fim=${encodeURIComponent(mesFim)}`;
 
-  // Popular seletores de ano (anual + comparativo)
   const anoSel = document.getElementById('graf-ano');
   const comp1 = document.getElementById('graf-comp-ano1');
   const comp2 = document.getElementById('graf-comp-ano2');
@@ -4117,11 +4332,12 @@ async function loadGraficos() {
       }
     }
   });
-  // Carregar gráficos anuais
+
   _grafInitPlugin();
   grafLoading(true);
-  // Caixas de altura fixa (para maintainAspectRatio:false respeitar a altura)
   ensureChartBox('chart-total-mes', 360);
+  ensureChartBox('chart-evol-producao', 280);
+  ensureChartBox('chart-evol-saldo', 280);
   ensureChartBox('chart-evolucao-graf', 300);
   ensureChartBox('chart-comparativo', 300);
   ensureChartBox('chart-perda-idx', 280);
@@ -4132,19 +4348,30 @@ async function loadGraficos() {
   ensureChartBox('chart-pedidos-status', 280);
   ensureChartBox('chart-prazo', 280);
   ensureChartBox('chart-estoque-cat', 280);
-  await Promise.all([loadGraficoAnual(), loadGraficoComparativo()]);
+  await Promise.all([loadGraficoAnual(options), loadGraficoComparativo(options)]);
 
-  const TC = ['#f0b429','#3b82f6','#10b981','#f43f5e','#a855f7','#06b6d4','#f97316','#8b5cf6','#84cc16','#ec4899'];
-  const gc = '#2a2f3f', tc = '#6b7280';
+  const colors = getChartThemeColors();
+  const gc = colors.gridColor;
+  const tc = colors.textColor;
   const ml = m => { const[y,mo]=m.split('-');return['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][+mo-1]+'/'+y.slice(2); };
 
   try {
-    const [resumoPeriodo, evolucao, ranking, diario] = await Promise.all([
-      api('/relatorios/resumo-periodo'+periodoQS),
-      api('/relatorios/evolucao-mensal'+periodoQS),
-      api('/relatorios/ranking-historico'+periodoQS),
-      api('/relatorios/producao-diaria/'+mesAtual)
-    ]);
+    const useCache = options.useCache === true;
+    const cacheKey = `${mesIni}_${mesFim}_${mesAtual}`;
+    let data;
+    if (useCache && _cacheGrafPeriodo === cacheKey && _cacheGrafData) {
+      data = _cacheGrafData;
+    } else {
+      data = await Promise.all([
+        api('/relatorios/resumo-periodo'+periodoQS),
+        api('/relatorios/evolucao-mensal'+periodoQS),
+        api('/relatorios/ranking-historico'+periodoQS),
+        api('/relatorios/producao-diaria/'+mesAtual)
+      ]);
+      _cacheGrafPeriodo = cacheKey;
+      _cacheGrafData = data;
+    }
+    const [resumoPeriodo, evolucao, ranking, diario] = data;
 
     const meses = [...new Set(evolucao.map(r=>r.mes_referencia))].sort();
     const ops = [...new Set(evolucao.map(r=>r.colaborador))];
@@ -4171,46 +4398,80 @@ async function loadGraficos() {
 
     // 1. Total por mês (barras empilhadas)
     destroyGrafChart('total-mes');
+    const baseOptsTotalMes = getChartBaseOptions(colors);
     grafCharts['total-mes'] = new Chart(document.getElementById('chart-total-mes'), {
       type:'bar',
       data:{ labels:meses.map(ml), datasets:ops.map((op,i)=>({
         label:op, data:meses.map(m=>{const r=evolucao.find(r=>r.colaborador===op&&r.mes_referencia===m);return r?r.total_producao:0;}),
-        backgroundColor:TC[i%TC.length]+'bb', borderColor:TC[i%TC.length], borderWidth:1, borderRadius:4
+        backgroundColor:hexToRgba(OP_COLORS[i%OP_COLORS.length], 0.85), borderColor:OP_COLORS[i%OP_COLORS.length], borderWidth:1, borderRadius:4
       }))},
-      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:tc}},tooltip:{callbacks:{label:ctx=>`${ctx.dataset.label}: ${fmtNum(ctx.raw)} pçs`}}},
-        scales:{x:{stacked:true,ticks:{color:tc},grid:{color:gc}},y:{stacked:true,ticks:{color:tc,callback:v=>fmtNum(v)},grid:{color:gc}}}}
+      options:{
+        ...baseOptsTotalMes,
+        plugins:{
+          ...baseOptsTotalMes.plugins,
+          tooltip:{
+            ...baseOptsTotalMes.plugins.tooltip,
+            callbacks:{label:ctx=>`${ctx.dataset.label}: ${fmtNum(ctx.raw)} pçs`}
+          }
+        },
+        scales:{
+          x:{stacked:true,ticks:{color:tc,font:{family:'DM Sans'}},grid:{color:gc}},
+          y:{stacked:true,ticks:{color:tc,callback:v=>fmtNum(v),font:{family:'DM Sans'}},grid:{color:gc}}
+        }
+      }
     });
 
     // 2. Evolução média diária (linha)
     destroyGrafChart('evolucao-graf');
+    const baseOptsEvol = getChartBaseOptions(colors);
     grafCharts['evolucao-graf'] = new Chart(document.getElementById('chart-evolucao-graf'), {
       type:'line',
       data:{ labels:meses.map(ml), datasets:ops.map((op,i)=>({
-        label:op, borderColor:TC[i%TC.length], backgroundColor:TC[i%TC.length]+'22',
+        label:op, borderColor:OP_COLORS[i%OP_COLORS.length], backgroundColor:'transparent',
         data:meses.map(m=>{const r=evolucao.find(r=>r.colaborador===op&&r.mes_referencia===m);return r?Math.round(r.media_diaria||0):null;}),
-        tension:0.4, fill:true, pointRadius:5, pointHoverRadius:8, spanGaps:true
+        tension:0.4, fill:false, pointRadius:4, pointHoverRadius:7, spanGaps:true
       }))},
-      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:tc}}},
-        scales:{x:{ticks:{color:tc},grid:{color:gc}},y:{ticks:{color:tc,callback:v=>fmtNum(v)},grid:{color:gc}}}}
+      options:{
+        ...baseOptsEvol,
+        scales:{
+          x:{ticks:{color:tc,font:{family:'DM Sans'}},grid:{color:gc}},
+          y:{ticks:{color:tc,callback:v=>fmtNum(v),font:{family:'DM Sans'}},grid:{color:gc}}
+        }
+      }
     });
 
     // 3. Comparativo média × meta (barras agrupadas)
     destroyGrafChart('comparativo');
+    const baseOptsComp = getChartBaseOptions(colors);
     grafCharts['comparativo'] = new Chart(document.getElementById('chart-comparativo'), {
       type:'bar',
       data:{
         labels:ops,
         datasets:[
-          {label:'Média Geral', data:ops.map(op=>{const r=ranking.find(r=>r.colaborador===op);return Math.round(r?.media_geral||0);}), backgroundColor:ops.map((_,i)=>TC[i%TC.length]+'cc'), borderColor:ops.map((_,i)=>TC[i%TC.length]), borderWidth:1, borderRadius:6, datalabels:{display:true,anchor:'center',align:'center',rotation:-90,clamp:true,color:_dlColor,textStrokeColor:_dlStroke,textStrokeWidth:3,font:{size:12,weight:'700'},formatter:v=>v>0?fmtNum(v):''}},
-          {label:'Meta média', data:ops.map(op=>{const r=ranking.find(r=>r.colaborador===op);return Math.round(r?.media_meta||0);}), type:'line', borderColor:'#ef4444', borderDash:[6,3], borderWidth:2, pointRadius:3, fill:false}
+          {
+            label:'Média Geral',
+            data:ops.map(op=>{const r=ranking.find(r=>r.colaborador===op);return Math.round(r?.media_geral||0);}),
+            backgroundColor:ops.map((_,i)=>hexToRgba(OP_COLORS[i%OP_COLORS.length], 0.85)),
+            borderColor:ops.map((_,i)=>OP_COLORS[i%OP_COLORS.length]),
+            borderWidth:1,
+            borderRadius:6,
+            datalabels:{display:true,anchor:'center',align:'center',rotation:0,clamp:true,color:_dlColor,textStrokeColor:_dlStroke,textStrokeWidth:3,font:{family:'DM Sans',size:11,weight:'700'},formatter:v=>v>0?fmtNum(v):''}
+          },
+          {label:'Meta média', data:ops.map(op=>{const r=ranking.find(r=>r.colaborador===op);return Math.round(r?.media_meta||0);}), type:'line', borderColor:colors.dangerColor, borderDash:[6,3], borderWidth:2, pointRadius:4, fill:false}
         ]
       },
-      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:tc}}},
-        scales:{x:{ticks:{color:tc},grid:{color:gc}},y:{ticks:{color:tc,callback:v=>fmtNum(v)},grid:{color:gc}}}}
+      options:{
+        ...baseOptsComp,
+        scales:{
+          x:{ticks:{color:tc,font:{family:'DM Sans'}},grid:{color:gc}},
+          y:{ticks:{color:tc,callback:v=>fmtNum(v),font:{family:'DM Sans'}},grid:{color:gc}}
+        }
+      }
     });
 
     // 4. Índice de perda por mês (linha)
     destroyGrafChart('perda-idx');
+    const baseOptsPerda = getChartBaseOptions(colors);
     grafCharts['perda-idx'] = new Chart(document.getElementById('chart-perda-idx'), {
       type:'line',
       data:{ labels:meses.map(ml), datasets:ops.map((op,i)=>{
@@ -4219,14 +4480,20 @@ async function loadGraficos() {
           if(!r||!r.total_producao) return 0;
           return +((r.total_perdas||0)/r.total_producao*100).toFixed(2);
         });
-        return {label:op, borderColor:TC[i%TC.length], backgroundColor:'transparent', data:dados, tension:0.3, pointRadius:4, spanGaps:true};
+        return {label:op, borderColor:OP_COLORS[i%OP_COLORS.length], backgroundColor:'transparent', data:dados, tension:0.3, pointRadius:4, spanGaps:true};
       })},
-      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:tc}}},
-        scales:{x:{ticks:{color:tc},grid:{color:gc}},y:{ticks:{color:tc,callback:v=>v+'%'},grid:{color:gc},title:{display:true,text:'% perda',color:tc}}}}
+      options:{
+        ...baseOptsPerda,
+        scales:{
+          x:{ticks:{color:tc,font:{family:'DM Sans'}},grid:{color:gc}},
+          y:{ticks:{color:tc,callback:v=>v+'%',font:{family:'DM Sans'}},grid:{color:gc},title:{display:true,text:'% perda',color:tc,font:{family:'DM Sans',weight:'700'}}}
+        }
+      }
     });
 
     // 5. Dias abaixo da meta (barras agrupadas)
     destroyGrafChart('dias-meta');
+    const baseOptsDiasMeta = getChartBaseOptions(colors);
     grafCharts['dias-meta'] = new Chart(document.getElementById('chart-dias-meta'), {
       type:'bar',
       data:{ labels:meses.map(ml), datasets:ops.map((op,i)=>({
@@ -4235,61 +4502,255 @@ async function loadGraficos() {
           if(!r) return 0;
           return r.dias_abaixo_meta || Math.max(0,(r.dias_trabalhados||0)-(r.dias_acima_meta||0));
         }),
-        backgroundColor:TC[i%TC.length]+'99', borderColor:TC[i%TC.length], borderWidth:1, borderRadius:4
+        backgroundColor:hexToRgba(OP_COLORS[i%OP_COLORS.length], 0.8), borderColor:OP_COLORS[i%OP_COLORS.length], borderWidth:1, borderRadius:4
       }))},
-      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:tc}}},
-        scales:{x:{ticks:{color:tc},grid:{color:gc}},y:{ticks:{color:tc},grid:{color:gc},title:{display:true,text:'dias',color:tc}}}}
+      options:{
+        ...baseOptsDiasMeta,
+        scales:{
+          x:{ticks:{color:tc,font:{family:'DM Sans'}},grid:{color:gc}},
+          y:{ticks:{color:tc,font:{family:'DM Sans'}},grid:{color:gc},title:{display:true,text:'dias',color:tc,font:{family:'DM Sans',weight:'700'}}}
+        }
+      }
     });
 
     // 6. Excedente acumulado (barras + linha zero)
     destroyGrafChart('excedente');
+    const baseOptsExcedente = getChartBaseOptions(colors);
     grafCharts['excedente'] = new Chart(document.getElementById('chart-excedente'), {
       type:'bar',
       data:{ labels:meses.map(ml), datasets:ops.map((op,i)=>({
         label:op,
         data:meses.map(m=>{const r=evolucao.find(r=>r.colaborador===op&&r.mes_referencia===m);return Math.round((r?.excedente_total ?? ((r?.excedente_positivo||0)+(r?.excedente_negativo||0))) || 0);}),
-        backgroundColor:meses.map(m=>{const r=evolucao.find(r=>r.colaborador===op&&r.mes_referencia===m);return (((r?.excedente_total ?? ((r?.excedente_positivo||0)+(r?.excedente_negativo||0))) || 0)>=0)?TC[i%TC.length]+'99':'#ef444499';}),
-        borderColor:meses.map(m=>{const r=evolucao.find(r=>r.colaborador===op&&r.mes_referencia===m);return (((r?.excedente_total ?? ((r?.excedente_positivo||0)+(r?.excedente_negativo||0))) || 0)>=0)?TC[i%TC.length]:'#ef4444';}),
+        backgroundColor:meses.map(m=>{
+          const r=evolucao.find(r=>r.colaborador===op&&r.mes_referencia===m);
+          const val = (r?.excedente_total ?? ((r?.excedente_positivo||0)+(r?.excedente_negativo||0))) || 0;
+          return val >= 0 ? hexToRgba(colors.successColor, 0.75) : hexToRgba(colors.dangerColor, 0.75);
+        }),
+        borderColor:meses.map(m=>{
+          const r=evolucao.find(r=>r.colaborador===op&&r.mes_referencia===m);
+          const val = (r?.excedente_total ?? ((r?.excedente_positivo||0)+(r?.excedente_negativo||0))) || 0;
+          return val >= 0 ? colors.successColor : colors.dangerColor;
+        }),
         borderWidth:1, borderRadius:3
       }))},
-      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:tc}}},
-        scales:{x:{ticks:{color:tc},grid:{color:gc}},y:{ticks:{color:tc,callback:v=>fmtNum(v)},grid:{color:gc}}}}
+      options:{
+        ...baseOptsExcedente,
+        scales:{
+          x:{ticks:{color:tc,font:{family:'DM Sans'}},grid:{color:gc}},
+          y:{ticks:{color:tc,callback:v=>fmtNum(v),font:{family:'DM Sans'}},grid:{color:gc}}
+        }
+      }
     });
 
-    // 7. Produção diária do mês
+    // 6b. Evolução mensal — barras simples coloridas + rótulo em cima
+    const prodPorMes = meses.map(m => Math.round(evolucao.filter(r=>r.mes_referencia===m).reduce((s,r)=>s+(r.total_producao||0),0)));
+    const varProdPct = prodPorMes.map((v,i)=> (i===0 || !(prodPorMes[i-1]>0)) ? null : ((v-prodPorMes[i-1])/prodPorMes[i-1]*100));
+
+    // Saldo (excedente) vem dos lançamentos — mesma base de meta usada no resto do sistema.
+    // A meta de cada mês é derivada disso (produção − saldo). Os DOIS gráficos usam esta meta, então batem entre ci.
+    const saldoPorMes = meses.map(m => Math.round(evolucao.filter(r=>r.mes_referencia===m).reduce((s,r)=>s+((r.excedente_total ?? ((r.excedente_positivo||0)+(r.excedente_negativo||0)))||0),0)));
+    const metaPorMes = prodPorMes.map((v,i)=> Math.max(0, v - saldoPorMes[i]));
+    const bateuMeta = saldoPorMes.map(s => s >= 0);
+    const devMeta = prodPorMes.map((v,i)=> (metaPorMes[i]>0) ? (saldoPorMes[i]/metaPorMes[i]*100) : null);
+
+    // Gráfico 1: Produção — verde/vermelho pela meta · em cima: % vs meta
+    destroyGrafChart('evol-producao');
+    grafCharts['evol-producao'] = new Chart(document.getElementById('chart-evol-producao'), {
+      type:'bar',
+      data:{ labels:meses.map(ml), datasets:[
+        { label:'Produção', data:prodPorMes,
+          backgroundColor: (context) => {
+            const ok = bateuMeta[context.dataIndex];
+            const colorHex = ok ? colors.successColor : colors.dangerColor;
+            return getGradientHelper(colorHex, 0.85, 0.25)(context);
+          },
+          borderColor: bateuMeta.map(ok=>ok?colors.successColor:colors.dangerColor), borderWidth:1, borderRadius:6,
+          datalabels:{
+            display: true,
+            anchor: 'end',
+            align: 'end',
+            offset: 4,
+            font: { size: 11, weight: '700', family: 'DM Sans' },
+            color: ctx => {
+              const d = devMeta[ctx.dataIndex];
+              return d == null ? colors.textColor : (d >= 0 ? colors.successColor : colors.dangerColor);
+            },
+            textStrokeColor: _dlStroke,
+            textStrokeWidth: 3,
+            formatter: (v, ctx) => {
+              const d = devMeta[ctx.dataIndex];
+              return d == null ? '' : (d >= 0 ? '+' : '') + Math.abs(d).toFixed(0) + '%';
+            }
+          }
+        }
+      ]},
+      options:{responsive:true,maintainAspectRatio:false, layout:{padding:{top:24, bottom:8}},
+        plugins:{
+          legend:{display:false}, 
+          tooltip:{
+            backgroundColor: colors.tooltipBg,
+            titleColor: colors.tooltipText,
+            bodyColor: colors.tooltipText,
+            borderColor: colors.tooltipBorder,
+            borderWidth: 1,
+            padding: 10,
+            callbacks:{
+              label: ctx => {
+                const idx = ctx.dataIndex;
+                const prod = prodPorMes[idx];
+                const meta = metaPorMes[idx];
+                const dev = devMeta[idx];
+                const varMes = varProdPct[idx];
+                
+                const lines = [
+                  `Produção: ${fmtNum(prod)} pçs`
+                ];
+                if (meta > 0) {
+                  lines.push(`Meta: ${fmtNum(meta)} pçs`);
+                  lines.push(`Vs Meta: ${dev >= 0 ? '+' : ''}${dev.toFixed(1)}%`);
+                }
+                if (varMes !== null) {
+                  lines.push(`Vs Mês Ant.: ${varMes >= 0 ? '+' : ''}${varMes.toFixed(1)}%`);
+                }
+                return lines;
+              }
+            }
+          }
+        },
+        scales:{ x:{ticks:{color:colors.textColor, font:{family:'DM Sans'}},grid:{color:colors.gridColor}}, y:{beginAtZero:true,ticks:{color:colors.textColor,callback:v=>fmtNum(v), font:{family:'DM Sans'}},grid:{color:colors.gridColor}} }}
+    });
+
+    // Gráfico 2: Saldo vs meta — verde se positivo, vermelho se negativo · valor do mês em cima
+    destroyGrafChart('evol-saldo');
+    grafCharts['evol-saldo'] = new Chart(document.getElementById('chart-evol-saldo'), {
+      type:'bar',
+      data:{ labels:meses.map(ml), datasets:[
+        { label:'Saldo vs meta', data:saldoPorMes,
+          backgroundColor: (context) => {
+            const val = context.dataset.data[context.dataIndex];
+            const colorHex = val >= 0 ? colors.successColor : colors.dangerColor;
+            return getGradientHelper(colorHex, 0.85, 0.25)(context);
+          },
+          borderColor: saldoPorMes.map(v=>v>=0?colors.successColor:colors.dangerColor), borderWidth:1, borderRadius:6,
+          datalabels:{ display:true, anchor:'end', align:'end', offset:2, font:{size:11,weight:'700', family:'DM Sans'},
+            color:ctx=>{const v=ctx.dataset.data[ctx.dataIndex]; return v>=0?colors.successColor:colors.dangerColor;},
+            textStrokeColor:_dlStroke, textStrokeWidth:3,
+            formatter:v=>(v>=0?'+':'')+fmtNum(Math.round(v)) } }
+      ]},
+      options:{responsive:true,maintainAspectRatio:false, layout:{padding:{top:24,bottom:8}},
+        plugins:{legend:{display:false}, 
+          tooltip:{
+            backgroundColor:colors.tooltipBg,
+            titleColor:colors.tooltipText,
+            bodyColor:colors.tooltipText,
+            borderColor:colors.tooltipBorder,
+            borderWidth: 1,
+            padding: 10,
+            callbacks:{label:ctx=>'Saldo: '+(ctx.raw>=0?'+':'')+fmtNum(ctx.raw)+' pçs'}
+          }
+        },
+        scales:{ x:{ticks:{color:colors.textColor, font:{family:'DM Sans'}},grid:{color:colors.gridColor}}, y:{ticks:{color:colors.textColor,callback:v=>fmtNum(v), font:{family:'DM Sans'}},grid:{color:colors.gridColor}} }}
+    });
+
+    // 7. Produção diária do mês (stacked!)
     const dias=[...new Set(diario.map(r=>r.data))].sort();
     const opsD=[...new Set(diario.map(r=>r.colaborador))];
     const metaDia=diario[0]?.meta||8000;
     destroyGrafChart('diario-graf');
-    const dsets=opsD.map((op,i)=>({label:op, data:dias.map(d=>{const r=diario.find(r=>r.colaborador===op&&r.data===d);return r?r.producao:0;}), backgroundColor:TC[i%TC.length]+'cc', borderColor:TC[i%TC.length], borderWidth:1, borderRadius:3}));
-    dsets.push({label:`Meta (${fmtNum(metaDia)})`,data:dias.map(()=>metaDia),type:'line',borderColor:'#ef4444',borderDash:[6,3],borderWidth:2,pointRadius:0,fill:false});
+    const baseOptsDiario = getChartBaseOptions(colors);
+    const dsets=opsD.map((op,i)=>({
+      label:op,
+      data:dias.map(d=>{const r=diario.find(r=>r.colaborador===op&&r.data===d);return r?r.producao:0;}),
+      backgroundColor:hexToRgba(OP_COLORS[i%OP_COLORS.length], 0.85),
+      borderColor:OP_COLORS[i%OP_COLORS.length],
+      borderWidth:1,
+      borderRadius:3
+    }));
+    dsets.push({
+      label:`Meta (${fmtNum(metaDia)})`,
+      data:dias.map(()=>metaDia),
+      type:'line',
+      borderColor:colors.dangerColor,
+      borderDash:[6,3],
+      borderWidth:2.5,
+      pointRadius:0,
+      fill:false
+    });
     grafCharts['diario-graf'] = new Chart(document.getElementById('chart-diario-graf'), {
-      type:'bar', data:{labels:dias.map(fmtDate),datasets:dsets},
-      options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:tc}}},
-        scales:{x:{ticks:{color:tc,maxRotation:45},grid:{color:gc}},y:{ticks:{color:tc,callback:v=>fmtNum(v)},grid:{color:gc}}}}
+      type:'bar',
+      data:{labels:dias.map(fmtDate),datasets:dsets},
+      options:{
+        ...baseOptsDiario,
+        plugins:{
+          ...baseOptsDiario.plugins,
+          tooltip:{
+            ...baseOptsDiario.plugins.tooltip,
+            callbacks:{label:ctx=>`${ctx.dataset.label}: ${fmtNum(ctx.raw)} pçs`}
+          }
+        },
+        scales:{
+          x:{stacked:true,ticks:{color:tc,maxRotation:0,font:{family:'DM Sans'}},grid:{color:gc}},
+          y:{stacked:true,ticks:{color:tc,callback:v=>fmtNum(v),font:{family:'DM Sans'}},grid:{color:gc}}
+        }
+      }
     });
 
     // 8. Ranking histórico horizontal
     destroyGrafChart('ranking-graf');
+    const baseOptsRanking = getChartBaseOptions(colors);
     grafCharts['ranking-graf'] = new Chart(document.getElementById('chart-ranking-graf'), {
       type:'bar',
-      data:{labels:ranking.map(r=>r.colaborador), datasets:[{
-        label:'Média (pçs/dia)',
-        data:ranking.map(r=>Math.round(r.media_geral||0)),
-        backgroundColor:ranking.map((_,i)=>TC[i%TC.length]+'cc'), borderColor:ranking.map((_,i)=>TC[i%TC.length]), borderWidth:1, borderRadius:6
-      }]},
-      options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},datalabels:{display:true,anchor:'center',align:'center',clamp:true,color:_dlColor,textStrokeColor:_dlStroke,textStrokeWidth:3,font:{size:13,weight:'700'},formatter:v=>v>0?fmtNum(v):''}},
-        scales:{x:{ticks:{color:tc,callback:v=>fmtNum(v)},grid:{color:gc}},y:{ticks:{color:tc},grid:{color:gc}}}}
+      data:{
+        labels:ranking.map(r=>r.colaborador),
+        datasets:[{
+          label:'Média (pçs/dia)',
+          data:ranking.map(r=>Math.round(r.media_geral||0)),
+          backgroundColor:ranking.map((_,i)=>hexToRgba(OP_COLORS[i%OP_COLORS.length], 0.85)),
+          borderColor:ranking.map((_,i)=>OP_COLORS[i%OP_COLORS.length]),
+          borderWidth:1,
+          borderRadius:6
+        }]
+      },
+      options:{
+        ...baseOptsRanking,
+        indexAxis:'y',
+        plugins:{
+          ...baseOptsRanking.plugins,
+          legend:{display:false},
+          datalabels:{
+            display:true,
+            anchor:'center',
+            align:'center',
+            rotation:0,
+            clamp:true,
+            color:_dlColor,
+            textStrokeColor:_dlStroke,
+            textStrokeWidth:3,
+            font:{family:'DM Sans',size:12,weight:'700'},
+            formatter:v=>v>0?fmtNum(v):''
+          }
+        },
+        scales:{
+          x:{ticks:{color:tc,callback:v=>fmtNum(v),font:{family:'DM Sans'}},grid:{color:gc}},
+          y:{ticks:{color:tc,font:{family:'DM Sans'}},grid:{color:gc}}
+        }
+      }
     });
 
     // Estado "sem dados" — substitui gráficos vazios por mensagem
-    if (evolucao.length === 0) ['chart-total-mes','chart-evolucao-graf','chart-comparativo','chart-perda-idx','chart-dias-meta','chart-excedente'].forEach(id=>grafBoxMsg(id,'Sem dados de produção no período selecionado'));
+    if (evolucao.length === 0) ['chart-total-mes','chart-evol-producao','chart-evol-saldo','chart-evolucao-graf','chart-comparativo','chart-perda-idx','chart-dias-meta','chart-excedente'].forEach(id=>grafBoxMsg(id,'Sem dados de produção no período selecionado'));
     if (diario.length === 0) grafBoxMsg('chart-diario-graf','Sem lançamentos neste mês');
     if (ranking.length === 0) grafBoxMsg('chart-ranking-graf','Sem dados para o ranking');
 
     // 9. Pedidos por status (rosca)
     try {
-      const pedidos=await api('/pedidos/');
+      let pedidos;
+      if (useCache && _cachePedidosData) {
+        pedidos = _cachePedidosData;
+      } else {
+        pedidos = await api('/pedidos/');
+        _cachePedidosData = pedidos;
+      }
       const sc={aberto:0,em_producao:0,produzido:0,entregue:0};
       pedidos.forEach(p=>{if(sc[p.status]!==undefined)sc[p.status]++;});
       const dlRosca={display:ctx=>(ctx.dataset.data[ctx.dataIndex]||0)>0,color:_dlColor,textStrokeColor:_dlStroke,textStrokeWidth:3,font:{weight:'700',size:13},formatter:v=>v>0?v:''};
@@ -4298,10 +4759,19 @@ async function loadGraficos() {
         grafBoxMsg('chart-prazo','Nenhum pedido cadastrado');
       } else {
         destroyGrafChart('pedidos-status');
+        const baseOptsPedidos = getChartBaseOptions(colors);
         grafCharts['pedidos-status'] = new Chart(document.getElementById('chart-pedidos-status'), {
           type:'doughnut',
-          data:{labels:['Aberto','Em produção','Produzido','Entregue'], datasets:[{data:Object.values(sc), backgroundColor:['#3b82f6cc','#f0b429cc','#10b981cc','#6b7280cc'], borderWidth:0}]},
-          options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:tc},position:'bottom'},datalabels:dlRosca}}
+          data:{labels:['Aberto','Em produção','Produzido','Entregue'], datasets:[{data:Object.values(sc), backgroundColor:[hexToRgba(colors.infoColor,0.85), hexToRgba(colors.accentColor,0.85), hexToRgba(colors.successColor,0.85), hexToRgba(colors.textColor,0.6)], borderWidth:0}]},
+          options:{
+            ...baseOptsPedidos,
+            cutout: '75%',
+            plugins:{
+              ...baseOptsPedidos.plugins,
+              legend:{labels:{color:tc,font:{family:'DM Sans'}},position:'bottom'},
+              datalabels:dlRosca
+            }
+          }
         });
 
         // 10. Prazo: no prazo vs atrasados
@@ -4309,10 +4779,19 @@ async function loadGraficos() {
         const atrasados=pedidos.filter(p=>p.status!=='entregue'&&Math.round(p.dias_restantes)<0).length;
         const entregues=pedidos.filter(p=>p.status==='entregue').length;
         destroyGrafChart('prazo');
+        const baseOptsPrazo = getChartBaseOptions(colors);
         grafCharts['prazo'] = new Chart(document.getElementById('chart-prazo'), {
           type:'doughnut',
-          data:{labels:['No prazo','Atrasados','Entregues'], datasets:[{data:[noPrazo,atrasados,entregues], backgroundColor:['#10b981cc','#ef4444cc','#6b7280cc'], borderWidth:0}]},
-          options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{labels:{color:tc},position:'bottom'},datalabels:dlRosca}}
+          data:{labels:['No prazo','Atrasados','Entregues'], datasets:[{data:[noPrazo,atrasados,entregues], backgroundColor:[hexToRgba(colors.successColor,0.85), hexToRgba(colors.dangerColor,0.85), hexToRgba(colors.textColor,0.6)], borderWidth:0}]},
+          options:{
+            ...baseOptsPrazo,
+            cutout: '75%',
+            plugins:{
+              ...baseOptsPrazo.plugins,
+              legend:{labels:{color:tc,font:{family:'DM Sans'}},position:'bottom'},
+              datalabels:dlRosca
+            }
+          }
         });
       }
     } catch(e){
@@ -4322,18 +4801,35 @@ async function loadGraficos() {
 
     // 11. Estoque por categoria
     try {
-      const prods=await api('/estoque/produtos');
+      let prods;
+      if (useCache && _cacheEstoqueData) {
+        prods = _cacheEstoqueData;
+      } else {
+        prods = await api('/estoque/produtos');
+        _cacheEstoqueData = prods;
+      }
       const cm={};
       prods.forEach(p=>{const c=p.categoria_nome||'Sem categoria';if(!cm[c])cm[c]=0;cm[c]+=p.quantidade_atual||0;});
       if (Object.keys(cm).length === 0) {
         grafBoxMsg('chart-estoque-cat','Nenhum produto em estoque');
       } else {
         destroyGrafChart('estoque-cat');
+        const baseOptsEstoque = getChartBaseOptions(colors);
         grafCharts['estoque-cat'] = new Chart(document.getElementById('chart-estoque-cat'), {
           type:'bar',
-          data:{labels:Object.keys(cm), datasets:[{label:'Saldo', data:Object.values(cm), backgroundColor:'#3b82f6cc', borderColor:'#3b82f6', borderWidth:1, borderRadius:4}]},
-           options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},datalabels:{display:true,anchor:'center',align:'center',rotation:-90,clamp:true,color:_dlColor,textStrokeColor:_dlStroke,textStrokeWidth:3,font:{size:12,weight:'700'},formatter:v=>v>0?fmtNum(v):''}},
-            scales:{x:{ticks:{color:tc},grid:{color:gc}},y:{ticks:{color:tc,callback:v=>fmtNum(v)},grid:{color:gc}}}}
+          data:{labels:Object.keys(cm), datasets:[{label:'Saldo', data:Object.values(cm), backgroundColor:getGradientHelper(colors.infoColor, 0.85, 0.25), borderColor:colors.infoColor, borderWidth:1, borderRadius:4}]},
+           options:{
+             ...baseOptsEstoque,
+             plugins:{
+               ...baseOptsEstoque.plugins,
+               legend:{display:false},
+               datalabels:{display:true,anchor:'center',align:'center',rotation:0,clamp:true,color:_dlColor,textStrokeColor:_dlStroke,textStrokeWidth:3,font:{family:'DM Sans',size:11,weight:'700'},formatter:v=>v>0?fmtNum(v):''}
+             },
+             scales:{
+               x:{ticks:{color:tc,font:{family:'DM Sans'}},grid:{color:gc}},
+               y:{ticks:{color:tc,callback:v=>fmtNum(v),font:{family:'DM Sans'}},grid:{color:gc}}
+             }
+           }
         });
       }
     } catch(e){
@@ -4701,8 +5197,19 @@ async function salvarMovimentacao() {
 
 async function loadMovimentacoes() {
   const tipo = _getVal('est-filtro-tipo');
+  const dataInicio = _getVal('est-filtro-data-ini');
+  const dataFim = _getVal('est-filtro-data-fim');
+  
   let url = '/estoque/movimentacoes';
-  if (tipo) url += '?tipo=' + encodeURIComponent(tipo);
+  const params = [];
+  if (tipo) params.push('tipo=' + encodeURIComponent(tipo));
+  if (dataInicio) params.push('data_inicio=' + encodeURIComponent(dataInicio));
+  if (dataFim) params.push('data_fim=' + encodeURIComponent(dataFim));
+  
+  if (params.length) {
+    url += '?' + params.join('&');
+  }
+  
   const movs = await api(url);
   const tbody = document.getElementById('est-movs-tbody');
   if (!tbody) return;
@@ -4723,6 +5230,101 @@ async function loadMovimentacoes() {
       <td>${m.responsavel || '—'}</td>
       <td>${temPermissao('estoque', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="deletarMovimentacao(${m.id})">✕</button>` : ''}</td>
     </tr>`).join('');
+}
+
+function setFiltroPeriodoMovimentacoes(periodo) {
+  const hoje = new Date();
+  const formatLocal = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  let ini = '';
+  let fim = '';
+  
+  if (periodo === 'hoje') {
+    const formatted = formatLocal(hoje);
+    ini = formatted;
+    fim = formatted;
+  } else if (periodo === 'ontem') {
+    const ontem = new Date();
+    ontem.setDate(hoje.getDate() - 1);
+    const formatted = formatLocal(ontem);
+    ini = formatted;
+    fim = formatted;
+  } else if (periodo === 'mes') {
+    const y = hoje.getFullYear();
+    const m = hoje.getMonth();
+    ini = formatLocal(new Date(y, m, 1));
+    fim = formatLocal(hoje);
+  }
+  
+  _setVal('est-filtro-data-ini', ini);
+  _setVal('est-filtro-data-fim', fim);
+  loadMovimentacoes();
+}
+
+function gerarRelatorioMovimentacoes() {
+  const tipo = _getVal('est-filtro-tipo');
+  const dataInicio = _getVal('est-filtro-data-ini');
+  const dataFim = _getVal('est-filtro-data-fim');
+  
+  const tipoLabel = {
+    '': 'Todos os tipos',
+    'entrada': 'Entradas',
+    'saida': 'Saídas',
+    'perda': 'Perdas',
+    'ajuste': 'Ajustes',
+    'sobra': 'Sobras'
+  }[tipo || ''] || 'Todos os tipos';
+  
+  let periodoStr = 'Todo o período';
+  if (dataInicio && dataFim) {
+    periodoStr = `Período: ${fmtDate(dataInicio)} até ${fmtDate(dataFim)}`;
+  } else if (dataInicio) {
+    periodoStr = `A partir de: ${fmtDate(dataInicio)}`;
+  } else if (dataFim) {
+    periodoStr = `Até: ${fmtDate(dataFim)}`;
+  }
+  
+  const tituloReport = `Relatório de Movimentações (${tipoLabel})`;
+  const tbody = document.getElementById('est-movs-tbody');
+  if (!tbody || tbody.rows.length === 0 || tbody.rows[0].cells[0].textContent.includes('Nenhuma movimentação')) {
+    showAlert('Não há dados para gerar o relatório com os filtros atuais.', 'warning');
+    return;
+  }
+  
+  let rowsHtml = '';
+  Array.from(tbody.rows).forEach(row => {
+    let cellsHtml = '';
+    const cells = Array.from(row.cells);
+    for (let i = 0; i < cells.length - 1; i++) {
+      cellsHtml += `<td style="padding:7px;border-bottom:1px solid #ddd;font-family:Arial,sans-serif;">${cells[i].innerHTML}</td>`;
+    }
+    rowsHtml += `<tr>${cellsHtml}</tr>`;
+  });
+
+  const tableHtml = `
+    <div style="font-family:Arial,sans-serif;margin-bottom:12px;font-size:13px;color:#333;"><strong>${periodoStr}</strong></div>
+    <table style="width:100%;border-collapse:collapse;margin-top:10px;">
+      <thead>
+        <tr style="background:#333;color:#fff;">
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Data</th>
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Código/ID</th>
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Produto</th>
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Tipo</th>
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Quantidade</th>
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Saldo Anterior</th>
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Saldo Atual</th>
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Responsável</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rowsHtml}
+      </tbody>
+    </table>
+  `;
+
+  const win = window.open('', '_blank');
+  win.document.write(`<html><head><title>${tituloReport}</title><style>@page{margin:0}body{font-family:Arial,sans-serif;margin:15mm 15mm 22mm 15mm;font-size:12px;counter-reset:page}.print-footer{position:fixed;bottom:8mm;left:15mm;right:15mm;border-top:1px solid #ddd;padding-top:6px;display:flex;justify-content:space-between;font-size:10px;color:#777;font-family:Arial,sans-serif;counter-increment:page}.page-number::after{content:counter(page)}span.pill{background:#e2e8f0;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:bold;color:#475569;text-transform:uppercase;}</style></head><body>${_getEmpresaHeader(tituloReport)}${tableHtml}${_getPrintFooter()}</body></html>`);
+  win.document.close();
+  setTimeout(() => win.print(), 500);
 }
 
 async function deletarMovimentacao(id) {

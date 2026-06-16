@@ -387,17 +387,41 @@
 
       <!-- MOVIMENTAÇÕES -->
       <div id="est-tab-movimentacoes" style="display:none">
-        <div class="flex items-center justify-between mb-4">
-          <div class="flex gap-2 items-center">
-            <select id="est-filtro-tipo" onchange="loadMovimentacoes()" style="min-width:140px">
-              <option value="">Todos os tipos</option>
-              <option value="entrada">Entradas</option>
-              <option value="saida">Saídas</option>
-              <option value="perda">Perdas</option>
-              <option value="ajuste">Ajustes</option>
-            </select>
+        <div class="flex items-center justify-between mb-4 flex-wrap gap-4">
+          <div class="flex gap-3 items-center flex-wrap">
+            <div class="flex items-center gap-1">
+              <label style="font-size:12px;color:var(--muted)">Tipo:</label>
+              <select id="est-filtro-tipo" onchange="loadMovimentacoes()" style="min-width:130px;height:36px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-card);color:var(--text)">
+                <option value="">Todos os tipos</option>
+                <option value="entrada">Entradas</option>
+                <option value="saida">Saídas</option>
+                <option value="perda">Perdas</option>
+                <option value="ajuste">Ajustes</option>
+              </select>
+            </div>
+            
+            <div class="flex items-center gap-1">
+              <label style="font-size:12px;color:var(--muted)">De:</label>
+              <input type="date" id="est-filtro-data-ini" onchange="loadMovimentacoes()" style="height:36px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-card);color:var(--text)">
+            </div>
+            
+            <div class="flex items-center gap-1">
+              <label style="font-size:12px;color:var(--muted)">Até:</label>
+              <input type="date" id="est-filtro-data-fim" onchange="loadMovimentacoes()" style="height:36px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-card);color:var(--text)">
+            </div>
+            
+            <div class="flex gap-1">
+              <button class="btn btn-sm btn-secondary" style="height:36px;" onclick="setFiltroPeriodoMovimentacoes('hoje')">Hoje</button>
+              <button class="btn btn-sm btn-secondary" style="height:36px;" onclick="setFiltroPeriodoMovimentacoes('ontem')">Ontem</button>
+              <button class="btn btn-sm btn-secondary" style="height:36px;" onclick="setFiltroPeriodoMovimentacoes('mes')">Este Mês</button>
+              <button class="btn btn-sm btn-danger" style="height:36px;" onclick="setFiltroPeriodoMovimentacoes('limpar')" title="Limpar Filtros">✕</button>
+            </div>
           </div>
-          <button class="btn btn-primary" onclick="openModalMovimentacao()" data-perm-movimentar="estoque">+ Nova Movimentação</button>
+          
+          <div class="flex gap-2 items-center">
+            <button class="btn btn-secondary" style="height:36px;" onclick="gerarRelatorioMovimentacoes()">🖨️ Gerar Relatório</button>
+            <button class="btn btn-primary" style="height:36px;" onclick="openModalMovimentacao()" data-perm-movimentar="estoque">+ Nova Movimentação</button>
+          </div>
         </div>
         <div class="table-wrap">
           <div class="table-head"><span class="table-head-title">Histórico de Movimentações</span></div>
@@ -947,6 +971,20 @@
             <span style="font-size:12px;color:var(--muted)">Barras empilhadas por operador</span>
           </div>
           <canvas id="chart-total-mes" height="110"></canvas>
+        </div>
+
+        <!-- Evolução mensal com variação vs mês anterior -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
+          <div class="card" style="padding:20px">
+            <div style="font-family:var(--font-head);font-weight:700;margin-bottom:4px">📈 Produção Total — Evolução Mensal</div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Verde = bateu a meta · Vermelho = abaixo · em cima: meta do mês, % vs meta e % vs mês anterior</div>
+            <canvas id="chart-evol-producao" height="200"></canvas>
+          </div>
+          <div class="card" style="padding:20px">
+            <div style="font-family:var(--font-head);font-weight:700;margin-bottom:4px">📊 Saldo vs Meta — Evolução Mensal</div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:12px">Verde = produziu acima da meta · Vermelho = abaixo · valor em cima = saldo do mês</div>
+            <canvas id="chart-evol-saldo" height="200"></canvas>
+          </div>
         </div>
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
@@ -1949,7 +1987,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
-<script src="js/app.js?v=20260615-marca-lote-status-filtros"></script>
+<script src="js/app.js?v=20260616-graficos-meta-coerente"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');
@@ -1983,6 +2021,13 @@ function toggleTheme() {
   const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
   document.documentElement.setAttribute('data-theme', newTheme);
   localStorage.setItem('pratic-theme', newTheme);
+  
+  if (typeof loadDashboard === 'function') {
+    loadDashboard({ useCache: true }).catch(() => {});
+  }
+  if (typeof loadGraficos === 'function') {
+    loadGraficos({ useCache: true }).catch(() => {});
+  }
 }
 function toggleSectorMenu(event) {
   event.stopPropagation();
