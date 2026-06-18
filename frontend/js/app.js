@@ -29,6 +29,26 @@ function showAlert(msg, type = 'success') {
   setTimeout(() => el.innerHTML = '', 3000);
 }
 
+// Popup central de aviso (precisa ser fechado pelo usuário). Útil quando a
+// mensagem não pode passar despercebida (ex.: pedido duplicado no import).
+function showPopup(titulo, mensagemHtml) {
+  const antigo = document.getElementById('popup-overlay-dyn');
+  if (antigo) antigo.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'popup-overlay-dyn';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--surface,#161922);border:1px solid var(--border,rgba(255,255,255,.12));border-radius:12px;padding:20px 24px;max-width:480px;width:100%;box-shadow:0 12px 48px rgba(0,0,0,.55)';
+  box.innerHTML = `<div style="font-size:16px;font-weight:700;margin-bottom:10px">${titulo}</div>`
+    + `<div style="font-size:14px;line-height:1.5">${mensagemHtml}</div>`
+    + `<div style="text-align:right;margin-top:18px"><button class="btn btn-secondary" id="popup-ok-dyn">OK</button></div>`;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const fechar = () => overlay.remove();
+  box.querySelector('#popup-ok-dyn').onclick = fechar;
+  overlay.onclick = (e) => { if (e.target === overlay) fechar(); };
+}
+
 // ─── CONSTANTES DE PERMISSÕES ────────────────────────────────────────────────
 
 const PAGINAS_SISTEMA = [
@@ -812,6 +832,8 @@ async function deletarProducao(id) {
 // ── MODAL PRODUÇÃO (múltiplos produtos)
 let prodItens = [];
 let prodEstoqueCache = [];
+let prodRevendaCache = [];
+let revendaProdutos = [];
 const TIPOS_PERDA_MOD = ['Quebra','Defeito','Contaminação','Mal formado','Rebarba','Fora de especificação','Outros'];
 
 async function openModalProducao() {
@@ -821,7 +843,9 @@ async function openModalProducao() {
     api('/estoque/produtos').catch(()=>[]),
     api('/pedidos/').catch(()=>[])
   ]);
-  prodEstoqueCache = prods;
+  // Revenda não é produzida: não aparece no registro de produção
+  prodEstoqueCache = (prods || []).filter(p => p.categoria_tipo !== 'revenda');
+  prodRevendaCache = (prods || []).filter(p => p.categoria_tipo === 'revenda');
   document.getElementById('prod-colaborador').innerHTML = cols.map(c => `<option value="${c.id}">${c.nome}</option>`).join('');
   document.getElementById('prod-maquina').innerHTML = mqs.filter(m=>m.ativa).map(m => `<option value="${m.id}">${m.nome}</option>`).join('');
   document.getElementById('prod-data').value = new Date().toISOString().split('T')[0];
@@ -948,6 +972,13 @@ function findBestStockMatch(desc, stockProducts) {
   return bestMatch && bestScore >= 3 ? bestMatch.id : null;
 }
 
+function _itemEhRevenda(i) {
+  if (!i) return false;
+  if (i.produto_id && prodRevendaCache.some(p => p.id === i.produto_id)) return true;
+  if (!i.produto_id && i.descricao && findBestStockMatch(i.descricao, prodRevendaCache)) return true;
+  return false;
+}
+
 async function onProdPedidoChange() {
   const pedId = document.getElementById('prod-pedido').value;
   if (!pedId) {
@@ -964,8 +995,10 @@ async function onProdPedidoChange() {
     // Auto-preencher o número manual para compatibilidade de visualização
     document.getElementById('prod-pedido-manual').value = p.numero_pedido;
     
-    // Mapear os itens do pedido para prodItens
-    prodItens = p.itens.map(i => {
+    // Itens de revenda não são produzidos — não entram em "Produtos Produzidos"
+    const itensProducao = (p.itens || []).filter(i => !_itemEhRevenda(i));
+    // Mapear os itens (de produção) do pedido para prodItens
+    prodItens = itensProducao.map(i => {
       const matchedProdId = i.produto_id || findBestStockMatch(i.descricao, prodEstoqueCache);
       
       const jaConcluido = (i.qtd_produzida || 0) >= i.quantidade || i.status === 'produzido' || i.status === 'entregue';
@@ -984,6 +1017,8 @@ async function onProdPedidoChange() {
       };
     });
     
+    if (!prodItens.length) prodItens = [{ produto_id: null, producao: 0, perda: 0, sobra: 0, tipo_perda: 'Quebra' }];
+
     renderProdItens();
     atualizarTotalProd();
   } catch (e) {
@@ -2898,10 +2933,55 @@ async function checkAlertasPedidos() {
   } catch(e){}
 }
 
+let todosProdutosCache = [];
+async function _carregarRevendaProdutos() {
+  try {
+    const all = await api('/estoque/produtos');
+    todosProdutosCache = all || [];
+    revendaProdutos = todosProdutosCache.filter(p => p.categoria_tipo === 'revenda');
+  } catch(e) { /* mantém o cache anterior */ }
+}
+
+// Casamento FORTE por descrição: só vale se o nome normalizado de um produto de
+// revenda contém (ou está contido em) a descrição normalizada. Evita falsos
+// positivos do findBestStockMatch (que casa frouxo, por token/limiar baixo).
+function _descricaoCasaRevendaForte(desc) {
+  if (!desc || !revendaProdutos.length) return false;
+  const normD = desc.toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/ML$/, 'M');
+  if (normD.length < 6) return false; // descrição muito curta não decide nada
+  return revendaProdutos.some(p => {
+    const normP = (p.nome || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/ML$/, 'M');
+    if (normP.length < 6) return false;
+    return normP.includes(normD) || normD.includes(normP);
+  });
+}
+
+// Reconhece item de revenda.
+// - Item VINCULADO a um produto: a categoria do produto manda (não usa descrição).
+// - Item SEM vínculo: acha o MELHOR produto correspondente entre TODOS os
+//   produtos cadastrados; só é revenda se esse melhor match for de revenda.
+//   (Assim um copo de produção casa com o produto de produção dele, não com um
+//   produto de revenda por coincidência.)
+function itemEhRevenda(i) {
+  if (!i) return false;
+  if (i.produto_id) {
+    if (i.categoria_tipo === 'revenda') return true;
+    if (revendaProdutos.some(p => p.id === i.produto_id)) return true;
+    return false; // vinculado a categoria de produção => NÃO é revenda
+  }
+  if (i.categoria_tipo === 'revenda') return true;
+  if (!i.descricao) return false;
+  const bestId = findBestStockMatch(i.descricao, todosProdutosCache);
+  if (bestId != null) return revendaProdutos.some(p => p.id === bestId);
+  // sem nenhum produto cadastrado correspondente: cai no casamento forte só-revenda
+  return _descricaoCasaRevendaForte(i.descricao);
+}
+
 async function loadFila() {
   const status=document.getElementById('ped-fila-status')?.value||'';
   let url='/pedidos/fila/producao';if(status) url+='?status='+status;
-  const itens=await api(url);
+  await _carregarRevendaProdutos();
+  const itens=(await api(url)).filter(i => !itemEhRevenda(i));
   const el=document.getElementById('ped-fila-cards');
   if(!el) return;
 
@@ -3150,8 +3230,25 @@ async function salvarVinculoProduto(itemId, produtoId) {
     showAlert('Produto vinculado!');
   } catch(e) { showAlert('Erro: '+e.message, 'danger'); }
 }
+async function marcarRevendaSeparado(pedidoId, itemId, qtd, marcar) {
+  try {
+    const r = await api('/pedidos/itens/'+itemId+'/separar-revenda','POST',{ marcar: !!marcar });
+    if (marcar && r.sem_vinculo) {
+      showAlert('Marcado, mas SEM baixa de estoque: vincule o item a um produto de revenda primeiro.', 'warn');
+    } else if (marcar && r.saldo_insuficiente) {
+      showAlert('Separado com baixa — atenção: faltaram '+fmtNum(r.faltou)+' un no estoque (saldo ficou '+fmtNum(r.saldo_atual)+').', 'warn');
+    } else {
+      showAlert(marcar ? 'Separado/Entregue — baixa registrada no estoque' : 'Desfeito — estoque estornado');
+    }
+    await verDetalhesPedido(pedidoId);
+    loadPedidos();
+  } catch(e){ showAlert(e.message,'danger'); }
+}
+window.marcarRevendaSeparado = marcarRevendaSeparado;
+
 async function verDetalhesPedido(id) {
   const p=await api('/pedidos/'+id);
+  await _carregarRevendaProdutos();
   const dias=Math.round(p.dias_restantes);
   const diasCor=dias<0?'var(--danger)':dias<=3?'var(--warn)':'var(--success)';
   document.getElementById('modal-ped-det-title').textContent='Pedido '+p.numero_pedido;
@@ -3166,6 +3263,18 @@ async function verDetalhesPedido(id) {
       <div class="table-head"><span class="table-head-title">Itens</span></div>
       <table><thead><tr><th>Descrição</th><th>Produto Estoque</th><th>Qtd</th><th>Produzido</th><th>Status</th><th></th></tr></thead>
       <tbody>${p.itens.map(i=>{
+        if (itemEhRevenda(i)) {
+          const feito = i.status === 'entregue' || i.status === 'produzido';
+          return `<tr style="background:rgba(59,130,246,.05)">
+            <td>${i.descricao} <span style="margin-left:6px;font-size:11px;padding:1px 7px;border-radius:9px;background:rgba(59,130,246,.15);color:#3b82f6">🛒 Revenda</span></td>
+            <td>${fmtNum(i.quantidade)} ${i.unidade||''}</td>
+            <td><span style="color:var(--muted);font-size:12px">Não produzido — separar do estoque</span></td>
+            <td><span class="pill ${feito?STATUS_PILL_PED['entregue']:''}">${feito?'Separado / Entregue':'Pendente'}</span></td>
+            <td>${feito
+              ? `<button class="btn btn-sm btn-secondary" onclick="marcarRevendaSeparado(${p.id},${i.id},${i.quantidade},false)">Desfazer</button>`
+              : `<button class="btn btn-sm btn-secondary" style="background:var(--success);border-color:var(--success);color:#fff" onclick="marcarRevendaSeparado(${p.id},${i.id},${i.quantidade},true)">✓ Separado/Entregue</button>`}</td>
+          </tr>`;
+        }
         const pct=Math.min(100,Math.round((i.qtd_produzida/i.quantidade)*100));
         const prox=STATUS_NEXT_PED[i.status];
         return `<tr><td>${i.descricao}</td><td>${fmtNum(i.quantidade)}</td>
@@ -3259,9 +3368,29 @@ async function importarPedidosLote() {
 
     if (preview) {
       preview.style.display = 'block';
-      preview.innerHTML = `<strong>Resumo:</strong> ${rs.criados} criado(s), ${rs.duplicados} duplicado(s), ${rs.erros} com erro — de ${rs.total} arquivo(s).<hr style="border-color:rgba(255,255,255,.1)">${linhas}`;
+      const alertas = data.alertas_estoque || [];
+      const blocoAlertas = alertas.length
+        ? `<hr style="border-color:rgba(255,255,255,.1)"><div style="color:#f4b400;font-weight:600;margin:4px 0">⚠️ Estoque insuficiente para a demanda dos pedidos abertos:</div>`
+          + alertas.map(a=>`<div style="color:#f4b400;font-size:13px">• ${a.produto}: saldo ${fmtNum(a.saldo)} ${a.unidade}, demanda ${fmtNum(a.demanda)} — faltam <strong>${fmtNum(a.falta)}</strong></div>`).join('')
+        : '';
+      preview.innerHTML = `<strong>Resumo:</strong> ${rs.criados} criado(s), ${rs.duplicados} duplicado(s), ${rs.erros} com erro — de ${rs.total} arquivo(s).<hr style="border-color:rgba(255,255,255,.1)">${linhas}${blocoAlertas}`;
     }
     showAlert(`Importação concluída: ${rs.criados} pedido(s) criado(s).`);
+    const dups = (data.resultados || []).filter(it => it.status === 'duplicado').map(it => it.numero_pedido);
+    const alertasEstoque = data.alertas_estoque || [];
+    let avisoHtml = '';
+    if (dups.length) {
+      avisoHtml += `<div style="color:#f4b400;font-weight:600;margin-bottom:6px">${dups.length} pedido(s) já cadastrado(s) — não foram importados:</div>`
+        + dups.map(n => `<div style="margin-left:4px">• Pedido <strong>${n}</strong></div>`).join('');
+    }
+    if (alertasEstoque.length) {
+      if (avisoHtml) avisoHtml += `<hr style="border-color:rgba(255,255,255,.12);margin:12px 0">`;
+      avisoHtml += `<div style="color:#f4b400;font-weight:600;margin-bottom:6px">Estoque insuficiente para a demanda dos pedidos abertos:</div>`
+        + alertasEstoque.map(a => `<div style="margin-left:4px">• ${a.produto}: saldo ${fmtNum(a.saldo)} ${a.unidade}, demanda ${fmtNum(a.demanda)} — faltam <strong>${fmtNum(a.falta)}</strong></div>`).join('');
+    }
+    if (avisoHtml) showPopup('⚠️ Importação — atenção', avisoHtml);
+    // Importação limpa (sem erros de leitura): fecha o modal sozinho
+    if (rs.erros === 0) closeModal('modal-importar-pedido');
     if (typeof loadPedidos === 'function') { try { await loadPedidos(); } catch(e){} }
     pedidosArquivosSelecionados = [];
     const input = document.getElementById('pedido-arquivo');
@@ -3561,14 +3690,20 @@ async function salvarPedido() {
       await api('/pedidos/' + id, 'PUT', body);
       showAlert('Pedido atualizado!');
     } else {
-      await api('/pedidos/','POST',body);
-      showAlert('Pedido salvo!');
+      const resp = await api('/pedidos/','POST',body);
+      const alertas = (resp && resp.alertas_estoque) || [];
+      if (alertas.length) {
+        showAlert('Pedido salvo! ⚠️ Estoque insuficiente: '
+          + alertas.map(a=>`${a.produto} (faltam ${fmtNum(a.falta)} ${a.unidade})`).join('; '), 'warn');
+      } else {
+        showAlert('Pedido salvo!');
+      }
     }
     closeModal('modal-pedido');
     loadFila();
     loadPedidos();
     checkAlertasPedidos();
-  } catch(e){showAlert(e.message,'danger');}
+  } catch(e){ showPopup('⚠️ Não foi possível salvar', `<div style="color:#ff6b6b">${e.message}</div>`); }
 }
 
 async function loadClientes() {
@@ -5402,7 +5537,7 @@ async function loadCategoriasEstoque() {
   }
   tbody.innerHTML = cats.map(c => `
     <tr>
-      <td><strong>${c.nome || ''}</strong></td>
+      <td><strong>${c.nome || ''}</strong> ${c.tipo === 'revenda' ? '<span style="margin-left:8px;font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(59,130,246,.15);color:#3b82f6">🛒 Revenda</span>' : '<span style="margin-left:8px;font-size:11px;padding:2px 8px;border-radius:10px;background:var(--surface2);color:var(--muted)">Produção</span>'}</td>
       <td>${c.descricao || '—'}</td>
       <td class="flex gap-2">
         ${temPermissao('estoque', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="editCategoria(${c.id})">✏️</button>` : ''}
@@ -5411,10 +5546,27 @@ async function loadCategoriasEstoque() {
     </tr>`).join('');
 }
 
+function _ensureCatTipoField() {
+  if (document.getElementById('est-cat-tipo')) return;
+  const grid = document.querySelector('#modal-categoria .form-grid');
+  if (!grid) return;
+  const g = document.createElement('div');
+  g.className = 'form-group';
+  g.style.gridColumn = '1/-1';
+  g.innerHTML = '<label>Tipo da categoria</label>'
+    + '<select id="est-cat-tipo">'
+    + '<option value="producao">Produção (fabricado pela empresa)</option>'
+    + '<option value="revenda">Revenda (não produzido — comprado pronto)</option>'
+    + '</select>';
+  grid.appendChild(g);
+}
+
 async function openModalCategoria() {
   _setVal('est-cat-id', '');
   _setVal('est-cat-nome', '');
   _setVal('est-cat-desc', '');
+  _ensureCatTipoField();
+  _setVal('est-cat-tipo', 'producao');
   const ti = document.getElementById('modal-cat-title'); if (ti) ti.textContent = 'Nova Categoria';
   openModal('modal-categoria');
 }
@@ -5426,13 +5578,15 @@ async function editCategoria(id) {
   _setVal('est-cat-id', c.id);
   _setVal('est-cat-nome', c.nome || '');
   _setVal('est-cat-desc', c.descricao || '');
+  _ensureCatTipoField();
+  _setVal('est-cat-tipo', c.tipo || 'producao');
   const ti = document.getElementById('modal-cat-title'); if (ti) ti.textContent = 'Editar Categoria';
   openModal('modal-categoria');
 }
 
 async function salvarCategoria() {
   const id = _getVal('est-cat-id');
-  const body = { nome: _getVal('est-cat-nome').trim(), descricao: _getVal('est-cat-desc').trim() };
+  const body = { nome: _getVal('est-cat-nome').trim(), descricao: _getVal('est-cat-desc').trim(), tipo: _getVal('est-cat-tipo') || 'producao' };
   if (!body.nome) { showAlert('Informe o nome da categoria', 'danger'); return; }
   try {
     if (id) await api('/estoque/categorias/' + id, 'PUT', body);
@@ -6033,14 +6187,12 @@ async function loadSaldoDemanda() {
   try {
     svdDados = await api(url);
 
-    // Filtrar pelas categorias configuradas (persistidas no backend)
-    const allowedCatIds = await _getSvdCategoriasVisiveis();
-    if (allowedCatIds) {
-      svdDados = svdDados.filter(r => {
-        const catIdStr = r.categoria_id === null || r.categoria_id === undefined ? "null" : String(r.categoria_id);
-        return allowedCatIds.includes(catIdStr);
-      });
-    }
+    // Filtrar pelas categorias ocultadas (persistidas no backend)
+    const ocultas = await _getSvdCategoriasOcultas();
+    svdDados = svdDados.filter(r => {
+      const catIdStr = r.categoria_id === null || r.categoria_id === undefined ? "null" : String(r.categoria_id);
+      return !ocultas.includes(catIdStr);
+    });
 
     // Popular filtro de marcas dinamicamente
     const marcaSel = document.getElementById('svd-filtro-marca');
@@ -6153,7 +6305,7 @@ function renderSVDTabela(dados) {
 
     return `<tr>
       <td>
-        <div style="font-weight:600">${r.nome}${r.marca ? ' <span style="color:var(--muted);font-weight:400">'+r.marca+'</span>' : ''}</div>
+        <div style="font-weight:600">${r.nome}${r.marca ? ' <span style="color:var(--muted);font-weight:400">'+r.marca+'</span>' : ''}${r.categoria_tipo === 'revenda' ? ' <span style="font-size:11px;padding:1px 7px;border-radius:9px;background:rgba(59,130,246,.15);color:#3b82f6">🛒 Revenda</span>' : ''}</div>
         ${r.codigo ? `<div style="font-size:11px;color:var(--muted)">${r.codigo}</div>` : ''}
       </td>
       <td style="color:var(--muted)">${r.categoria}</td>
@@ -6188,6 +6340,9 @@ function renderSVDTabela(dados) {
       </td>
       <td><span class="pill ${cfg.pill}">${cfg.label}</span></td>
       <td>
+        ${r.categoria_tipo === 'revenda' && r.saldo_projetado < 0
+          ? `<div style="font-size:11px;font-weight:700;color:#3b82f6;margin-bottom:4px">🛒 Comprar ${fmtNum(Math.abs(r.saldo_projetado))} ${r.unidade}</div>`
+          : ''}
         ${r.total_demanda > 0 ? `<button class="btn btn-sm btn-secondary" onclick="verDetalhesSVD(${r.id},'${r.nome.replace(/'/g,"\\'")}')">🔍 Pedidos</button>` : ''}
       </td>
     </tr>`;
@@ -6319,27 +6474,47 @@ function exportarSVD(formato) {
   }
 }
 
-async function _getSvdCategoriasVisiveis() {
+async function _getSvdCategoriasOcultas() {
   // Fonte de verdade: backend (persiste entre cargas de página e dispositivos).
-  // localStorage funciona apenas como cache local rápido.
+  // Salva a lista de categorias desmarcadas/ocultadas.
+  // Assim, novas categorias criadas aparecem ativas por padrão.
   try {
-    const cfg = await api('/configuracoes/svd_categorias_visiveis');
+    const cfg = await api('/configuracoes/svd_categorias_ocultas');
     if (cfg && cfg.valor) {
       try {
         const arr = JSON.parse(cfg.valor);
-        localStorage.setItem('svd_categorias_visiveis', cfg.valor);
+        localStorage.setItem('svd_categorias_ocultas', cfg.valor);
         return arr;
       } catch (e) {}
     } else {
-      // backend vazio: usa cache local se existir
-      const local = localStorage.getItem('svd_categorias_visiveis');
+      // Tenta migrar da chave antiga svd_categorias_visiveis se existir
+      const cfgAntiga = await api('/configuracoes/svd_categorias_visiveis');
+      if (cfgAntiga && cfgAntiga.valor) {
+        try {
+          const visiveis = JSON.parse(cfgAntiga.valor);
+          const cats = await api('/estoque/categorias');
+          const ocultas = [];
+          if (!visiveis.includes('null')) ocultas.push('null');
+          cats.forEach(c => {
+            if (!visiveis.includes(String(c.id))) {
+              ocultas.push(String(c.id));
+            }
+          });
+          const valor = JSON.stringify(ocultas);
+          await api('/configuracoes/svd_categorias_ocultas', 'PUT', { valor });
+          localStorage.setItem('svd_categorias_ocultas', valor);
+          return ocultas;
+        } catch (e) {}
+      }
+      // Se não houver nada no servidor, usa cache local
+      const local = localStorage.getItem('svd_categorias_ocultas');
       if (local) { try { return JSON.parse(local); } catch (e) {} }
     }
   } catch (e) {
-    const local = localStorage.getItem('svd_categorias_visiveis');
+    const local = localStorage.getItem('svd_categorias_ocultas');
     if (local) { try { return JSON.parse(local); } catch (e2) {} }
   }
-  return null; // null = todas as categorias visíveis
+  return []; // Por padrão, nenhuma categoria é oculta
 }
 
 async function abrirConfigCategoriasSVD() {
@@ -6350,12 +6525,12 @@ async function abrirConfigCategoriasSVD() {
 
   try {
     const cats = await api('/estoque/categorias');
-    const allowedCatIds = await _getSvdCategoriasVisiveis();
+    const ocultas = await _getSvdCategoriasOcultas();
 
     let html = '';
     
     // Opção "Sem Categoria"
-    const semCatChecked = allowedCatIds === null || allowedCatIds.includes('null');
+    const semCatChecked = !ocultas.includes('null');
     html += `
       <label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:4px;cursor:pointer;background:var(--surface2)">
         <input type="checkbox" class="svd-cat-checkbox" value="null" ${semCatChecked ? 'checked' : ''}>
@@ -6365,7 +6540,7 @@ async function abrirConfigCategoriasSVD() {
 
     // Categorias cadastradas
     cats.forEach(c => {
-      const isChecked = allowedCatIds === null || allowedCatIds.includes(String(c.id));
+      const isChecked = !ocultas.includes(String(c.id));
       html += `
         <label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:4px;cursor:pointer;background:var(--surface2)">
           <input type="checkbox" class="svd-cat-checkbox" value="${c.id}" ${isChecked ? 'checked' : ''}>
@@ -6387,16 +6562,16 @@ function marcarTodasCategoriasSVD(marcar) {
 
 async function aplicarCategoriasSVD() {
   const checkboxes = document.querySelectorAll('.svd-cat-checkbox');
-  const selected = [];
+  const ocultas = [];
   checkboxes.forEach(cb => {
-    if (cb.checked) {
-      selected.push(cb.value);
+    if (!cb.checked) {
+      ocultas.push(cb.value);
     }
   });
-  const valor = JSON.stringify(selected);
-  localStorage.setItem('svd_categorias_visiveis', valor);
+  const valor = JSON.stringify(ocultas);
+  localStorage.setItem('svd_categorias_ocultas', valor);
   try {
-    await api('/configuracoes/svd_categorias_visiveis', 'PUT', { valor });
+    await api('/configuracoes/svd_categorias_ocultas', 'PUT', { valor });
   } catch (e) {
     showAlert('Salvo localmente, mas não foi possível gravar no servidor: ' + e.message, 'danger');
   }

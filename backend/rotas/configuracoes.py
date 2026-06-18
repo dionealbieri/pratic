@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, HTTPException
 from pydantic import BaseModel
 from typing import Dict
 from database import get_conn
@@ -80,6 +80,9 @@ def buscar_empresa():
         chave = row["chave"].replace("empresa_", "", 1)
         if chave in dados:
             dados[chave] = row["valor"] or ""
+        elif chave == "endereco" and not dados.get("logradouro"):
+            # Compatibilidade com banco antigo: se logradouro estiver vazio e endereco existir
+            dados["logradouro"] = row["valor"] or ""
     return dados
 
 

@@ -68,6 +68,7 @@ def _normalizar_codigo(codigo: Optional[str]) -> Optional[str]:
 class CategoriaIn(BaseModel):
     nome: str
     descricao: Optional[str] = None
+    tipo: Optional[str] = "producao"  # 'producao' (fabricado) ou 'revenda' (comprado pronto)
 
 class ProdutoIn(BaseModel):
     codigo: Optional[str] = None
@@ -102,7 +103,7 @@ def listar_categorias():
 def criar_categoria(c: CategoriaIn):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("INSERT INTO estoque_categorias (nome, descricao) VALUES (?, ?)", (c.nome, c.descricao))
+    cur.execute("INSERT INTO estoque_categorias (nome, descricao, tipo) VALUES (?, ?, ?)", (c.nome, c.descricao, (c.tipo or "producao")))
     conn.commit()
     id = cur.lastrowid
     conn.close()
@@ -111,7 +112,7 @@ def criar_categoria(c: CategoriaIn):
 @router.put("/categorias/{id}")
 def atualizar_categoria(id: int, c: CategoriaIn):
     conn = get_conn()
-    conn.execute("UPDATE estoque_categorias SET nome=?, descricao=? WHERE id=?", (c.nome, c.descricao, id))
+    conn.execute("UPDATE estoque_categorias SET nome=?, descricao=?, tipo=? WHERE id=?", (c.nome, c.descricao, (c.tipo or "producao"), id))
     conn.commit()
     conn.close()
     return {"mensagem": "Categoria atualizada"}
@@ -134,7 +135,7 @@ def deletar_categoria(id: int):
 def listar_produtos(categoria_id: Optional[int] = None):
     conn = get_conn()
     query = """
-        SELECT p.*, c.nome as categoria_nome,
+        SELECT p.*, c.nome as categoria_nome, c.tipo as categoria_tipo,
                COALESCE(e.quantidade, 0) as quantidade_atual
         FROM estoque_produtos p
         LEFT JOIN estoque_categorias c ON p.categoria_id = c.id
@@ -186,7 +187,7 @@ def criar_produto(p: ProdutoIn):
 def obter_produto(id: int):
     conn = get_conn()
     row = conn.execute("""
-        SELECT p.*, c.nome as categoria_nome, COALESCE(e.quantidade, 0) as quantidade_atual
+        SELECT p.*, c.nome as categoria_nome, c.tipo as categoria_tipo, COALESCE(e.quantidade, 0) as quantidade_atual
         FROM estoque_produtos p
         LEFT JOIN estoque_categorias c ON p.categoria_id = c.id
         LEFT JOIN estoque_saldo e ON e.produto_id = p.id
@@ -424,7 +425,7 @@ def saldo_vs_demanda(categoria_id: Optional[int] = None):
     query = """
         SELECT 
             ep.id, ep.codigo, ep.nome, ep.marca, ep.unidade,
-            ep.estoque_minimo, ec.nome as categoria_nome,
+            ep.estoque_minimo, ec.nome as categoria_nome, ec.tipo as categoria_tipo,
             ep.categoria_id,
             COALESCE(es.quantidade, 0) as saldo_atual
         FROM estoque_produtos ep
@@ -487,6 +488,7 @@ def saldo_vs_demanda(categoria_id: Optional[int] = None):
             "unidade": p["unidade"],
             "categoria": p["categoria_nome"] or "—",
             "categoria_id": p["categoria_id"],
+            "categoria_tipo": p["categoria_tipo"] or "producao",
             "estoque_minimo": p["estoque_minimo"],
             "saldo_atual": saldo,
             "qtd_aberto": demanda["qtd_aberto"] or 0,

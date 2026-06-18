@@ -42,6 +42,9 @@ class StatusItemIn(BaseModel):
     qtd_produzida: Optional[float] = None
     split_if_partial: Optional[bool] = False
 
+class SepararRevendaIn(BaseModel):
+    marcar: bool = True
+
 
 # ─── IMPORTAÇÃO DE PEDIDO POR ARQUIVO ────────────────────────────────────────
 
@@ -451,6 +454,45 @@ def _auto_vincular_itens(conn):
         if melhor_id:
             conn.execute("UPDATE pedidos_itens SET produto_id = ? WHERE id = ?", (melhor_id, item['id']))
 
+def _alertas_estoque_para_pedidos(cur, pedido_ids):
+    """Para os produtos dos pedidos informados, compara o saldo com a demanda
+    total de todos os pedidos abertos. Retorna a lista dos que vão faltar."""
+    ids = [pid for pid in (pedido_ids or []) if pid]
+    if not ids:
+        return []
+    placeholders = ",".join("?" * len(ids))
+    prod_ids = [r["produto_id"] for r in cur.execute(
+        f"""SELECT DISTINCT produto_id FROM pedidos_itens
+            WHERE pedido_id IN ({placeholders}) AND produto_id IS NOT NULL""", ids).fetchall()]
+    alertas = []
+    for prod_id in prod_ids:
+        prod = cur.execute("""
+            SELECT ep.nome, ep.unidade, ec.tipo as categoria_tipo,
+                   COALESCE(es.quantidade, 0) as saldo
+            FROM estoque_produtos ep
+            LEFT JOIN estoque_categorias ec ON ep.categoria_id = ec.id
+            LEFT JOIN estoque_saldo es ON es.produto_id = ep.id
+            WHERE ep.id = ?""", (prod_id,)).fetchone()
+        if not prod:
+            continue
+        dem = cur.execute("""
+            SELECT COALESCE(SUM(pi.quantidade - pi.qtd_produzida), 0) as total
+            FROM pedidos_itens pi JOIN pedidos ped ON pi.pedido_id = ped.id
+            WHERE pi.produto_id = ? AND ped.status IN ('aberto','em_producao')
+              AND pi.quantidade > pi.qtd_produzida""", (prod_id,)).fetchone()
+        total_demanda = dem["total"] or 0
+        saldo = prod["saldo"] or 0
+        if total_demanda > 0 and saldo < total_demanda:
+            alertas.append({
+                "produto": prod["nome"],
+                "unidade": prod["unidade"] or "",
+                "categoria_tipo": prod["categoria_tipo"] or "producao",
+                "saldo": saldo,
+                "demanda": total_demanda,
+                "falta": total_demanda - saldo,
+            })
+    return alertas
+
 _SUFIXOS_JURIDICOS = {"LTDA", "LTDA.", "EIRELI", "EPP", "ME", "MEI", "SA", "S/A",
                       "S.A", "S.A.", "CIA", "CIA.", "EI", "INC", "EIRL"}
 
@@ -525,6 +567,8 @@ async def importar_pedidos_lote(files: List[UploadFile] = File(...)):
         raise HTTPException(400, "Selecione ao menos um arquivo")
     resultados = []
     criados = duplicados = erros = 0
+    criados_ids = []
+    alertas = []
     conn = get_conn()
     try:
         cur = conn.cursor()
@@ -568,6 +612,7 @@ async def importar_pedidos_lote(files: List[UploadFile] = File(...)):
                         (pedido_id, None, it["descricao"], it["quantidade"], it.get("unidade") or "unidade"))
                 conn.commit()
                 criados += 1
+                criados_ids.append(pedido_id)
                 resultados.append({"arquivo": nome, "numero_pedido": numero, "status": "criado",
                                    "pedido_id": pedido_id, "cliente": parsed["cliente"].get("razao_social"),
                                    "qtd_itens": len(parsed.get("itens", [])),
@@ -587,11 +632,16 @@ async def importar_pedidos_lote(files: List[UploadFile] = File(...)):
             conn.commit()
         except Exception:
             conn.rollback()
+        try:
+            alertas = _alertas_estoque_para_pedidos(cur, criados_ids)
+        except Exception:
+            alertas = []
     finally:
         conn.close()
     return {
         "resumo": {"total": len(files), "criados": criados, "duplicados": duplicados, "erros": erros},
         "resultados": resultados,
+        "alertas_estoque": alertas,
     }
 
 
@@ -925,7 +975,9 @@ def fila_producao(status: Optional[str] = None):
         JOIN pedidos p ON i.pedido_id = p.id
         JOIN pedidos_clientes c ON p.cliente_id = c.id
         LEFT JOIN estoque_produtos ep ON i.produto_id = ep.id
+        LEFT JOIN estoque_categorias ec ON ep.categoria_id = ec.id
         WHERE p.status NOT IN ('entregue')
+          AND (ec.tipo IS NULL OR ec.tipo != 'revenda')
     """
     params = []
     if status:
@@ -950,9 +1002,10 @@ def buscar_pedido(id: int):
         conn.close()
         raise HTTPException(404, "Pedido não encontrado")
     itens = conn.execute("""
-        SELECT i.*, ep.nome as produto_nome
+        SELECT i.*, ep.nome as produto_nome, ec.tipo as categoria_tipo
         FROM pedidos_itens i
         LEFT JOIN estoque_produtos ep ON i.produto_id = ep.id
+        LEFT JOIN estoque_categorias ec ON ep.categoria_id = ec.id
         WHERE i.pedido_id=?
         ORDER BY i.id
     """, (id,)).fetchall()
@@ -965,6 +1018,11 @@ def buscar_pedido(id: int):
 def criar_pedido(p: PedidoIn):
     conn = get_conn()
     cur = conn.cursor()
+    if p.numero_pedido:
+        dup = cur.execute("SELECT id FROM pedidos WHERE numero_pedido=?", (str(p.numero_pedido),)).fetchone()
+        if dup:
+            conn.close()
+            raise HTTPException(400, f"Pedido número {p.numero_pedido} já existe (pedido #{dup['id']}).")
     cur.execute("""INSERT INTO pedidos
         (numero_pedido, cliente_id, prazo_entrega, vendedor, observacoes, status)
         VALUES (?,?,?,?,?,'aberto')""",
@@ -976,14 +1034,20 @@ def criar_pedido(p: PedidoIn):
             VALUES (?,?,?,?,?,0,'aberto')""",
             (pedido_id, item.produto_id, item.descricao, item.quantidade, item.unidade))
     _auto_vincular_itens(conn)
+    alertas = _alertas_estoque_para_pedidos(cur, [pedido_id])
     conn.commit()
     conn.close()
-    return {"id": pedido_id, "mensagem": "Pedido criado"}
+    return {"id": pedido_id, "mensagem": "Pedido criado", "alertas_estoque": alertas}
 
 @router.put("/{id}")
 def atualizar_pedido(id: int, p: PedidoIn):
     conn = get_conn()
     cur = conn.cursor()
+    if p.numero_pedido:
+        dup = cur.execute("SELECT id FROM pedidos WHERE numero_pedido=? AND id<>?", (str(p.numero_pedido), id)).fetchone()
+        if dup:
+            conn.close()
+            raise HTTPException(400, f"Pedido número {p.numero_pedido} já existe (pedido #{dup['id']}).")
     cur.execute("""UPDATE pedidos SET
         numero_pedido=?, cliente_id=?, prazo_entrega=?, vendedor=?, observacoes=?
         WHERE id=?""",
@@ -1100,6 +1164,82 @@ def atualizar_status_item(id: int, body: StatusItemIn):
     conn.commit()
     conn.close()
     return {"mensagem": "Item atualizado"}
+
+@router.post("/itens/{id}/separar-revenda")
+def separar_revenda_item(id: int, body: SepararRevendaIn):
+    """Marca um item de revenda como Separado/Entregue (ou desfaz), dando baixa
+    (ou estorno) no estoque do produto vinculado. Permite saldo negativo, mas
+    sinaliza falta de saldo para o frontend alertar."""
+    from datetime import date
+    conn = get_conn()
+    cur = conn.cursor()
+    item = cur.execute("SELECT * FROM pedidos_itens WHERE id=?", (id,)).fetchone()
+    if not item:
+        conn.close()
+        raise HTTPException(404, "Item do pedido não encontrado")
+
+    pid = item["pedido_id"]
+    produto_id = item["produto_id"]
+    qtd = item["quantidade"] or 0
+    ped = cur.execute("SELECT numero_pedido FROM pedidos WHERE id=?", (pid,)).fetchone()
+    numero = ped["numero_pedido"] if ped and ped["numero_pedido"] else pid
+
+    def _mov(tipo, motivo):
+        row = cur.execute("SELECT quantidade FROM estoque_saldo WHERE produto_id=?", (produto_id,)).fetchone()
+        saldo = row["quantidade"] if row else 0
+        novo = saldo + qtd if tipo == "entrada" else saldo - qtd
+        cur.execute("""INSERT INTO estoque_movimentacoes
+                       (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior, motivo, data)
+                       VALUES (?,?,?,?,?,?,?)""",
+                    (produto_id, tipo, qtd, saldo, novo, motivo, str(date.today())))
+        if row:
+            cur.execute("UPDATE estoque_saldo SET quantidade=?, ultima_atualizacao=datetime('now') WHERE produto_id=?",
+                        (novo, produto_id))
+        else:
+            cur.execute("INSERT INTO estoque_saldo (produto_id, quantidade) VALUES (?, ?)", (produto_id, novo))
+        return saldo, novo
+
+    marcar = body.marcar
+    indo_entregue = marcar and item["status"] != "entregue"
+    voltando = (not marcar) and item["status"] == "entregue"
+
+    saldo_insuficiente = False
+    faltou = 0
+    sem_vinculo = False
+    saldo_atual = None
+
+    if indo_entregue:
+        if produto_id:
+            saldo, novo = _mov("saida", f"Separação pedido {numero}")
+            saldo_atual = novo
+            if qtd > saldo:
+                saldo_insuficiente = True
+                faltou = qtd - saldo
+        else:
+            sem_vinculo = True
+        cur.execute("UPDATE pedidos_itens SET status='entregue', qtd_produzida=? WHERE id=?", (qtd, id))
+    elif voltando:
+        if produto_id:
+            saldo, novo = _mov("entrada", f"Estorno separação pedido {numero}")
+            saldo_atual = novo
+        cur.execute("UPDATE pedidos_itens SET status='aberto', qtd_produzida=0 WHERE id=?", (id,))
+    else:
+        # sem transição de estoque; apenas garante o status alvo
+        if marcar:
+            cur.execute("UPDATE pedidos_itens SET status='entregue', qtd_produzida=? WHERE id=?", (qtd, id))
+        else:
+            cur.execute("UPDATE pedidos_itens SET status='aberto', qtd_produzida=0 WHERE id=?", (id,))
+
+    _recalc_status_pedido(cur, pid)
+    conn.commit()
+    conn.close()
+    return {
+        "mensagem": "Item separado/entregue" if marcar else "Marcação desfeita",
+        "saldo_insuficiente": saldo_insuficiente,
+        "faltou": faltou,
+        "sem_vinculo": sem_vinculo,
+        "saldo_atual": saldo_atual,
+    }
 
 @router.put("/itens/{id}/produto")
 def vincular_produto_item(id: int, body: dict):

@@ -12,7 +12,7 @@
     document.documentElement.setAttribute('data-theme', savedTheme);
   })();
 </script>
-<link rel="stylesheet" href="css/common.css?v=2">
+<link rel="stylesheet" href="css/common.css?v=4">
 </head>
 <body class="has-sidebar">
 
@@ -179,7 +179,7 @@
 
     <!-- PRODUÇÃO -->
     <div class="page" id="page-producao">
-      <div class="flex items-center justify-between mb-4">
+      <div class="barra-fixa flex items-center justify-between mb-4">
         <div class="flex gap-2 items-center" style="flex-wrap:wrap">
           <div class="month-bar" style="margin-bottom:0">
             <label>Mês:</label>
@@ -340,7 +340,7 @@
 
     <!-- ESTOQUE -->
     <div class="page" id="page-estoque">
-      <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap">
+      <div class="barra-fixa" style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap">
         <button class="btn btn-secondary" id="tab-produtos" onclick="switchEstoqueTab('produtos')" style="border-color:var(--accent);color:var(--accent)">📦 Produtos</button>
         <button class="btn btn-secondary" id="tab-movimentacoes" onclick="switchEstoqueTab('movimentacoes')">📋 Movimentações</button>
         <button class="btn btn-secondary" id="tab-perdas" onclick="switchEstoqueTab('perdas')">⚠️ Perdas</button>
@@ -814,7 +814,7 @@
       <div id="svd-alerta-banner"></div>
 
       <!-- Filtros + Ações -->
-      <div class="flex items-center justify-between mb-4" style="flex-wrap:wrap;gap:10px">
+      <div class="barra-fixa flex items-center justify-between mb-4" style="flex-wrap:wrap;gap:10px">
         <div class="flex gap-2 items-center" style="flex-wrap:wrap">
           <select id="svd-filtro-cat" onchange="loadSaldoDemanda()" style="min-width:180px">
             <option value="">Todas as categorias</option>
@@ -917,7 +917,7 @@
 
     <div class="page" id="page-graficos">
       <!-- Filtros -->
-      <div class="flex items-center justify-between mb-4" style="flex-wrap:wrap;gap:10px">
+      <div class="barra-fixa flex items-center justify-between mb-4" style="flex-wrap:wrap;gap:10px">
         <div class="flex gap-2 items-center" style="flex-wrap:wrap">
           <label style="color:var(--muted);font-size:13px">Período:</label>
           <input type="month" id="graf-mes-ini" style="min-width:140px">
@@ -1057,7 +1057,7 @@
 
     <!-- RELATÓRIOS -->
     <div class="page" id="page-relatorios">
-      <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap">
+      <div class="barra-fixa" style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap">
         <button class="btn btn-secondary" id="rtab-producao" onclick="switchRelTab('producao')" style="border-color:var(--accent);color:var(--accent)">🏭 Produção</button>
         <button class="btn btn-secondary" id="rtab-premiacao" onclick="switchRelTab('premiacao')">🏆 Premiação</button>
         <button class="btn btn-secondary" id="rtab-estoque" onclick="switchRelTab('estoque')">📦 Estoque</button>
@@ -1987,7 +1987,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
-<script src="js/app.js?v=20260616-graficos-meta-coerente"></script>
+<script src="js/app.js?v=20260618-import-autoclose"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');

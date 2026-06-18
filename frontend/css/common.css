@@ -1125,13 +1125,33 @@ button:disabled.btn-loading {
 }
 
 /* Barra fixa da aba Produtos do Estoque: mantém o botão + Novo Produto acessível durante a rolagem */
+/* Barra de opções fixa no topo de cada página (logo abaixo do cabeçalho global de 70px) */
+.barra-fixa {
+  position: sticky;
+  top: 70px;
+  z-index: 40;
+  background: var(--bg);
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
 .estoque-produtos-toolbar {
   position: sticky;
-  top: 12px;
-  z-index: 60;
+  top: 130px;
+  z-index: 39;
   padding: 10px 0;
   background: var(--bg);
-  border-bottom: 1px solid transparent;
+  border-bottom: 1px solid var(--border);
+}
+/* Filtros que ficam logo ABAIXO das abas fixas (empilhados) — Estoque e Relatorios */
+.barra-fixa-sub,
+#page-estoque > div[id^="est-tab-"] > .flex.items-center.justify-between.mb-4,
+#page-relatorios > div[id^="rel-content-"] > .flex.items-center.justify-between.mb-4 {
+  position: sticky;
+  top: 130px;
+  z-index: 39;
+  background: var(--bg);
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
 }
 
 .estoque-produtos-toolbar.is-stuck,
@@ -1141,8 +1161,16 @@ button:disabled.btn-loading {
 
 @media (max-width: 768px) {
   .estoque-produtos-toolbar {
-    top: 8px;
+    top: 112px;
     align-items: stretch;
+  }
+  .barra-fixa {
+    top: 56px;
+  }
+  .barra-fixa-sub,
+  #page-estoque > div[id^="est-tab-"] > .flex.items-center.justify-between.mb-4,
+  #page-relatorios > div[id^="rel-content-"] > .flex.items-center.justify-between.mb-4 {
+    top: 112px;
   }
 
   .estoque-produtos-toolbar > .flex {

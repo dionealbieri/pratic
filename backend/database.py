@@ -125,6 +125,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             nome TEXT NOT NULL,
             descricao TEXT,
+            tipo TEXT DEFAULT 'producao',
             criado_em TEXT DEFAULT (datetime('now'))
         );
 
@@ -366,6 +367,10 @@ def init_db():
     cols_prod = [row[1] for row in conn.execute("PRAGMA table_info(producao_diaria)").fetchall()]
     if "pedido_numero" not in cols_prod:
         conn.execute("ALTER TABLE producao_diaria ADD COLUMN pedido_numero TEXT")
+
+    cols_cat = [row[1] for row in conn.execute("PRAGMA table_info(estoque_categorias)").fetchall()]
+    if "tipo" not in cols_cat:
+        conn.execute("ALTER TABLE estoque_categorias ADD COLUMN tipo TEXT DEFAULT 'producao'")
 
     # Migração do campo Código/ID:
     # A versão anterior criou um índice UNIQUE apenas em codigo. Isso gerava erro 500
