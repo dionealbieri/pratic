@@ -1,0 +1,37 @@
+# Normaliza quebras de linha para evitar diffs gigantes por CRLF/LF.
+# Detecta texto x binário automaticamente; texto vira LF no repositório.
+* text=auto
+
+# Código e arquivos de texto: sempre LF
+*.py    text eol=lf
+*.js    text eol=lf
+*.html  text eol=lf
+*.css   text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.csv   text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+Dockerfile text eol=lf
+
+# Scripts do Windows precisam de CRLF
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# Binários: nunca normalizar
+*.db    binary
+*.sqlite binary
+*.rar   binary
+*.zip   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.xlsx  binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
