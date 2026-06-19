@@ -791,6 +791,35 @@ async function loadProducao() {
     let url = '/producao/?mes=' + mes;
     if (colaboradorId) url += '&colaborador_id=' + colaboradorId;
     const rows = await api(url);
+    // Cards de resumo (a partir dos registros já carregados)
+    const cardsEl = document.getElementById('prod-cards');
+    if (cardsEl) {
+      const totalProd = rows.reduce((s, r) => s + (+r.producao || 0), 0);
+      const totalMeta = rows.reduce((s, r) => s + (+r.meta || 0), 0);
+      const totalExc = rows.reduce((s, r) => s + (+r.excedente || 0), 0);
+      const dias = new Set(rows.map(r => r.data)).size;
+      cardsEl.innerHTML = `
+        <div class="card">
+          <div class="card-label">Total Produzido</div>
+          <div class="card-value accent">${fmtNum(totalProd)}</div>
+          <div class="card-sub">${mesLabel(mes)}</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Meta Acumulada</div>
+          <div class="card-value info">${fmtNum(totalMeta)}</div>
+          <div class="card-sub">no mês</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Excedente Acumulado</div>
+          <div class="card-value ${totalExc >= 0 ? 'success' : 'negative'}">${totalExc >= 0 ? '+' : ''}${fmtNum(totalExc)}</div>
+          <div class="card-sub">produção − meta</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Dias Trabalhados</div>
+          <div class="card-value info">${dias}</div>
+          <div class="card-sub">dias com produção</div>
+        </div>`;
+    }
     const tbody = document.getElementById('prod-tbody');
     if (!rows.length) {
       tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:32px">Nenhum registro encontrado</td></tr>';
