@@ -180,6 +180,7 @@ const PAGE_META_MAIN = {
   pedidos:       { icon:'🧾', label:'Pedidos', section:'Operações' },
   estoque:       { icon:'📦', label:'Estoque', section:'Operações' },
   epi:           { icon:'🦺', label:'EPI', section:'Operações' },
+  comunicacao:   { icon:'<svg viewBox="0 0 24 24" width="17" height="17" style="vertical-align:-3px"><path fill="#25d366" d="M12 2C6.5 2 2 6 2 11c0 1.9.7 3.7 1.9 5.1L3 22l6-1.5c.9.3 1.9.5 3 .5 5.5 0 10-4 10-9S17.5 2 12 2z"/></svg>', label:'Comunicação', section:'Operações' },
   'saldo-demanda': { icon:'📊', label:'Saldo vs Demanda', section:'Operações' },
   graficos:      { icon:'📈', label:'Gráficos', section:'Análises' },
   relatorios:    { icon:'📋', label:'Relatórios', section:'Análises' },
@@ -210,6 +211,7 @@ async function carregarAcessoPrincipal() {
   let me;
   try {
     me = await api('/auth/me');
+    window.usuarioLogado = me;
     if (me.deve_alterar_senha) {
       window.location.href = '/login?change_password=1';
       return;
@@ -237,8 +239,11 @@ async function carregarAcessoPrincipal() {
 
     if ((path === '/' || path === '/index.html') && !temPaginaSolicitada) {
       if (me.role === 'producao') {
-        window.location.href = '/producao-setor';
-        return;
+        const somenteProducao = paginasLiberadas.every(p => ['producao', 'producao_simplificada'].includes(p));
+        if (somenteProducao) {
+          window.location.href = '/producao-setor';
+          return;
+        }
       } else if (me.role === 'comercial') {
         // Comercial agora pode usar o painel principal quando tiver outras abas liberadas
         // pelo Controle de Acesso. Antes o sistema sempre redirecionava para /comercial,
@@ -249,8 +254,11 @@ async function carregarAcessoPrincipal() {
           return;
         }
       } else if (me.role === 'estoque') {
-        window.location.href = '/estoque-mobile';
-        return;
+        const somenteEstoque = paginasLiberadas.every(p => ['estoque', 'estoque_mobile'].includes(p));
+        if (somenteEstoque) {
+          window.location.href = '/estoque-mobile';
+          return;
+        }
       }
     }
   } catch (e) {
@@ -272,6 +280,7 @@ async function carregarAcessoPrincipal() {
   }
 
   montarMenuPrincipal();
+  iniciarPollComunicacao();
 }
 
 function montarMenuPrincipal() {
@@ -292,6 +301,7 @@ function montarMenuPrincipal() {
         ${item.key === 'pedidos' ? '<span id="nav-pedidos-badge" style="display:none;background:var(--danger);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">!</span>' : ''}
         ${item.key === 'estoque' ? '<span id="nav-alerta-badge" style="display:none;background:var(--danger);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">!</span>' : ''}
         ${item.key === 'epi' ? '<span id="nav-epi-badge" style="display:none;background:var(--danger);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">!</span>' : ''}
+        ${item.key === 'comunicacao' ? '<span id="nav-comunicacao-badge" style="display:none;background:#25d366;color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">0</span>' : ''}
       </a>`).join('')}
   `).join('');
 }
@@ -330,11 +340,667 @@ function showPage(name) {
     pedidos: loadPedidos_init,
     backup: () => {},
     epi: loadEPI,
+    comunicacao: loadComunicacao,
     empresa: loadEmpresa,
     permissoes: loadPermissoes,
     'perm-usuarios': loadPermUsuarios
   };
   if (handlers[name]) handlers[name]();
+}
+
+// ===== Comunicação (mensagens privadas 1:1 por usuário — estilo WhatsApp interno) =====
+const SETOR_LABEL_COM = { gestor:'Gestor', producao:'Produção', comercial:'Comercial', estoque:'Estoque' };
+const SETOR_ICONE_COM = { producao:'🏭', comercial:'🏢', estoque:'📦' };
+let comUltimoId = -1;          // maior id já visto (-1 = ainda não inicializado)
+let comPollTimer = null;
+let _comAudioCtx = null;
+let comArquivoSel = null;      // arquivo selecionado para anexar
+let comUsuarioAtivo = null;    // conversa aberta (P2P): id do usuário (ou próprio ID para chat com gestor se for não-gestor)
+let comCanalAtivo = null;      // canal ativo (ex: 'geral', 'producao', etc)
+let comFiltroBusca = '';       // filtro de busca na sidebar
+let comUsuariosCache = [];     // usuários ativos/liberados
+let comRecadosCache = [];
+
+function _maxIdRecados(recados) {
+  return (recados && recados.length) ? Math.max(...recados.map(r => r.id)) : 0;
+}
+function _escapeHtmlCom(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function _fmtDataHoraCom(s) {
+  if (!s) return '';
+  try { return new Date(String(s).replace(' ', 'T') + 'Z').toLocaleString('pt-BR', { dateStyle:'short', timeStyle:'short' }); }
+  catch (e) { return s; }
+}
+
+// Lista de conversas do gestor: usuários liberados + qualquer remetente presente nas mensagens
+function _conversasGestor(recados) {
+  const map = new Map();
+  (comUsuariosCache || []).forEach(u => map.set(u.id, { id:u.id, nome:u.nome, role:u.role }));
+  (recados || []).forEach(r => {
+    const uid = r.conversa_usuario_id;
+    if (uid && !map.has(uid)) {
+      const nome = (r.autor_setor !== 'gestor' && r.autor_nome) ? r.autor_nome : ('Usuário #' + uid);
+      map.set(uid, { id:uid, nome:nome, role:(r.autor_setor !== 'gestor' ? r.autor_setor : '') });
+    }
+  });
+  return Array.from(map.values());
+}
+function _usuarioComMaisRecente(recados) {
+  let best = null, bestId = -1;
+  (recados || []).forEach(r => { if (r.conversa_usuario_id && r.id > bestId) { bestId = r.id; best = r.conversa_usuario_id; } });
+  if (best) return best;
+  return (comUsuariosCache && comUsuariosCache.length) ? comUsuariosCache[0].id : null;
+}
+
+async function loadComunicacao() {
+  const btnConfig = document.getElementById('com-btn-config');
+  if (btnConfig) btnConfig.style.display = (perfilAtual === 'gestor') ? 'block' : 'none';
+
+  const lista = document.getElementById('com-lista');
+  if (lista) lista.innerHTML = '<div style="color:var(--muted);padding:8px">Carregando...</div>';
+  try {
+    try {
+      comUsuariosCache = await api('/comunicacao/usuarios');
+    } catch (e) {
+      comUsuariosCache = [];
+    }
+
+    const recados = await api('/comunicacao/');
+    comRecadosCache = recados;
+    comUltimoId = _maxIdRecados(recados);
+
+    // Selecionar o primeiro canal ou conversa disponível se nada estiver ativo
+    if (!comUsuarioAtivo && !comCanalAtivo) {
+      comCanalAtivo = 'geral';
+    }
+
+    renderComLayout(recados);
+    _marcarConversaLida(recados);
+    _atualizarBadgeComMenu(recados);
+  } catch (e) {
+    if (lista) lista.innerHTML = '<div style="color:var(--danger);padding:8px">Erro ao carregar a comunicação.</div>';
+  }
+}
+
+function _getAvatarHtmlCom(name, isChannel = false) {
+  if (isChannel) {
+    return `<div style="width:40px;height:40px;border-radius:50%;background:rgba(240,180,41,0.15);color:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;flex-shrink:0">#</div>`;
+  }
+  const initials = (name || '').split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase() || '👤';
+  let hash = 0;
+  for (let i = 0; i < (name || '').length; i++) {
+    hash = (name || '').charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
+  const color = colors[Math.abs(hash) % colors.length];
+  return `<div style="width:40px;height:40px;border-radius:50%;background:${color};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0">${initials}</div>`;
+}
+
+function _fmtHoraCom(s) {
+  if (!s) return '';
+  try {
+    const dt = new Date(String(s).replace(' ', 'T') + 'Z');
+    return dt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  } catch(e) {
+    return '';
+  }
+}
+
+function _fmtDataCom(s) {
+  if (!s) return '';
+  try {
+    const dt = new Date(String(s).replace(' ', 'T') + 'Z');
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    if (dt.toDateString() === today.toDateString()) return 'Hoje';
+    if (dt.toDateString() === yesterday.toDateString()) return 'Ontem';
+    return dt.toLocaleDateString('pt-BR', { day: 'numeric', month: 'long' });
+  } catch(e) {
+    return '';
+  }
+}
+
+function _scrollListaComBottom() {
+  const lista = document.getElementById('com-lista');
+  if (lista) {
+    lista.scrollTop = lista.scrollHeight;
+  }
+}
+
+function renderComLayout(recados) {
+  renderSidebarCom(recados);
+  renderThreadCom(recados);
+}
+
+function renderSidebarCom(recados) {
+  const box = document.getElementById('com-setores');
+  if (!box) return;
+
+  const termo = comFiltroBusca.toLowerCase().trim();
+  let html = '';
+
+  // 1. Canais / Grupos
+  const canais = ['geral'];
+
+  const canaisFiltrados = canais.filter(c => c.toLowerCase().includes(termo) || ('#' + c).toLowerCase().includes(termo));
+  
+  if (canaisFiltrados.length > 0) {
+    html += `<div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:10px 4px 6px">📢 Canais</div>`;
+    canaisFiltrados.forEach(c => {
+      const msgs = (recados || []).filter(r => r.conversa_setor === c && r.conversa_usuario_id === null);
+      const ultima = msgs[0];
+      const unread = _unreadCanal(recados, c);
+      const ativo = (comCanalAtivo === c);
+      const snippet = ultima
+        ? (ultima.texto ? _escapeHtmlCom(ultima.texto.slice(0, 30)) : '📎 anexo')
+        : '<span style="opacity:.5">sem mensagens</span>';
+      
+      const avatar = _getAvatarHtmlCom(c, true);
+      
+      html += `
+        <div onclick="selecionarCanalCom('${c}')" style="cursor:pointer;display:flex;align-items:center;gap:12px;padding:8px 10px;border-radius:10px;margin-bottom:6px;border:1px solid ${ativo ? 'rgba(37,211,102,0.3)' : 'transparent'};background:${ativo ? 'rgba(37,211,102,0.1)' : 'transparent'};transition:all 0.2s">
+          ${avatar}
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span style="font-weight:700;font-size:13px;color:var(--text)">#${c}</span>
+              ${unread > 0 ? `<span style="background:#25d366;color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:10px;min-width:18px;text-align:center">${unread}</span>` : ''}
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${snippet}</div>
+          </div>
+        </div>`;
+    });
+  }
+
+  // 2. Direct Messages (P2P / Admin)
+  html += `<div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:16px 4px 6px">💬 Conversas Diretas</div>`;
+  
+  const contatos = (comUsuariosCache || [])
+    .filter(u => window.usuarioLogado && u.id !== window.usuarioLogado.id)
+    .map(u => ({ id: u.id, nome: u.nome, role: u.role, tipo: u.role === 'gestor' ? 'admin' : 'usuario' }));
+
+  const contatosFiltrados = contatos.filter(c => c.nome.toLowerCase().includes(termo));
+  
+  if (contatosFiltrados.length > 0) {
+    contatosFiltrados.forEach(c => {
+      const myId = window.usuarioLogado ? window.usuarioLogado.id : 0;
+      const msgs = (recados || []).filter(r => _isDirectMsg(r, myId, c.id));
+      const unread = _unreadDirect(recados, c.id);
+      const ativo = (comUsuarioAtivo === c.id && comCanalAtivo === null);
+
+
+      const ultima = msgs[0];
+      const snippet = ultima
+        ? (ultima.texto ? _escapeHtmlCom(ultima.texto.slice(0, 30)) : '📎 anexo')
+        : '<span style="opacity:.5">sem mensagens</span>';
+      
+      const avatar = _getAvatarHtmlCom(c.nome, false);
+
+      html += `
+        <div onclick="selecionarUsuarioCom(${c.id}, '${c.tipo}')" style="cursor:pointer;display:flex;align-items:center;gap:12px;padding:8px 10px;border-radius:10px;margin-bottom:6px;border:1px solid ${ativo ? 'rgba(37,211,102,0.3)' : 'transparent'};background:${ativo ? 'rgba(37,211,102,0.1)' : 'transparent'};transition:all 0.2s">
+          ${avatar}
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span style="font-weight:700;font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_escapeHtmlCom(c.nome)}</span>
+              ${unread > 0 ? `<span style="background:#25d366;color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:10px;min-width:18px;text-align:center">${unread}</span>` : ''}
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${snippet}</div>
+          </div>
+        </div>`;
+    });
+  } else if (canaisFiltrados.length === 0) {
+    html += `<div style="color:var(--muted);font-size:12px;padding:16px;text-align:center">Nenhuma conversa encontrada</div>`;
+  }
+
+  box.innerHTML = html;
+}
+
+function renderThreadCom(recados) {
+  const ehGestor = (perfilAtual === 'gestor');
+  const titulo = document.getElementById('com-titulo');
+  const subtitulo = document.getElementById('com-subtitulo');
+  const btnLimpar = document.getElementById('com-limpar');
+  const lista = document.getElementById('com-lista');
+  const compositor = document.getElementById('com-compositor');
+
+  if (btnLimpar) btnLimpar.style.display = 'none'; // Default hidden, shown only for user chats of gestor
+  if (compositor) compositor.style.display = (comCanalAtivo || comUsuarioAtivo) ? 'flex' : 'none';
+
+  let msgs = [];
+  
+  if (comCanalAtivo) {
+    if (titulo) titulo.textContent = '#' + comCanalAtivo;
+    if (subtitulo) subtitulo.textContent = 'Canal do Setor';
+    msgs = (recados || []).filter(r => r.conversa_setor === comCanalAtivo && r.conversa_usuario_id === null);
+  } else if (comUsuarioAtivo) {
+    const myId = window.usuarioLogado ? window.usuarioLogado.id : 0;
+    const u = (comUsuariosCache || []).find(x => x.id === comUsuarioAtivo);
+    if (u) {
+      if (titulo) titulo.textContent = u.nome;
+      if (subtitulo) subtitulo.textContent = (SETOR_LABEL_COM[u.role] || u.role) === 'gestor' ? 'Administrador' : (SETOR_LABEL_COM[u.role] || u.role || 'Colaborador');
+    } else {
+      if (titulo) titulo.textContent = 'Conversa Direta';
+      if (subtitulo) subtitulo.textContent = '';
+    }
+    if (btnLimpar && perfilAtual === 'gestor') btnLimpar.style.display = '';
+    msgs = (recados || []).filter(r => _isDirectMsg(r, myId, comUsuarioAtivo));
+  } else {
+    if (titulo) titulo.textContent = 'Selecione uma conversa';
+    if (subtitulo) subtitulo.textContent = '';
+    if (lista) lista.innerHTML = '<div style="color:var(--muted);padding:16px;text-align:center">Selecione um canal ou colega à esquerda para iniciar o chat.</div>';
+    return;
+  }
+
+  if (!lista) return;
+  if (!msgs.length) {
+    lista.innerHTML = '<div style="color:var(--muted);padding:16px;text-align:center">Nenhuma mensagem nesta conversa ainda. Comece enviando uma mensagem abaixo!</div>';
+    return;
+  }
+
+  // Render bubbles with date separators
+  let lastDate = '';
+  const htmlBubbles = msgs.map(r => {
+    let dateSep = '';
+    const msgDate = _fmtDataCom(r.criado_em);
+    if (msgDate !== lastDate) {
+      dateSep = `<div style="align-self:center;background:var(--surface2);border:1px solid var(--border);color:var(--muted);font-size:11px;padding:4px 12px;border-radius:12px;margin:8px 0;font-weight:600">${msgDate}</div>`;
+      lastDate = msgDate;
+    }
+    return dateSep + _msgBubbleCom(r);
+  }).join('');
+
+  lista.innerHTML = htmlBubbles;
+}
+
+function _msgBubbleCom(r) {
+  const resolvido = !!r.resolvido;
+  const ehMe = (r.autor_id === (window.usuarioLogado ? window.usuarioLogado.id : 0));
+  const ehAdmin = (r.autor_setor === 'gestor');
+  const setor = SETOR_LABEL_COM[r.autor_setor] || r.autor_setor || '';
+  const podeExcluir = (perfilAtual === 'gestor');
+  
+  const bubbleStyle = ehMe 
+    ? 'background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.3);align-self:flex-end;border-radius:12px 12px 2px 12px;' 
+    : 'background:var(--surface2);border:1px solid var(--border);align-self:flex-start;border-radius:12px 12px 12px 2px;';
+    
+  const textoFormatado = _escapeHtmlCom(r.texto || '').replace(/\n/g, '<br>');
+  const anexoHtml = r.tem_anexo ? _anexoHtmlCom(r) : '';
+  
+  const showSenderHeader = !ehMe && comCanalAtivo;
+  const senderHeader = showSenderHeader 
+    ? `<div style="font-weight:700;font-size:11px;color:var(--accent);margin-bottom:4px">${_escapeHtmlCom(r.autor_nome || 'Usuário')} <span style="font-weight:normal;color:var(--muted);font-size:10px">(${setor})</span></div>` 
+    : '';
+
+  return `
+    <div style="max-width:70%;padding:10px 14px;box-sizing:border-box;margin-bottom:4px;display:flex;flex-direction:column;${bubbleStyle}${resolvido ? 'opacity:.6' : ''}">
+      ${senderHeader}
+      ${r.texto ? `<div style="font-size:14px;word-break:break-word;line-height:1.4;${resolvido ? 'text-decoration:line-through;opacity:0.7' : ''}">${textoFormatado}</div>` : ''}
+      ${anexoHtml}
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;margin-top:6px;font-size:10px;color:var(--muted);border-top:1px solid rgba(255,255,255,0.03);padding-top:4px">
+        <span>🕒 ${_fmtHoraCom(r.criado_em)} ${resolvido && r.resolvido_por ? ' · ✓ por ' + _escapeHtmlCom(r.resolvido_por) : ''}</span>
+        <div style="display:flex;gap:6px">
+          <span style="cursor:pointer;color:var(--success);font-weight:600" onclick="resolverRecado(${r.id}, ${resolvido ? 'false' : 'true'})">${resolvido ? 'Reabrir' : '✓ Resolvido'}</span>
+          ${podeExcluir ? `· <span style="cursor:pointer;color:var(--danger);font-weight:600" onclick="excluirRecado(${r.id})">Excluir</span>` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function selecionarUsuarioCom(uid, tipo) {
+  comUsuarioAtivo = uid;
+  comCanalAtivo = null;
+  renderComLayout(comRecadosCache);
+  _marcarConversaLida(comRecadosCache);
+  _atualizarBadgeComMenu(comRecadosCache);
+  setTimeout(_scrollListaComBottom, 50);
+}
+
+function selecionarCanalCom(canal) {
+  comCanalAtivo = canal;
+  comUsuarioAtivo = null;
+  renderComLayout(comRecadosCache);
+  _marcarConversaLida(comRecadosCache);
+  _atualizarBadgeComMenu(comRecadosCache);
+  setTimeout(_scrollListaComBottom, 50);
+}
+
+function filtrarConversasCom(busca) {
+  comFiltroBusca = busca;
+  renderSidebarCom(comRecadosCache);
+}
+
+async function enviarRecado() {
+  const ta = document.getElementById('com-texto');
+  const texto = ((ta && ta.value) || '').trim();
+  if (!texto && !comArquivoSel) { showAlert('Escreva uma mensagem ou anexe um arquivo.', 'warn'); return; }
+
+  const fd = new FormData();
+  fd.append('texto', texto);
+  
+  if (comCanalAtivo) {
+    fd.append('canal', comCanalAtivo);
+  } else if (comUsuarioAtivo) {
+    fd.append('usuario_id', String(comUsuarioAtivo));
+  } else {
+    showAlert('Selecione uma conversa.', 'warn');
+    return;
+  }
+
+  if (comArquivoSel) fd.append('anexo', comArquivoSel);
+
+  try {
+    const resp = await fetch(API + '/comunicacao/', { method: 'POST', body: fd, credentials: 'same-origin' });
+    if (!resp.ok) {
+      let msg = 'Não foi possível enviar.';
+      try { const d = await resp.json(); if (d && d.detail) msg = d.detail; } catch (e) {}
+      throw new Error(msg);
+    }
+    if (ta) ta.value = '';
+    comRemoverArquivo();
+    await loadComunicacao();
+    setTimeout(_scrollListaComBottom, 50);
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+
+async function resolverRecado(id, marcar) {
+  try {
+    await api('/comunicacao/' + id + '/resolver', 'PUT', { resolvido: !!marcar });
+    loadComunicacao();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+
+async function excluirRecado(id) {
+  if (!confirm('Excluir esta mensagem definitivamente?')) return;
+  try {
+    await api('/comunicacao/' + id, 'DELETE');
+    showAlert('Mensagem excluída.');
+    loadComunicacao();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+
+async function limparConversaCom() {
+  if (perfilAtual !== 'gestor' || !comUsuarioAtivo) return;
+  const u = _conversasGestor(comRecadosCache).find(c => c.id === comUsuarioAtivo);
+  const nome = u ? u.nome : 'este usuário';
+  if (!confirm('Apagar TODAS as mensagens e arquivos da conversa com ' + nome + '? Essa ação é permanente.')) return;
+  try {
+    await api('/comunicacao/conversa-usuario/' + comUsuarioAtivo, 'DELETE');
+    showAlert('Conversa limpa.');
+    loadComunicacao();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+
+// ----- Gerenciar participantes (quem usa a Comunicação) -----
+async function abrirParticipantesCom() {
+  let config, usuarios;
+  try {
+    config = await api('/comunicacao/config');
+    usuarios = await api('/comunicacao/usuarios-todos');
+  } catch (e) {
+    showAlert(e.message, 'danger');
+    return;
+  }
+
+  let corpo = `
+    <div style="margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border)">
+      <label style="display:flex;justify-content:space-between;align-items:center;cursor:pointer">
+        <span style="font-weight:600;font-size:13px;color:var(--text)">Permitir chat privado entre colaboradores</span>
+        <input type="checkbox" id="com-p2p-global-chk" ${config.chat_p2p_permitido ? 'checked' : ''} onchange="toggleP2PGlobalCom(this.checked, this)" style="width:18px;height:18px;cursor:pointer">
+      </label>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">Se desativado, colaboradores comuns só podem falar no canal geral ou diretamente com o Administrador.</div>
+    </div>
+  `;
+
+  ['producao', 'comercial', 'estoque', ''].forEach(setor => {
+    const doSetor = usuarios.filter(u => (u.role || '') === setor);
+    if (!doSetor.length) return;
+    corpo += `<div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:12px 0 4px">${SETOR_ICONE_COM[setor] || ''} ${SETOR_LABEL_COM[setor] || 'Outros'}</div>`;
+    doSetor.forEach(u => {
+      corpo += `
+        <div style="padding:10px 0;border-bottom:1px solid var(--border)">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-weight:600;font-size:13px;color:var(--text)">${_escapeHtmlCom(u.nome)}</span>
+            <label style="display:flex;align-items:center;cursor:pointer;font-size:12px;color:var(--muted)">
+              <span style="margin-right:6px">Liberar Acesso</span>
+              <input type="checkbox" ${u.participa ? 'checked' : ''} onchange="toggleParticipanteCom(${u.id}, this.checked, this)" style="width:18px;height:18px;cursor:pointer">
+            </label>
+          </div>
+        </div>
+      `;
+    });
+  });
+
+  const old = document.getElementById('com-part-overlay');
+  if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'com-part-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px';
+  ov.onclick = fecharParticipantesCom;
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--surface,#161922);border:1px solid var(--border,rgba(255,255,255,.12));border-radius:12px;max-width:480px;width:100%;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 12px 48px rgba(0,0,0,.55)';
+  box.onclick = function (e) { e.stopPropagation(); };
+  box.innerHTML =
+    `<div style="padding:18px 20px 12px;border-bottom:1px solid var(--border)">
+       <div style="font-size:16px;font-weight:700;color:var(--text)">Configuração da Comunicação</div>
+       <div style="font-size:12px;color:var(--muted);margin-top:3px">Gerencie quais colaboradores têm acesso ao chat interno e a permissão global de chat direto.</div>
+     </div>
+     <div style="padding:16px 20px;overflow-y:auto;flex:1">${corpo}</div>
+     <div style="padding:14px 20px;text-align:right;border-top:1px solid var(--border)">
+       <button class="btn btn-primary" onclick="fecharParticipantesCom()">Concluir</button>
+     </div>`;
+  ov.appendChild(box);
+  document.body.appendChild(ov);
+}
+
+async function toggleParticipanteCom(uid, ativa, el) {
+  try {
+    await api('/comunicacao/usuarios/' + uid + '/participante', 'PUT', { ativa: !!ativa });
+  } catch (e) {
+    showAlert(e.message, 'danger');
+    if (el) el.checked = !ativa;
+  }
+}
+
+async function toggleP2PGlobalCom(permitido, el) {
+  try {
+    await api('/comunicacao/config', 'PUT', { p2p_permitido: !!permitido });
+    showAlert('Configuração de chat privado atualizada.');
+  } catch (e) {
+    showAlert(e.message, 'danger');
+    if (el) el.checked = !permitido;
+  }
+}
+
+function fecharParticipantesCom() {
+  const ov = document.getElementById('com-part-overlay');
+  if (ov) ov.remove();
+  loadComunicacao();   // atualiza a lista de conversas
+}
+
+// Bip de notificação gerado no navegador (sem arquivo de áudio)
+function _playBeepCom() {
+  try {
+    if (!_comAudioCtx) _comAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = _comAudioCtx;
+    if (ctx.state === 'suspended') ctx.resume();
+    const tocar = (freq, inicio, dur) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, ctx.currentTime + inicio);
+      g.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + inicio + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + inicio + dur);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(ctx.currentTime + inicio);
+      o.stop(ctx.currentTime + inicio + dur);
+    };
+    tocar(880, 0, 0.18);
+    tocar(1175, 0.16, 0.22);
+  } catch (e) { /* silencioso se o navegador bloquear */ }
+}
+
+async function _pollComunicacao() {
+  let recados;
+  try { recados = await api('/comunicacao/'); } catch (e) { return; }
+  comRecadosCache = recados;
+  const maxId = _maxIdRecados(recados);
+  const primeiraVez = (comUltimoId < 0);
+  if (!primeiraVez && maxId > comUltimoId) _playBeepCom();
+  comUltimoId = maxId;
+  const pg = document.getElementById('page-comunicacao');
+  if (pg && pg.classList.contains('active')) {
+    renderComLayout(recados);
+    _marcarConversaLida(recados);
+  }
+  _atualizarBadgeComMenu(recados);
+}
+
+function iniciarPollComunicacao() {
+  if (comPollTimer) return;
+  if (!paginasLiberadas.includes('comunicacao')) return;
+  _pollComunicacao();
+  comPollTimer = setInterval(_pollComunicacao, 12000);
+}
+
+// ----- não lidas por conversa (badge + pulso no menu) -----
+function _isDirectMsg(r, myId, partnerId) {
+  if (!r) return false;
+  if (r.conversa_setor === 'p2p') {
+    return (r.autor_id === myId && r.conversa_usuario_id === partnerId) || 
+           (r.autor_id === partnerId && r.conversa_usuario_id === myId);
+  }
+  if (r.conversa_setor === null) {
+    const isGestor = (perfilAtual === 'gestor');
+    if (isGestor) {
+      return r.conversa_usuario_id === partnerId;
+    } else {
+      const partner = (comUsuariosCache || []).find(u => u.id === partnerId);
+      const partnerIsGestor = partner && (partner.role === 'gestor');
+      if (partnerIsGestor) {
+        return r.conversa_usuario_id === myId;
+      }
+    }
+  }
+  return false;
+}
+function _getSeenDirect(partnerId) {
+  const newKey = 'com_seen_direct_' + partnerId;
+  let val = localStorage.getItem(newKey);
+  if (val !== null) return parseInt(val, 10) || 0;
+
+  const isGestor = (perfilAtual === 'gestor');
+  if (isGestor) {
+    val = localStorage.getItem('com_seen_u_' + partnerId);
+  } else {
+    const partner = (comUsuariosCache || []).find(u => u.id === partnerId);
+    if (partner && partner.role === 'gestor') {
+      val = localStorage.getItem('com_seen_me');
+    } else {
+      val = localStorage.getItem('com_seen_p2p_' + partnerId);
+    }
+  }
+  return val !== null ? (parseInt(val, 10) || 0) : 0;
+}
+function _setSeenDirect(partnerId, maxId) {
+  localStorage.setItem('com_seen_direct_' + partnerId, String(maxId));
+}
+function _unreadDirect(recados, partnerId) {
+  const myId = window.usuarioLogado ? window.usuarioLogado.id : 0;
+  const seen = _getSeenDirect(partnerId);
+  return (recados || []).filter(r => 
+    _isDirectMsg(r, myId, partnerId) && 
+    r.autor_id !== myId && 
+    r.id > seen
+  ).length;
+}
+function _unreadCanal(recados, canal) {
+  const k = 'com_seen_c_' + canal;
+  const seen = parseInt(localStorage.getItem(k) || '0', 10) || 0;
+  return (recados || []).filter(r => r.conversa_setor === canal && r.conversa_usuario_id === null && r.autor_id !== (window.usuarioLogado ? window.usuarioLogado.id : 0) && r.id > seen).length;
+}
+function _marcarConversaLida(recados) {
+  if (comCanalAtivo) {
+    const maxId = _maxIdRecados((recados || []).filter(r => r.conversa_setor === comCanalAtivo && r.conversa_usuario_id === null));
+    if (maxId) {
+      localStorage.setItem('com_seen_c_' + comCanalAtivo, String(maxId));
+    }
+  } else if (comUsuarioAtivo) {
+    const myId = window.usuarioLogado ? window.usuarioLogado.id : 0;
+    const maxId = _maxIdRecados((recados || []).filter(r => _isDirectMsg(r, myId, comUsuarioAtivo)));
+    if (maxId) {
+      _setSeenDirect(comUsuarioAtivo, maxId);
+    }
+  }
+}
+function _atualizarBadgeComMenu(recados) {
+  let total = 0;
+  
+  const canais = ['geral'];
+  
+  canais.forEach(c => {
+    total += _unreadCanal(recados, c);
+  });
+  
+  (comUsuariosCache || []).forEach(u => {
+    if (window.usuarioLogado && u.id !== window.usuarioLogado.id) {
+      total += _unreadDirect(recados, u.id);
+    }
+  });
+  
+  const b = document.getElementById('nav-comunicacao-badge');
+  if (b) {
+    if (total > 0) { b.textContent = total > 99 ? '99+' : String(total); b.style.display = ''; }
+    else b.style.display = 'none';
+  }
+  const nav = document.querySelector('.nav-item[data-page="comunicacao"]');
+  if (nav) nav.classList.toggle('com-pulse', total > 0);
+}
+
+// ----- Enter envia / Shift+Enter pula linha -----
+function comTextoKeydown(ev) {
+  if (ev.key === 'Enter' && !ev.shiftKey) {
+    ev.preventDefault();
+    enviarRecado();
+  }
+}
+
+// ----- anexo (seleção/remoção antes de enviar) -----
+function comSelecionarArquivo(input) {
+  const f = input && input.files && input.files[0];
+  comArquivoSel = f || null;
+  const info = document.getElementById('com-anexo-info');
+  if (!info) return;
+  if (comArquivoSel) {
+    info.innerHTML = '📎 ' + _escapeHtmlCom(comArquivoSel.name) +
+      ' <a onclick="comRemoverArquivo()" style="cursor:pointer;color:var(--danger);margin-left:6px">remover</a>';
+    info.style.display = '';
+  } else {
+    info.style.display = 'none';
+  }
+}
+function comRemoverArquivo() {
+  comArquivoSel = null;
+  const input = document.getElementById('com-arquivo');
+  if (input) input.value = '';
+  const info = document.getElementById('com-anexo-info');
+  if (info) { info.innerHTML = ''; info.style.display = 'none'; }
+}
+
+// ----- render do anexo na mensagem -----
+function _anexoHtmlCom(r) {
+  const url = API + '/comunicacao/anexo/' + r.id;
+  const ehImg = (r.anexo_tipo || '').indexOf('image/') === 0;
+  if (ehImg) {
+    return `<div style="margin-top:8px"><a href="${url}" target="_blank" rel="noopener">` +
+      `<img src="${url}" alt="${_escapeHtmlCom(r.anexo_nome)}" style="max-width:240px;max-height:240px;border-radius:8px;border:1px solid var(--border);display:block"></a></div>`;
+  }
+  return `<div style="margin-top:8px"><a href="${url}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" style="text-decoration:none">📎 ${_escapeHtmlCom(r.anexo_nome) || 'Baixar arquivo'}</a></div>`;
 }
 
 // ─── MODAL ───────────────────────────────────────────────────────────────────

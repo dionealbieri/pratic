@@ -25,6 +25,18 @@ def init_db():
             criado_em TEXT DEFAULT (datetime('now'))
         );
 
+        CREATE TABLE IF NOT EXISTS comunicacao_recados (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            texto TEXT NOT NULL,
+            autor_id INTEGER,
+            autor_nome TEXT,
+            autor_setor TEXT,
+            criado_em TEXT DEFAULT (datetime('now')),
+            resolvido INTEGER DEFAULT 0,
+            resolvido_por TEXT,
+            resolvido_em TEXT
+        );
+
         CREATE TABLE IF NOT EXISTS colaborador_tipos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             nome TEXT UNIQUE NOT NULL,
@@ -273,6 +285,30 @@ def init_db():
     except sqlite3.OperationalError:
         pass
 
+    # Liberação da Comunicação por usuário (0 = não participa, 1 = participa)
+    try:
+        c.execute("ALTER TABLE usuarios ADD COLUMN comunicacao_ativa INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
+    # Liberação de canais por usuário (lista separada por vírgulas, ex: 'geral,producao')
+    try:
+        c.execute("ALTER TABLE usuarios ADD COLUMN canais_permitidos TEXT DEFAULT 'geral'")
+        # Para usuários antigos (não gestores), liberamos também o canal do próprio setor (role)
+        c.execute("""
+            UPDATE usuarios 
+            SET canais_permitidos = 'geral,' || role 
+            WHERE role != 'gestor' AND role IS NOT NULL
+        """)
+        # Para gestores, liberamos todos os canais por padrão
+        c.execute("""
+            UPDATE usuarios 
+            SET canais_permitidos = 'geral,producao,comercial,estoque' 
+            WHERE role = 'gestor'
+        """)
+    except sqlite3.OperationalError:
+        pass
+
     # Seed de usuários padrão se a tabela de usuários estiver vazia
     c.execute("SELECT COUNT(*) FROM usuarios")
     if c.fetchone()[0] == 0:
@@ -372,6 +408,27 @@ def init_db():
     if "tipo" not in cols_cat:
         conn.execute("ALTER TABLE estoque_categorias ADD COLUMN tipo TEXT DEFAULT 'producao'")
 
+    # Anexos na comunicação (foto/documento por recado)
+    cols_com = [row[1] for row in conn.execute("PRAGMA table_info(comunicacao_recados)").fetchall()]
+    if "anexo_nome" not in cols_com:
+        conn.execute("ALTER TABLE comunicacao_recados ADD COLUMN anexo_nome TEXT")
+    if "anexo_tipo" not in cols_com:
+        conn.execute("ALTER TABLE comunicacao_recados ADD COLUMN anexo_tipo TEXT")
+    if "anexo_arquivo" not in cols_com:
+        conn.execute("ALTER TABLE comunicacao_recados ADD COLUMN anexo_arquivo TEXT")
+    if "conversa_setor" not in cols_com:
+        conn.execute("ALTER TABLE comunicacao_recados ADD COLUMN conversa_setor TEXT")
+        # Legado: cada recado vai para a conversa do setor de quem escreveu (menos gestor)
+        conn.execute("""UPDATE comunicacao_recados SET conversa_setor = autor_setor
+                        WHERE conversa_setor IS NULL AND autor_setor IS NOT NULL
+                          AND autor_setor != 'gestor'""")
+    if "conversa_usuario_id" not in cols_com:
+        conn.execute("ALTER TABLE comunicacao_recados ADD COLUMN conversa_usuario_id INTEGER")
+        # Legado: cada recado vai para a conversa do próprio autor (menos gestor)
+        conn.execute("""UPDATE comunicacao_recados SET conversa_usuario_id = autor_id
+                        WHERE conversa_usuario_id IS NULL AND autor_setor IS NOT NULL
+                          AND autor_setor != 'gestor'""")
+
     # Migração do campo Código/ID:
     # A versão anterior criou um índice UNIQUE apenas em codigo. Isso gerava erro 500
     # ao editar um produto quando existia o mesmo código em produto inativo/excluído.
@@ -398,6 +455,7 @@ def init_db():
         ("perm_producao", "dashboard,producao,premiacao,colaboradores,maquinas,epi,relatorios", "Permissões do perfil Produção"),
         ("perm_comercial", "dashboard,pedidos,relatorios", "Permissões do perfil Comercial"),
         ("perm_estoque", "dashboard,estoque,relatorios,estoque_mobile", "Permissões do perfil Estoque"),
+        ("chat_p2p_permitido", "0", "Permitir chat 1:1 privado entre colaboradores"),
     ]
     for chave, valor, descricao in default_configs:
         conn.execute(

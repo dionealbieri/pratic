@@ -113,20 +113,41 @@ def get_me(current_user = Depends(get_current_user)):
         else:
             # Fallback padrão caso não exista a chave no banco
             defaults = {
-                "gestor":   "dashboard,producao,premiacao,colaboradores,maquinas,pedidos,estoque,epi,graficos,relatorios,configuracoes,backup,permissoes,empresa,mobile,estoque_mobile",
+                "gestor":   "dashboard,producao,premiacao,colaboradores,maquinas,pedidos,estoque,epi,comunicacao,graficos,relatorios,configuracoes,backup,permissoes,empresa,mobile,estoque_mobile",
                 "producao": "dashboard,producao,premiacao,colaboradores,maquinas,epi,relatorios",
                 "comercial":"dashboard,pedidos,relatorios",
                 "estoque":  "dashboard,estoque,relatorios,estoque_mobile"
             }
             permissions = defaults.get(role, "")
-            
+
+        # Comunicação é liberada por USUÁRIO (não por setor): remove o que veio do setor
+        # e adiciona de volta só se for gestor ou se o usuário estiver marcado como participante.
+        perms = [p.strip() for p in permissions.split(",") if p.strip()]
+        perms = [p for p in perms if p != "comunicacao"]
+        com_ativa = False
+        canais = []
+        try:
+            urow = conn.execute("SELECT comunicacao_ativa, canais_permitidos FROM usuarios WHERE id = ?", (current_user["id"],)).fetchone()
+            if urow:
+                com_ativa = bool(urow["comunicacao_ativa"])
+                if role == "gestor":
+                    canais = ["geral", "producao", "comercial", "estoque"]
+                elif urow["canais_permitidos"]:
+                    canais = [c.strip() for c in urow["canais_permitidos"].split(",") if c.strip()]
+        except Exception:
+            com_ativa = False
+        if role == "gestor" or com_ativa:
+            perms.append("comunicacao")
+        permissions = ",".join(perms)
+
         return {
             "id": current_user["id"],
             "username": current_user["username"],
             "role": role,
             "nome": current_user["nome"],
             "deve_alterar_senha": bool(current_user.get("deve_alterar_senha")),
-            "permissions": permissions
+            "permissions": permissions,
+            "canais": canais
         }
     finally:
         conn.close()
