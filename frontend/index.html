@@ -617,32 +617,61 @@
       </div>
     </div>
 
-    <!-- EMPRESA -->
+    <!-- EMPRESA (actually page-comunicacao) -->
     <div class="page" id="page-comunicacao">
-      <div id="com-layout" style="display:flex;gap:16px;align-items:flex-start">
-        <div id="com-sidebar" style="width:240px;flex-shrink:0;display:none">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-            <span class="card-label">Conversas</span>
-            <button class="btn btn-sm btn-secondary" onclick="abrirParticipantesCom()">⚙️ Participantes</button>
+      <div id="com-layout" style="display:flex;height:calc(100vh - 150px);min-height:500px;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--surface);box-shadow:0 4px 20px rgba(0,0,0,0.15)">
+        
+        <!-- Sidebar esquerda (canais e contatos) -->
+        <div id="com-sidebar" style="width:280px;flex-shrink:0;border-right:1px solid var(--border);background:var(--surface);display:flex;flex-direction:column">
+          <div style="padding:16px;border-bottom:1px solid var(--border)">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+              <span style="font-weight:800;font-family:var(--font-head);font-size:16px;letter-spacing:0.5px">Conversas</span>
+              <button id="com-btn-config" class="btn btn-sm btn-secondary" style="padding:4px 8px;font-size:12px;display:none" onclick="abrirParticipantesCom()">⚙️ Liberar Usuários</button>
+            </div>
+            <!-- Campo de Busca -->
+            <input type="text" id="com-busca" placeholder="🔍 Buscar contato ou canal..." oninput="filtrarConversasCom(this.value)" style="width:100%;box-sizing:border-box;padding:8px 12px;border-radius:20px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;outline:none">
           </div>
-          <div id="com-setores"></div>
+          <div id="com-setores" style="flex:1;overflow-y:auto;padding:12px"></div>
         </div>
-        <div id="com-main" style="flex:1;min-width:0;max-width:720px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-            <div id="com-titulo" style="font-weight:700;font-size:16px">Comunicação</div>
-            <button id="com-limpar" class="btn btn-sm btn-danger" style="display:none" onclick="limparConversaCom()">🗑️ Limpar conversa</button>
-          </div>
-          <div class="card" style="margin-bottom:16px">
-            <textarea id="com-texto" rows="2" onkeydown="comTextoKeydown(event)" placeholder="Escreva sua mensagem  (Enter envia, Shift+Enter pula linha)" style="width:100%;box-sizing:border-box;resize:vertical;padding:10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-family:inherit;font-size:14px"></textarea>
-            <input type="file" id="com-arquivo" accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv" onchange="comSelecionarArquivo(this)" style="display:none">
-            <div id="com-anexo-info" style="display:none;font-size:13px;color:var(--muted);margin-top:8px"></div>
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
-              <button class="btn btn-sm btn-secondary" onclick="document.getElementById('com-arquivo').click()">📎 Anexar arquivo</button>
-              <button class="btn btn-primary" onclick="enviarRecado()">Enviar</button>
+
+        <!-- Janela de conversa principal -->
+        <div id="com-main" style="flex:1;display:flex;flex-direction:column;background:var(--bg)">
+          
+          <!-- Cabeçalho da conversa ativa -->
+          <div id="com-header" style="height:60px;padding:0 20px;border-bottom:1px solid var(--border);background:var(--surface);display:flex;align-items:center;justify-content:space-between">
+            <div style="display:flex;flex-direction:column;justify-content:center">
+              <div id="com-titulo" style="font-weight:700;font-size:15px;color:var(--text)">Selecione uma conversa</div>
+              <div id="com-subtitulo" style="font-size:11px;color:var(--muted);margin-top:2px"></div>
+            </div>
+            <div>
+              <button id="com-limpar" class="btn btn-sm btn-danger" style="display:none" onclick="limparConversaCom()">🗑️ Limpar conversa</button>
             </div>
           </div>
-          <div id="com-lista"></div>
+
+          <!-- Histórico de Mensagens -->
+          <div id="com-lista" style="flex:1;overflow-y:auto;padding:20px;display:flex;flex-direction:column;gap:12px">
+            <div style="color:var(--muted);padding:16px;text-align:center">Nenhuma conversa ativa</div>
+          </div>
+
+          <!-- Compositor de Mensagem (Input de texto + anexo) -->
+          <div id="com-compositor" style="padding:16px 20px;border-top:1px solid var(--border);background:var(--surface);display:none;flex-direction:column;gap:8px">
+            <div id="com-anexo-info" style="display:none;font-size:12px;color:var(--muted);background:var(--bg);padding:6px 12px;border-radius:12px;align-self:flex-start;align-items:center;gap:6px">
+              <span id="com-anexo-nome">arquivo.pdf</span>
+              <span style="cursor:pointer;color:var(--danger);font-weight:700" onclick="comRemoverArquivo()">✕</span>
+            </div>
+            
+            <div style="display:flex;align-items:center;gap:12px;width:100%">
+              <button class="btn btn-secondary" onclick="document.getElementById('com-arquivo').click()" style="padding:10px 14px;border-radius:20px;flex-shrink:0" title="Anexar arquivo">📎</button>
+              <input type="file" id="com-arquivo" accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.doc,.docx,.xls,.xlsx,.txt,.csv" onchange="comSelecionarArquivo(this)" style="display:none">
+              
+              <textarea id="com-texto" rows="1" onkeydown="comTextoKeydown(event)" placeholder="Escreva sua mensagem... (Enter envia, Shift+Enter pula linha)" style="flex:1;height:40px;max-height:120px;resize:none;box-sizing:border-box;padding:10px 16px;border-radius:20px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-family:inherit;font-size:14px;line-height:20px;outline:none"></textarea>
+              
+              <button class="btn btn-primary" onclick="enviarRecado()" style="padding:10px 20px;border-radius:20px;flex-shrink:0">Enviar</button>
+            </div>
+          </div>
+
         </div>
+
       </div>
     </div>
 
@@ -2025,7 +2054,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
-<script src="js/app.js?v=20260618-comunicacao-participantes"></script>
+<script src="js/app.js?v=20260621-canais"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');
