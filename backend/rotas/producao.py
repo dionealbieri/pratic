@@ -1,7 +1,8 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional
 from database import get_conn
+from auth_utils import get_current_user
 
 router = APIRouter()
 
@@ -42,10 +43,15 @@ def listar(mes: Optional[str] = None, colaborador_id: Optional[int] = None):
     return [dict(r) for r in rows]
 
 @router.post("/")
-def registrar(p: ProducaoIn):
-    excedente = (p.producao - p.meta) if p.producao > 0 else 0
+def registrar(p: ProducaoIn, current_user = Depends(get_current_user)):
     mes = p.data[:7]
     conn = get_conn()
+    # Usuario comum nao define a meta: usa sempre a meta global da configuracao
+    if current_user.get('role') != 'gestor':
+        _mr = conn.execute("SELECT valor FROM configuracoes WHERE chave='meta_padrao'").fetchone()
+        if _mr and _mr[0] not in (None, ''):
+            p.meta = float(_mr[0])
+    excedente = (p.producao - p.meta) if p.producao > 0 else 0
 
     # Verificar duplicata apenas se o mesmo produto for lançado duas vezes no mesmo dia
     # Permite múltiplos produtos diferentes no mesmo dia (novo comportamento do modal)
@@ -227,7 +233,7 @@ def _reverter_estoque_producao(conn, prod_id: int):
         conn.execute("DELETE FROM estoque_movimentacoes WHERE id = ?", (m_id,))
 
 @router.put("/{id}")
-def atualizar(id: int, p: ProducaoIn):
+def atualizar(id: int, p: ProducaoIn, current_user = Depends(get_current_user)):
     conn = get_conn()
     try:
         cur = conn.cursor()
@@ -239,6 +245,10 @@ def atualizar(id: int, p: ProducaoIn):
         _reverter_estoque_producao(cur, id)
         
         # 2. Atualizar registro de produção
+        if current_user.get('role') != 'gestor':
+            _mr = conn.execute("SELECT valor FROM configuracoes WHERE chave='meta_padrao'").fetchone()
+            if _mr and _mr[0] not in (None, ''):
+                p.meta = float(_mr[0])
         excedente = (p.producao - p.meta) if p.producao > 0 else 0
         mes = p.data[:7]
         cur.execute("""UPDATE producao_diaria 
@@ -363,6 +373,8 @@ def listar_meses():
 @router.get("/resumo/{mes}")
 def resumo_mes(mes: str):
     conn = get_conn()
+    _mr = conn.execute("SELECT valor FROM configuracoes WHERE chave='meta_padrao'").fetchone()
+    meta_global = float(_mr[0]) if _mr and _mr[0] not in (None, '') else 8000
     rows = conn.execute("""
         SELECT 
             c.id as colaborador_id,
@@ -386,6 +398,6 @@ def resumo_mes(mes: str):
     result = []
     for r in rows:
         d = dict(r)
-        d["elegivel"] = (d["media_diaria"] or 0) >= (d["meta"] or 8000)
+        d["elegivel"] = (d["media_diaria"] or 0) >= (d["meta"] or meta_global)
         result.append(d)
     return result

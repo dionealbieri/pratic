@@ -158,7 +158,7 @@ const pageTitles = {
   premiacao: 'Premiação',
   colaboradores: 'Colaboradores',
   maquinas: 'Máquinas',
-  configuracoes: 'Configurações',
+  configuracoes: 'Central de Bonificações',
   graficos: 'Análise Gráfica',
   relatorios: 'Relatórios',
   estoque: 'Estoque',
@@ -170,6 +170,15 @@ const pageTitles = {
   permissoes: 'Controle de Acesso',
   'perm-usuarios': 'Permissões por Usuário'
 };
+
+let META_GLOBAL = 8000;
+async function carregarMetaGlobal() {
+  try {
+    const configs = await api('/configuracoes/');
+    const m = (configs || []).find(c => c.chave === 'meta_padrao');
+    if (m && m.valor != null && m.valor !== '' && !isNaN(+m.valor)) META_GLOBAL = +m.valor;
+  } catch (e) {}
+}
 
 const PAGE_META_MAIN = {
   dashboard:     { icon:'📊', label:'Dashboard', section:'Visão Geral' },
@@ -184,7 +193,7 @@ const PAGE_META_MAIN = {
   'saldo-demanda': { icon:'📊', label:'Saldo vs Demanda', section:'Operações' },
   graficos:      { icon:'📈', label:'Gráficos', section:'Análises' },
   relatorios:    { icon:'📋', label:'Relatórios', section:'Análises' },
-  configuracoes: { icon:'🔧', label:'Configurações', section:'Sistema' },
+  configuracoes: { icon:'🏆', label:'Central de Bonificações', section:'Sistema' },
   backup:        { icon:'💾', label:'Backup', section:'Sistema' },
   permissoes:    { icon:'🔐', label:'Controle de Acesso', section:'Sistema' },
   empresa:       { icon:'🏢', label:'Dados da Empresa', section:'Sistema' }
@@ -1061,7 +1070,7 @@ async function loadDashboard(options = {}) {
         <div class="card-value info">${fmtNum(data.media_geral)}</div>
         <div class="card-sub">peças / dia</div>
       </div>
-      <div class="card" title="Percentual de dias no mês em que a produção atingiu ou superou a meta de 8.000 peças">
+      <div class="card" title="Percentual de dias no mês em que a produção atingiu ou superou a meta de ${fmtNum(META_GLOBAL)} peças">
         <div class="card-label">Aderência à Meta</div>
         <div class="card-value success">${data.aderencia_meta_percentual}%</div>
         <div class="card-sub">${data.dias_acima_meta || 0} de ${data.total_dias_trabalhados || 0} dias atingiram a meta</div>
@@ -1289,7 +1298,7 @@ async function loadDashboard(options = {}) {
           </div>
           <div>
             <div class="card-label">Meta Diária</div>
-            <div style="font-family:var(--font-head);font-size:20px;font-weight:800;color:var(--muted)">${fmtNum(op.meta || 8000)}</div>
+            <div style="font-family:var(--font-head);font-size:20px;font-weight:800;color:var(--muted)">${fmtNum(op.meta || META_GLOBAL)}</div>
           </div>
           <div>
             <div class="card-label">Prêmio</div>
@@ -1544,7 +1553,8 @@ async function openModalProducao() {
   document.getElementById('prod-colaborador').innerHTML = cols.map(c => `<option value="${c.id}">${c.nome}</option>`).join('');
   document.getElementById('prod-maquina').innerHTML = mqs.filter(m=>m.ativa).map(m => `<option value="${m.id}">${m.nome}</option>`).join('');
   document.getElementById('prod-data').value = new Date().toISOString().split('T')[0];
-  document.getElementById('prod-meta').value = '8000';
+  document.getElementById('prod-meta').value = META_GLOBAL;
+  aplicarTravaMetaProd();
   document.getElementById('prod-edit-id').value = '';
   document.getElementById('prod-pedido-manual').value = '';
   document.getElementById('prod-pedido').innerHTML = '<option value="">— Sem pedido vinculado —</option>' +
@@ -1672,6 +1682,37 @@ function _itemEhRevenda(i) {
   if (i.produto_id && prodRevendaCache.some(p => p.id === i.produto_id)) return true;
   if (!i.produto_id && i.descricao && findBestStockMatch(i.descricao, prodRevendaCache)) return true;
   return false;
+}
+
+async function buscarPedidoManual() {
+  const inp = document.getElementById('prod-pedido-manual');
+  const sel = document.getElementById('prod-pedido');
+  const aviso = document.getElementById('prod-pedido-aviso');
+  const num = ((inp && inp.value) || '').trim();
+  if (aviso) { aviso.textContent = ''; }
+  if (!num) { if (sel) sel.value = ''; return; }
+  try {
+    const lista = await api('/pedidos/');
+    const achado = (lista || []).find(p => String(p.numero_pedido).trim() === num);
+    if (achado) {
+      if (sel.value === String(achado.id)) {
+        if (aviso) { aviso.textContent = '✔ Pedido de ' + achado.cliente_nome; aviso.style.color = '#46d369'; }
+        return;
+      }
+      if (![...sel.options].some(o => o.value === String(achado.id))) {
+        const opt = document.createElement('option');
+        opt.value = achado.id;
+        opt.textContent = achado.numero_pedido + ' — ' + achado.cliente_nome;
+        sel.appendChild(opt);
+      }
+      sel.value = String(achado.id);
+      await onProdPedidoChange();
+      if (aviso) { aviso.textContent = '✔ Pedido de ' + achado.cliente_nome; aviso.style.color = '#46d369'; }
+    } else {
+      if (sel) sel.value = '';
+      if (aviso) { aviso.textContent = 'Pedido não encontrado — será salvo como número avulso'; aviso.style.color = 'var(--muted, #8b92a3)'; }
+    }
+  } catch (e) { if (aviso) aviso.textContent = ''; }
 }
 
 async function onProdPedidoChange() {
@@ -1839,6 +1880,15 @@ function atualizarTotalProd() {
   if (el) el.textContent = fmtNum(total);
 }
 
+function aplicarTravaMetaProd() {
+  const el = document.getElementById('prod-meta');
+  if (!el) return;
+  const isGestor = (window.usuarioLogado && window.usuarioLogado.role === 'gestor');
+  el.readOnly = !isGestor;
+  el.style.opacity = isGestor ? '' : '0.6';
+  el.style.cursor = isGestor ? '' : 'not-allowed';
+  el.title = isGestor ? '' : 'Meta global definida pelo gestor — nao editavel';
+}
 async function editarProducao(id, colId, maqId, data, meta, producao, produtoEstoqueId = null, perdaQtd = 0, sobraQtd = 0, pedidoNumero = '') {
   await openModalProducao();
   document.getElementById('prod-edit-id').value = id;
@@ -1846,6 +1896,7 @@ async function editarProducao(id, colId, maqId, data, meta, producao, produtoEst
   document.getElementById('prod-maquina').value = maqId;
   document.getElementById('prod-data').value = data;
   document.getElementById('prod-meta').value = meta;
+  aplicarTravaMetaProd();
   document.getElementById('prod-pedido-manual').value = pedidoNumero || '';
   document.getElementById('modal-prod-title').textContent = 'Editar Produção';
   document.getElementById('prod-save-btn').textContent = 'Atualizar';
@@ -2369,7 +2420,7 @@ async function openModalMaquina() {
   document.getElementById('maq-id').value = '';
   document.getElementById('maq-nome').value = '';
   document.getElementById('maq-setor').value = '';
-  document.getElementById('maq-meta').value = '8000';
+  document.getElementById('maq-meta').value = META_GLOBAL;
   openModal('modal-maquina');
 }
 
@@ -3024,18 +3075,103 @@ async function loadConfiguracoes() {
   const configs = await api('/configuracoes/');
   const form = document.getElementById('config-form');
   if (!form) return;
-  const sistemaConfigs = configs.filter(c =>
-    !c.chave.startsWith('empresa_') && !c.chave.startsWith('perm_')
-  );
-  form.innerHTML = sistemaConfigs.map(c => `
-    <div class="form-group mb-4">
-      <label>${c.descricao || c.chave}</label>
-      <div class="flex gap-2 items-center">
-        <input type="${['valor','meta','bonus','qtd'].some(k=>c.chave.includes(k))?'number':'text'}"
-          id="cfg-${c.chave}" value="${c.valor}" style="flex:1">
-        <button class="btn btn-secondary" onclick="salvarConfig('${c.chave}')">Salvar</button>
-      </div>
-    </div>`).join('');
+
+  const byKey = {};
+  (configs || []).forEach(c => { byKey[c.chave] = c; });
+  const has = k => byKey[k] !== undefined;
+  const val = k => has(k) ? byKey[k].valor : '';
+
+  const field = (k, label, pre) => {
+    if (!has(k)) return '';
+    return `
+      <div class="bonif-field">
+        <label>${label}</label>
+        <div class="bonif-input">
+          ${pre ? `<span class="bonif-pre">${pre}</span>` : ''}
+          <input type="number" id="cfg-${k}" value="${val(k)}" inputmode="numeric" min="0">
+        </div>
+      </div>`;
+  };
+
+  const card = (cls, em, titulo, nota, campos, btn) => {
+    const keys = campos.filter(c => has(c[0])).map(c => c[0]);
+    if (!keys.length) return '';
+    const inner = campos.map(c => field(c[0], c[1], c[2])).join('');
+    return `
+      <div class="bonif-card ${cls}">
+        <div class="bonif-head"><span class="bonif-em">${em}</span><h2>${titulo}</h2></div>
+        ${nota ? `<p class="bonif-note">${nota}</p>` : ''}
+        ${inner}
+        <div class="bonif-foot">
+          <button class="bonif-save" onclick='salvarCardBonif(${JSON.stringify(keys)}, this)'>${btn}</button>
+        </div>
+      </div>`;
+  };
+
+  form.innerHTML = `
+    <style>
+      #config-form .bonif-sub{color:var(--muted,#8b92a3);font-size:13.5px;margin:0 0 22px}
+      #config-form .bonif-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;max-width:980px}
+      #config-form .bonif-card{background:var(--surface,#161922);border:1px solid var(--border,rgba(255,255,255,.08));border-radius:14px;padding:20px 20px 18px;display:flex;flex-direction:column}
+      #config-form .bonif-card.full{grid-column:1 / -1}
+      #config-form .bonif-head{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+      #config-form .bonif-em{font-size:19px;width:34px;height:34px;display:grid;place-items:center;border-radius:9px;background:var(--surface-2,#1d2130);border:1px solid var(--border-soft,rgba(255,255,255,.06))}
+      #config-form .bonif-head h2{font-size:15.5px;margin:0;font-weight:700;color:var(--text,#e6e9ef)}
+      #config-form .bonif-note{color:var(--muted,#8b92a3);font-size:12.5px;margin:6px 0 16px;line-height:1.5}
+      #config-form .bonif-field{margin-bottom:13px}
+      #config-form .bonif-field label{display:block;font-size:12.5px;color:var(--muted,#8b92a3);margin-bottom:6px;font-weight:500}
+      #config-form .bonif-input{display:flex;align-items:center;background:var(--surface-2,#1d2130);border:1px solid var(--border,rgba(255,255,255,.08));border-radius:9px;overflow:hidden;height:42px;max-width:280px}
+      #config-form .bonif-input:focus-within{border-color:rgba(245,179,1,.55)}
+      #config-form .bonif-pre{padding:0 11px;color:var(--muted,#6b7280);font-size:13.5px;font-weight:600;border-right:1px solid var(--border-soft,rgba(255,255,255,.06));align-self:stretch;display:flex;align-items:center}
+      #config-form .bonif-input input{flex:1;background:transparent;border:0;outline:0;color:var(--text,#e6e9ef);font-size:15px;padding:0 12px;font-weight:600;min-width:0;-moz-appearance:textfield}
+      #config-form .bonif-input input::-webkit-outer-spin-button,#config-form .bonif-input input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+      #config-form .bonif-foot{margin-top:auto;display:flex;justify-content:flex-end;padding-top:14px;border-top:1px solid var(--border-soft,rgba(255,255,255,.06))}
+      #config-form .bonif-save{background:#f5b301;color:#1a1400;border:0;border-radius:9px;padding:9px 20px;font-size:13.5px;font-weight:700;cursor:pointer;font-family:inherit}
+      #config-form .bonif-save:hover{filter:brightness(1.07)}
+      #config-form .bonif-save:disabled{opacity:.6;cursor:default}
+      @media(max-width:680px){#config-form .bonif-grid{grid-template-columns:1fr}}
+    </style>
+    <p class="bonif-sub">Defina a meta de produ\u00e7\u00e3o e os valores de b\u00f4nus e pr\u00eamios da equipe.</p>
+    <div class="bonif-grid">
+      ${card('full','\ud83c\udfaf','Meta de Produ\u00e7\u00e3o',
+        'M\u00ednimo que o operador deve produzir no dia. \u00c9 a <b>base</b> de quem entra na premia\u00e7\u00e3o \u2014 a partir dela \u00e9 calculada toda a bonifica\u00e7\u00e3o.',
+        [['meta_padrao','Meta di\u00e1ria (pe\u00e7as)','']],
+        'Salvar meta')}
+      ${card('','\ud83c\udfc5','B\u00f4nus dos Auxiliares',
+        'Valores pagos aos auxiliares destaque do m\u00eas.',
+        [['qtd_auxiliares_premiados','Quantos auxiliares s\u00e3o premiados por m\u00eas',''],
+         ['bonus_auxiliar_1','1\u00ba auxiliar destaque','R$'],
+         ['bonus_auxiliar_2','2\u00ba auxiliar destaque','R$'],
+         ['bonus_auxiliar_3','3\u00ba auxiliar destaque','R$']],
+        'Salvar b\u00f4nus')}
+      ${card('','\ud83c\udfc6','Pr\u00eamios dos Operadores',
+        'Valores pagos aos operadores conforme o desempenho.',
+        [['valor_premio_operador','Por bater a m\u00e9dia','R$'],
+         ['valor_premio_operador_1','1\u00ba colocado','R$'],
+         ['valor_premio_operador_2','2\u00ba colocado','R$']],
+        'Salvar pr\u00eamios')}
+    </div>`;
+}
+
+async function salvarCardBonif(keys, btn) {
+  const original = btn ? btn.textContent : '';
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Salvando...'; }
+    for (const k of keys) {
+      const el = document.getElementById('cfg-' + k);
+      if (!el) continue;
+      await api('/configuracoes/' + k, 'PUT', { valor: el.value });
+    }
+    if (keys.includes('meta_padrao')) {
+      const mv = document.getElementById('cfg-meta_padrao');
+      if (mv && !isNaN(+mv.value)) META_GLOBAL = +mv.value;
+    }
+    showAlert('Bonifica\u00e7\u00f5es salvas!');
+  } catch (e) {
+    showAlert(e.message, 'danger');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = original; }
+  }
 }
 
 async function salvarConfig(chave) {
@@ -4715,6 +4851,7 @@ async function loadTopbarWidgets() {
 
 document.addEventListener('DOMContentLoaded', async () => {
   await carregarAcessoPrincipal();
+  await carregarMetaGlobal();
   loadTopbarWidgets();
   const params = new URLSearchParams(window.location.search);
   const paginaSolicitada = params.get('page') || params.get('pagina');

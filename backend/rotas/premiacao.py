@@ -15,6 +15,8 @@ class PremiacaoAuxiliarIn(BaseModel):
 @router.get("/operadores/{mes}")
 def premiacao_operadores(mes: str):
     conn = get_conn()
+    _mr = conn.execute("SELECT valor FROM configuracoes WHERE chave='meta_padrao'").fetchone()
+    meta_global = float(_mr[0]) if _mr and _mr[0] not in (None, '') else 8000
 
     configs = conn.execute("SELECT chave, valor FROM configuracoes").fetchall()
     cfg = {}
@@ -55,7 +57,7 @@ def premiacao_operadores(mes: str):
         media = d["media_diaria"] or 0
         concorre = bool(d.get("concorre_premio"))
         d["eh_lider"] = not concorre
-        d["atingiu_meta"] = media >= (d["meta"] or 8000)
+        d["atingiu_meta"] = media >= (d["meta"] or meta_global)
         if not concorre:
             # Tipo que produz mas não concorre ao prêmio (ex.: operador líder)
             d["elegivel"] = False
@@ -115,6 +117,8 @@ def remover_auxiliar(id: int):
 @router.get("/dashboard/{mes}")
 def dashboard(mes: str):
     conn = get_conn()
+    _mr = conn.execute("SELECT valor FROM configuracoes WHERE chave='meta_padrao'").fetchone()
+    meta_global = float(_mr[0]) if _mr and _mr[0] not in (None, '') else 8000
     configs = conn.execute("SELECT chave, valor FROM configuracoes").fetchall()
     cfg = {}
     for r in configs:
@@ -194,7 +198,7 @@ def dashboard(mes: str):
     """, (mes,)).fetchall()
     total_dias_meta = len(dias_aderencia)
     dias_meta_batidas = sum(
-        1 for d in dias_aderencia if (d["media_dia"] or 0) >= (d["meta_dia"] or 8000)
+        1 for d in dias_aderencia if (d["media_dia"] or 0) >= (d["meta_dia"] or meta_global)
     )
     aderencia_meta_percentual = round((dias_meta_batidas / total_dias_meta * 100), 1) if total_dias_meta > 0 else 0.0
     
@@ -282,7 +286,7 @@ def dashboard(mes: str):
         media = d["media_diaria"] or 0
         concorre = bool(d.get("concorre_premio"))
         d["eh_lider"] = not concorre
-        d["atingiu_meta"] = media >= (d["meta"] or 8000)
+        d["atingiu_meta"] = media >= (d["meta"] or meta_global)
         if not concorre:
             # Tipo que produz mas não concorre ao prêmio (ex.: operador líder)
             d["elegivel"] = False
