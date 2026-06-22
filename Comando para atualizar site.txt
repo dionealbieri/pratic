@@ -1,0 +1,4 @@
+git status
+git add .
+git commit -m "Central de Bonificacoes + meta global via config + trava de meta p/ usuario comum + busca de pedido por numero na producao"
+git push origin main

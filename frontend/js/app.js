@@ -1923,7 +1923,84 @@ async function editarProducao(id, colId, maqId, data, meta, producao, produtoEst
   atualizarTotalProd();
 }
 
+async function postProducaoComConfirmacao(payload) {
+  try {
+    return await api('/producao/', 'POST', payload);
+  } catch (e) {
+    if ((e.message || '').includes('pedido_duplicado')) {
+      const ok = confirm('Já existe um lançamento do pedido ' + (payload.pedido_numero || '') + ' nesta data.\n\nDeseja lançar mesmo assim?');
+      if (!ok) throw new Error('__CANCELADO__');
+      return await api('/producao/', 'POST', Object.assign({}, payload, { confirmado: true }));
+    }
+    throw e;
+  }
+}
+
+function showConfirmProducao(titulo, html, onConfirm) {
+  const antigo = document.getElementById('popup-overlay-dyn');
+  if (antigo) antigo.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'popup-overlay-dyn';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--surface,#161922);border:1px solid var(--border,rgba(255,255,255,.12));border-radius:12px;padding:20px 24px;max-width:520px;width:100%;box-shadow:0 12px 48px rgba(0,0,0,.55);max-height:88vh;overflow-y:auto';
+  box.innerHTML = '<div style="font-size:16px;font-weight:700;margin-bottom:12px">' + titulo + '</div>'
+    + '<div style="font-size:14px;line-height:1.5">' + html + '</div>'
+    + '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">'
+    + '<button class="btn btn-secondary" id="popup-nao-dyn">Não, revisar</button>'
+    + '<button class="btn btn-primary" id="popup-sim-dyn">Sim, salvar</button>'
+    + '</div>';
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const fechar = () => overlay.remove();
+  box.querySelector('#popup-nao-dyn').onclick = fechar;
+  box.querySelector('#popup-sim-dyn').onclick = () => { fechar(); onConfirm(); };
+  overlay.onclick = (e) => { if (e.target === overlay) fechar(); };
+}
+
 async function salvarProducao() {
+  const colId = +document.getElementById('prod-colaborador').value;
+  const data = document.getElementById('prod-data').value;
+  let valid = true;
+  clearFieldHighlights('modal-producao');
+  if (!data) { highlightField('prod-data', true, 'Informe a data'); valid = false; }
+  else { highlightField('prod-data', false); }
+  if (!colId) { highlightField('prod-colaborador', true, 'Selecione o colaborador'); valid = false; }
+  else { highlightField('prod-colaborador', false); }
+  if (!valid) return;
+
+  const editId = document.getElementById('prod-edit-id').value;
+  const itens = prodItens.filter(i => (i.producao || 0) > 0 || (i.perda || 0) > 0 || (i.sobra || 0) > 0);
+  if (!editId && !itens.length) { showAlert('Informe pelo menos um item com produção ou perda', 'danger'); return; }
+  const base = itens.length ? itens : prodItens;
+  const total = prodItens.reduce((s, i) => s + (i.producao || 0), 0);
+  const pedido = document.getElementById('prod-pedido-manual').value.trim();
+
+  const linhas = base.map(i => {
+    const prod = prodEstoqueCache.find(p => p.id === i.produto_id);
+    const nome = prod ? _produtoLabel(prod) : 'Sem produto vinculado (não baixa estoque)';
+    const partes = [];
+    if (i.producao > 0) partes.push('produção ' + fmtNum(i.producao));
+    if (i.perda > 0) partes.push('perda ' + fmtNum(i.perda));
+    if (i.sobra > 0) partes.push('sobra ' + fmtNum(i.sobra));
+    let saldo = '';
+    if (prod && !editId) {
+      const baixa = (i.producao || 0) + (i.perda || 0) - (i.sobra || 0);
+      const novo = Math.max(0, (prod.quantidade_atual || 0) - baixa);
+      saldo = '<br><span style="color:var(--muted);font-size:12px">estoque: ' + fmtNum(prod.quantidade_atual || 0) + ' &rarr; <b style="color:var(--text,#e6e9ef)">' + fmtNum(novo) + '</b> ' + (prod.unidade || '') + '</span>';
+    }
+    return '<li style="margin-bottom:8px"><b>' + nome + '</b> <span style="color:var(--muted);font-size:12.5px">&middot; ' + (partes.join(' &middot; ') || '-') + '</span>' + saldo + '</li>';
+  }).join('');
+
+  const html = '<div style="background:rgba(245,179,1,.08);border:1px solid rgba(245,179,1,.25);border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:13px"><b>Atenção:</b> ao confirmar, o <b>estoque dos produtos vinculados será baixado automaticamente</b>.</div>'
+    + (pedido ? '<div style="margin-bottom:10px">Pedido: <b>' + pedido + '</b></div>' : '')
+    + '<ul style="margin:0 0 12px;padding-left:18px">' + linhas + '</ul>'
+    + '<div style="border-top:1px solid var(--border,rgba(255,255,255,.1));padding-top:10px">Total produzido: <b>' + fmtNum(total) + ' peças</b></div>';
+
+  showConfirmProducao('Confirmar lançamento de produção', html, executarSalvarProducao);
+}
+
+async function executarSalvarProducao() {
   const editId = document.getElementById('prod-edit-id').value;
   const colId = +document.getElementById('prod-colaborador').value;
   const maqId = +document.getElementById('prod-maquina').value;
@@ -1964,7 +2041,7 @@ async function salvarProducao() {
       if (itensValidos.length === 1) {
         // Apenas um item válido: o backend desconta do estoque de forma automática e registra a perda/sobra
         const primItem = itensValidos[0];
-        res = await api('/producao/', 'POST', {
+        res = await postProducaoComConfirmacao({
           colaborador_id: colId, maquina_id: maqId, data, meta,
           producao: totalProducao,
           produto_estoque_id: primItem.produto_id,
@@ -1977,7 +2054,7 @@ async function salvarProducao() {
         // Múltiplos produtos válidos:
         // 1. Registra a produção diária principal sem vincular a um produto estoque
         // (evitando que o backend dê baixa da soma total em um único produto)
-        res = await api('/producao/', 'POST', {
+        res = await postProducaoComConfirmacao({
           colaborador_id: colId, maquina_id: maqId, data, meta,
           producao: totalProducao,
           produto_estoque_id: null,
@@ -2057,7 +2134,7 @@ async function salvarProducao() {
     const mesEl = document.getElementById('prod-mes');
     if (mesEl) mesEl.value = data.slice(0, 7);
     loadProducao();
-  } catch(e) { showAlert(e.message, 'danger'); }
+  } catch(e) { if (e.message !== '__CANCELADO__') showAlert(e.message, 'danger'); }
 }
 
 // ─── PREMIAÇÃO ────────────────────────────────────────────────────────────────

@@ -19,6 +19,7 @@ class ProducaoIn(BaseModel):
     sobra_quantidade: Optional[float] = 0
     pedido_id: Optional[int] = None
     pedido_numero: Optional[str] = None
+    confirmado: Optional[bool] = False
 
 @router.get("/")
 def listar(mes: Optional[str] = None, colaborador_id: Optional[int] = None):
@@ -53,16 +54,16 @@ def registrar(p: ProducaoIn, current_user = Depends(get_current_user)):
             p.meta = float(_mr[0])
     excedente = (p.producao - p.meta) if p.producao > 0 else 0
 
-    # Verificar duplicata apenas se o mesmo produto for lançado duas vezes no mesmo dia
-    # Permite múltiplos produtos diferentes no mesmo dia (novo comportamento do modal)
-    if p.produto_estoque_id:
-        existe = conn.execute("""
-            SELECT id FROM producao_diaria 
-            WHERE colaborador_id=? AND data=? AND produto_estoque_id=?
-        """, (p.colaborador_id, p.data, p.produto_estoque_id)).fetchone()
+    # Aviso (nao bloqueio) de pedido repetido no mesmo dia: o frontend pede confirmacao.
+    # Mesmo produto em pedidos diferentes e permitido; evitamos repetir o MESMO pedido.
+    if p.pedido_numero and not p.confirmado:
+        existe = conn.execute(
+            "SELECT 1 FROM producao_diaria WHERE data=? AND pedido_numero=?",
+            (p.data, p.pedido_numero)
+        ).fetchone()
         if existe:
             conn.close()
-            raise HTTPException(400, "Já existe produção lançada para este colaborador com este produto nesta data")
+            raise HTTPException(409, "pedido_duplicado")
 
     c = conn.cursor()
 
@@ -380,10 +381,10 @@ def resumo_mes(mes: str):
             c.id as colaborador_id,
             c.nome as colaborador,
             c.tipo,
-            COUNT(CASE WHEN p.producao > 0 THEN 1 END) as dias_trabalhados,
+            COUNT(DISTINCT CASE WHEN p.producao > 0 THEN p.data END) as dias_trabalhados,
             SUM(p.producao) as total_producao,
-            CASE WHEN COUNT(CASE WHEN p.producao > 0 THEN 1 END) > 0
-                 THEN SUM(CASE WHEN p.producao > 0 THEN p.producao ELSE 0 END) / COUNT(CASE WHEN p.producao > 0 THEN 1 END)
+            CASE WHEN COUNT(DISTINCT CASE WHEN p.producao > 0 THEN p.data END) > 0
+                 THEN SUM(CASE WHEN p.producao > 0 THEN p.producao ELSE 0 END) / COUNT(DISTINCT CASE WHEN p.producao > 0 THEN p.data END)
                  ELSE 0 END as media_diaria,
             SUM(p.excedente) as excedente_total,
             SUM(p.perda_quantidade) as total_perdas,

@@ -190,7 +190,7 @@ def dashboard(mes: str):
     # naquele dia foi maior ou igual à meta.
     dias_aderencia = conn.execute("""
         SELECT data,
-               SUM(producao) * 1.0 / COUNT(*) as media_dia,
+               SUM(producao) * 1.0 / COUNT(DISTINCT colaborador_id) as media_dia,
                AVG(meta) as meta_dia
         FROM producao_diaria
         WHERE mes_referencia = ? AND producao > 0
