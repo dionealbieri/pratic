@@ -320,7 +320,7 @@
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <button class="btn btn-secondary" onclick="openModalImportarPedido()" data-perm-importar="pedidos">📎 Importar Pedido</button>
-            <button class="btn btn-primary" onclick="openModalPedido()" data-perm-criar="pedidos">+ Novo Pedido</button>
+            <button class="btn btn-primary" onclick="abrirPDV()" data-perm-criar="pedidos">+ Novo Pedido</button>
           </div>
         </div>
         <div class="table-wrap">
@@ -336,7 +336,7 @@
       <div id="ped-tab-clientes" style="display:none">
         <div class="flex items-center justify-between mb-4">
           <input type="text" id="ped-busca-cliente" placeholder="Buscar por nome ou CNPJ..." onkeyup="loadClientes()" style="max-width:300px">
-          <button class="btn btn-primary" onclick="openModalCliente()" data-perm-criar="pedidos">+ Novo Cliente</button>
+          <div style="display:flex;gap:8px"><button class="btn btn-secondary" onclick="openModalImportarClientes()" data-perm-criar="pedidos">📥 Importar Clientes</button><button class="btn btn-primary" onclick="openModalCliente()" data-perm-criar="pedidos">+ Novo Cliente</button></div>
         </div>
         <div class="table-wrap">
           <div class="table-head"><span class="table-head-title">Clientes</span></div>
@@ -381,6 +381,7 @@
           </div>
           <div class="flex gap-2">
             <button class="btn btn-secondary" onclick="openModalImportCSV()" data-perm-movimentar="estoque">📥 Importar CSV</button>
+            <button class="btn btn-secondary" onclick="gerarListaComprasEstoque()">📋 Lista de Compras</button>
             <button class="btn btn-primary" onclick="openModalProduto()" data-perm-criar="estoque">+ Novo Produto</button>
           </div>
         </div>
@@ -891,6 +892,7 @@
           </select>
           <select id="svd-filtro-sit" onchange="loadSaldoDemanda()" style="min-width:160px">
             <option value="">Todas as situações</option>
+            <option value="monitorados">📌 Somente monitorados</option>
             <option value="critico">🔴 Crítico</option>
             <option value="atencao">🟡 Atenção</option>
             <option value="ok">🟢 OK</option>
@@ -1583,6 +1585,14 @@
         <label>Estoque Mínimo</label>
         <input type="number" id="est-prod-minimo" value="0">
       </div>
+      <div class="form-group">
+        <label>Preço de custo (R$)</label>
+        <input type="number" step="0.01" id="est-prod-custo" value="0">
+      </div>
+      <div class="form-group">
+        <label>Preço de venda (R$)</label>
+        <input type="number" step="0.01" id="est-prod-preco" value="0">
+      </div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal('modal-produto')">Cancelar</button>
@@ -1707,6 +1717,25 @@
 
 
 <!-- MODAL IMPORTAR PEDIDO -->
+<div class="modal-overlay" id="modal-importar-clientes">
+  <div class="modal" style="max-width:560px;width:95vw">
+    <div class="modal-title">Importar Clientes</div>
+    <p style="color:var(--muted);font-size:13px;margin-top:-4px;margin-bottom:14px">
+      Envie o arquivo exportado dos clientes (.xls). O sistema cadastra os novos e <strong>pula os já existentes</strong> (por CNPJ/CPF ou nome). Pode reenviar o mesmo arquivo sem duplicar.
+    </p>
+    <div onclick="document.getElementById('imp-clientes-file').click()" style="border:2px dashed rgba(255,255,255,.18);border-radius:14px;padding:24px;text-align:center;background:rgba(255,255,255,.03);cursor:pointer">
+      <div style="font-size:34px;margin-bottom:8px">👥</div>
+      <div style="font-weight:800;margin-bottom:6px">Clique para escolher o arquivo</div>
+      <div id="imp-clientes-nome" style="font-size:13px;color:var(--muted)">Nenhum arquivo selecionado</div>
+      <input type="file" id="imp-clientes-file" accept=".xls,.xlsx,.csv,.html,.htm" onchange="document.getElementById('imp-clientes-nome').textContent=this.files[0]?this.files[0].name:'Nenhum arquivo selecionado'" style="display:none">
+    </div>
+    <div id="imp-clientes-result" style="display:none;margin-top:14px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.10);border-radius:12px;padding:12px;font-size:13px"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-importar-clientes')">Fechar</button>
+      <button class="btn btn-primary" id="btn-imp-clientes" onclick="importarClientesArquivo()">Importar</button>
+    </div>
+  </div>
+</div>
 <div class="modal-overlay" id="modal-importar-pedido">
   <div class="modal" style="max-width:680px;width:95vw">
     <div class="modal-title">Importar Pedido por Arquivo</div>
@@ -1857,6 +1886,7 @@
     <div id="modal-ped-det-content"></div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal('modal-ped-detalhe')">Fechar</button>
+      <button class="btn btn-primary" id="btn-imprimir-pedido-modal">🖨️ Imprimir Pedido</button>
     </div>
   </div>
 </div>
@@ -2055,7 +2085,196 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
-<script src="js/app.js?v=20260621-popupbaixa"></script>
+<div class="pdv-overlay" id="pdv-overlay" style="display:none">
+  <style>
+    #pdv-overlay{position:fixed;inset:0;background:var(--bg,#0e1117);z-index:9000;padding:16px;display:flex;flex-direction:column;overflow:hidden}
+    #pdv-overlay .pdv-head{display:flex;justify-content:space-between;align-items:center;max-width:1300px;width:100%;margin:0 auto 12px}
+    #pdv-overlay .pdv-head h2{margin:0;font-size:20px;font-weight:800}
+    #pdv-overlay .pdv-x{background:var(--surface-2,#1d2130);border:1px solid var(--border,rgba(255,255,255,.1));color:var(--text,#e6e9ef);border-radius:9px;padding:8px 14px;font-weight:700;cursor:pointer}
+    #pdv-overlay .pdv-main{display:grid;grid-template-columns:1.15fr 1fr;grid-template-rows:minmax(0,1fr);gap:14px;align-items:stretch;max-width:1300px;margin:0 auto;width:100%;flex:1;height:0;min-height:0;overflow:hidden}
+    #pdv-overlay .pdv-col{display:flex;flex-direction:column;gap:14px;min-height:0;max-height:100%}
+    #pdv-overlay .pdv-main > .pdv-col:nth-child(2){overflow-y:auto;padding-right:4px;-webkit-overflow-scrolling:touch}
+    #pdv-overlay .pdv-main > .pdv-col:nth-child(2) > *{flex-shrink:0}
+    @media(max-width:920px){
+      #pdv-overlay{overflow-y:auto}
+      #pdv-overlay .pdv-main{grid-template-columns:1fr;grid-template-rows:none;flex:none;height:auto;min-height:auto;overflow:visible}
+      #pdv-overlay .pdv-col{max-height:none}
+      #pdv-overlay .pdv-main > .pdv-col:nth-child(2){overflow:visible}
+      #pdv-overlay .catalogo{min-height:360px}
+      #pdv-overlay .catArea{max-height:420px}
+    }
+    #pdv-overlay .pbox{background:var(--surface,#161922);border:1px solid var(--border,rgba(255,255,255,.08));border-radius:12px;padding:14px}
+    #pdv-overlay .pbox label{display:block;font-size:12px;color:var(--muted,#8b92a3);margin-bottom:6px;font-weight:600}
+    #pdv-overlay .pinp{width:100%;background:var(--surface-2,#1d2130);border:1px solid var(--border,rgba(255,255,255,.08));border-radius:9px;color:var(--text,#e6e9ef);padding:10px 12px;font-size:14px;outline:none}
+    #pdv-overlay .pinp:focus{border-color:#2bb6a3}
+    #pdv-overlay .inrow{display:flex;gap:8px}
+    #pdv-overlay .pib{background:#2bb6a3;color:#04201c;border:0;border-radius:9px;padding:0 14px;font-weight:800;cursor:pointer;font-size:16px}
+    #pdv-overlay .ro{background:var(--surface-2,#1d2130);border:1px solid var(--border,rgba(255,255,255,.08));border-radius:9px;padding:10px 12px;color:var(--muted,#8b92a3)}
+    #pdv-overlay .rel{position:relative}
+    #pdv-overlay .ac-list{position:absolute;left:0;right:0;top:calc(100% + 4px);background:var(--surface-2,#1d2130);border:1px solid var(--border,rgba(255,255,255,.1));border-radius:10px;z-index:40;max-height:260px;overflow-y:auto;box-shadow:0 12px 34px rgba(0,0,0,.55);display:none}
+    #pdv-overlay .ac-up{top:auto;bottom:calc(100% + 4px)}
+    #pdv-overlay .ac-item{padding:9px 12px;cursor:pointer;display:flex;justify-content:space-between;gap:10px;align-items:center;border-bottom:1px solid var(--border-soft,rgba(255,255,255,.05));font-size:13px}
+    #pdv-overlay .ac-item:hover,#pdv-overlay .ac-item.sel{background:var(--surface-3,#232838)}
+    #pdv-overlay .ac-item .c{color:var(--muted-2,#6b7280);font-size:10.5px;margin-left:6px}
+    #pdv-overlay .ac-item .p{color:#22c55e;font-weight:800;font-size:12.5px;white-space:nowrap}
+    #pdv-overlay .catalogo{display:flex;flex-direction:column;flex:1;min-height:0}
+    #pdv-overlay .navbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+    #pdv-overlay .sec-h{font-size:12px;color:var(--muted,#8b92a3);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin:0}
+    #pdv-overlay .voltar{background:var(--surface-3,#232838);color:var(--text,#e6e9ef);border:1px solid var(--border,rgba(255,255,255,.1));border-radius:8px;padding:6px 12px;font-weight:700;cursor:pointer;font-size:12px}
+    #pdv-overlay .bc{font-size:12px;color:var(--muted,#8b92a3);margin-bottom:10px;min-height:16px}
+    #pdv-overlay .bc-item{cursor:pointer;color:#2bb6a3;font-weight:600}#pdv-overlay .bc-sep{color:var(--muted-2,#6b7280);margin:0 5px}
+    #pdv-overlay .catArea{flex:1;overflow-y:auto;max-height:none;min-height:80px;padding-right:4px}
+    #pdv-overlay .cats{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-bottom:10px}
+    #pdv-overlay .cat{background:#2bb6a3;color:#04201c;border:0;border-radius:10px;padding:18px 8px;font-weight:800;font-size:13px;cursor:pointer;text-transform:uppercase;letter-spacing:.3px}
+    #pdv-overlay .cat:hover{filter:brightness(1.08)}
+    #pdv-overlay .cat .sub{display:block;font-size:9.5px;opacity:.7;margin-top:4px;text-transform:none;font-weight:700}
+    #pdv-overlay .prods{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}
+    @media(max-width:560px){#pdv-overlay .cats,#pdv-overlay .prods{grid-template-columns:repeat(2,1fr)}}
+    #pdv-overlay .prod{background:var(--surface-2,#1d2130);border:1px solid var(--border,rgba(255,255,255,.08));border-radius:10px;padding:11px;cursor:pointer;text-align:left}
+    #pdv-overlay .prod:hover{border-color:#2bb6a3;background:var(--surface-3,#232838)}
+    #pdv-overlay .prod .pn{font-weight:700;font-size:12.5px;line-height:1.25;margin-bottom:6px}
+    #pdv-overlay .prod .pp{color:#22c55e;font-weight:800;font-size:12.5px}#pdv-overlay .prod .pc{color:var(--muted-2,#6b7280);font-size:10.5px}
+    #pdv-overlay .vazio{color:var(--muted,#8b92a3);font-size:13px;padding:20px;text-align:center}
+    #pdv-overlay .qa{margin-top:12px;border-top:1px solid var(--border-soft,rgba(255,255,255,.05));padding-top:12px}
+    #pdv-overlay .banner{background:linear-gradient(90deg,#7a1320,#b71c2b);border-radius:12px;padding:15px 18px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:2}
+    #pdv-overlay .banner .l{font-size:12px;opacity:.85;font-weight:700;letter-spacing:.5px}#pdv-overlay .banner .v{font-size:23px;font-weight:900}
+    #pdv-overlay .cart{background:var(--surface,#161922);border:1px solid var(--border,rgba(255,255,255,.08));border-radius:12px;padding:8px 10px;min-height:230px}
+    #pdv-overlay table{width:100%;border-collapse:collapse;font-size:12.5px}
+    #pdv-overlay th{color:var(--muted,#8b92a3);font-weight:600;text-align:right;padding:6px 5px;border-bottom:1px solid var(--border,rgba(255,255,255,.08));font-size:11px}
+    #pdv-overlay th.le,#pdv-overlay td.le{text-align:left}
+    #pdv-overlay td{padding:5px;border-bottom:1px solid var(--border-soft,rgba(255,255,255,.05));text-align:right;vertical-align:middle}
+    #pdv-overlay .ci{width:64px;background:var(--surface-2,#1d2130);border:1px solid var(--border,rgba(255,255,255,.08));border-radius:6px;color:var(--text,#e6e9ef);padding:5px 6px;text-align:right;font-size:12px;outline:none}
+    #pdv-overlay .ci:focus{border-color:#f5b301;background:var(--surface-3,#232838)}
+    #pdv-overlay .rm{background:transparent;border:0;color:#ef4444;cursor:pointer;font-size:15px;font-weight:800}
+    #pdv-overlay .cart-vazio{color:var(--muted,#8b92a3);text-align:center;padding:30px 10px;font-size:13px}
+    #pdv-overlay .totais{background:var(--surface,#161922);border:1px solid var(--border,rgba(255,255,255,.08));border-radius:12px;padding:12px 14px}
+    #pdv-overlay .tl{display:flex;justify-content:space-between;align-items:center;padding:4px 0;font-size:13px}#pdv-overlay .tl .k{color:var(--muted,#8b92a3)}
+    #pdv-overlay .tl input{width:110px;background:var(--surface-2,#1d2130);border:1px solid var(--border,rgba(255,255,255,.08));border-radius:7px;color:var(--text,#e6e9ef);padding:6px 8px;text-align:right;font-size:13px;outline:none}
+    #pdv-overlay .tl.tot{border-top:1px solid var(--border,rgba(255,255,255,.08));margin-top:6px;padding-top:10px;font-size:18px;font-weight:900}#pdv-overlay .tl.tot .v{color:#f5b301}
+    #pdv-overlay .parc h4{margin:0 0 10px;font-size:13px;display:flex;justify-content:space-between;align-items:center}
+    #pdv-overlay .addp{background:#2bb6a3;color:#04201c;border:0;border-radius:7px;padding:5px 11px;font-weight:800;cursor:pointer;font-size:12px}
+    #pdv-overlay .prow{display:grid;grid-template-columns:1.2fr 1fr .9fr 28px;gap:7px;margin-bottom:7px}
+    #pdv-overlay .prow input,#pdv-overlay .prow select{background:var(--surface-2,#1d2130);border:1px solid var(--border,rgba(255,255,255,.08));border-radius:7px;color:var(--text,#e6e9ef);padding:7px 8px;font-size:12px;outline:none;min-width:0}
+    #pdv-overlay .parc-resumo{font-size:11.5px;color:var(--muted,#8b92a3);margin-top:4px}
+    #pdv-overlay .det{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    #pdv-overlay .acoes{display:flex;gap:10px}
+    #pdv-overlay .pbtn{flex:1;border:0;border-radius:10px;padding:14px;font-weight:800;cursor:pointer;font-size:14px}
+    #pdv-overlay .pbtn-fin{background:#f5b301;color:#1a1400}#pdv-overlay .pbtn-can{background:var(--surface-3,#232838);color:var(--text,#e6e9ef)}
+    #pdv-overlay .pbtn-fin:disabled{opacity:.6;cursor:default}
+    #pdv-overlay .pdv-foot{max-width:1300px;width:100%;margin:0 auto;padding:12px 0 4px;border-top:1px solid var(--border,rgba(255,255,255,.1))}
+    #pdv-overlay .pdv-foot .acoes-inner{display:flex;gap:10px}
+    #pdv-overlay .navacts{display:flex;gap:6px;align-items:center}
+    #pdv-overlay .voltar.on{background:#f5b301;color:#1a1400;border-color:#f5b301}
+    #pdv-overlay .ger-bar{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+    #pdv-overlay .ger-add{background:var(--surface-3,#232838);border:1px dashed #2bb6a3;color:#2bb6a3;border-radius:9px;padding:9px 12px;font-weight:800;cursor:pointer;font-size:12px}
+    #pdv-overlay .ger-add:hover{background:rgba(43,182,163,.12)}
+    #pdv-overlay .cat-wrap{position:relative}
+    #pdv-overlay .cat-wrap .cat{width:100%}
+    #pdv-overlay .prod{position:relative}
+    #pdv-overlay .prod.gmode{cursor:default;border-style:dashed}
+    #pdv-overlay .card-del{position:absolute;top:5px;right:6px;width:20px;height:20px;line-height:18px;text-align:center;border-radius:50%;background:#ef4444;color:#fff;border:0;font-weight:900;font-size:13px;cursor:pointer;z-index:3;padding:0}
+    #pdv-overlay .card-del:hover{background:#dc2626}
+    #pdv-overlay .pdv-pick{position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9100;display:flex;align-items:center;justify-content:center;padding:20px}
+    #pdv-overlay .pick-card{background:var(--surface,#161922);border:1px solid var(--border,rgba(255,255,255,.12));border-radius:14px;width:min(580px,96vw);max-height:86vh;display:flex;flex-direction:column;padding:16px;gap:10px;box-shadow:0 24px 60px rgba(0,0,0,.6)}
+    #pdv-overlay .pick-head{display:flex;justify-content:space-between;align-items:center;font-size:15px}
+    #pdv-overlay .pick-list{flex:1;overflow-y:auto;border:1px solid var(--border,rgba(255,255,255,.08));border-radius:10px;padding:2px}
+    #pdv-overlay .pick-item{display:flex;align-items:center;gap:10px;padding:9px 8px;border-bottom:1px solid var(--border-soft,rgba(255,255,255,.05));cursor:pointer;font-size:13px}
+    #pdv-overlay .pick-item:hover{background:var(--surface-2,#1d2130)}
+    #pdv-overlay .pick-item input{width:17px;height:17px;cursor:pointer;flex:0 0 auto}
+    #pdv-overlay .pick-item .pn{flex:1;font-weight:600;min-width:0}
+    #pdv-overlay .pick-item .pc{color:var(--muted-2,#6b7280);font-size:11px;white-space:nowrap}
+    #pdv-overlay .pick-item .pick-cat{font-size:10px;color:#f5b301;border:1px solid rgba(245,179,1,.4);border-radius:6px;padding:1px 6px;white-space:nowrap}
+    #pdv-overlay .pick-foot{display:flex;justify-content:space-between;align-items:center;gap:10px}
+    #pdv-overlay .pick-foot .pbtn{flex:0 0 auto;padding:10px 18px;font-size:13px}
+    #pdv-overlay .cat-wrap.oculta{opacity:.45}
+    #pdv-overlay .card-eye{position:absolute;top:5px;right:6px;min-width:26px;height:22px;line-height:20px;text-align:center;border-radius:6px;background:rgba(0,0,0,.5);border:1px solid var(--border,rgba(255,255,255,.25));color:#fff;font-size:12px;cursor:pointer;z-index:3;padding:0 4px}
+    #pdv-overlay .card-eye.off{background:#7a1320;border-color:#ef4444}
+    #pdv-overlay .card-eye:hover{filter:brightness(1.25)}
+    #pdv-overlay .pdv-toast{position:fixed;top:16px;left:50%;transform:translateX(-50%);z-index:10000;padding:12px 18px;border-radius:10px;font-weight:700;font-size:13px;box-shadow:0 12px 34px rgba(0,0,0,.55);max-width:90vw;text-align:center}
+    #pdv-overlay .pdv-toast.ok{background:#11331f;border:1px solid #22c55e;color:#d1fae5}
+    #pdv-overlay .pdv-toast.err{background:#3a1620;border:1px solid #ef4444;color:#fecaca}
+    #pdv-overlay .pdv-toast.out{opacity:0;transition:opacity .3s ease}
+    #pdv-overlay .prod.oculta{opacity:.45}
+    #pdv-overlay .cliform-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    #pdv-overlay .cliform-grid label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted,#9aa3b2)}
+    #pdv-overlay .cliform-grid .cf-full{grid-column:1/-1}
+  </style>
+
+  <div class="pdv-head">
+    <h2>🛒 Novo Pedido (PDV)</h2>
+    <button class="pdv-x" onclick="fecharPDV()">✕ Fechar</button>
+  </div>
+
+  <div class="pdv-main">
+    <!-- ESQUERDA -->
+    <div class="pdv-col">
+      <div class="pbox">
+        <label>Cliente</label>
+        <div class="rel">
+          <div class="inrow">
+            <input class="pinp" id="pdv-cliente-busca" autocomplete="off" placeholder="Buscar cliente por nome ou CNPJ..." onfocus="pdvCliInput()" oninput="pdvCliInput()" onkeydown="pdvCliKey(event)">
+            <button class="pib" title="Novo cliente" onclick="pdvNovoCliente()">+</button>
+          </div>
+          <div class="ac-list" id="pdv-cliente-list"></div>
+        </div>
+        <div id="pdv-cliente-sel" style="margin-top:8px;font-size:13px;color:#22c55e;display:none"></div>
+      </div>
+
+      <div class="pbox catalogo">
+        <div class="navbar"><span class="sec-h">Categorias</span>
+          <div class="navacts">
+            <button id="pdv-ger-btn" class="voltar" onclick="pdvToggleGerenciar()" title="Excluir e criar categorias/produtos">⚙ Gerenciar</button>
+            <button id="pdv-voltar" class="voltar" onclick="pdvVoltar()" style="display:none">‹ Voltar</button>
+          </div></div>
+        <div class="bc" id="pdv-bc"></div>
+        <div class="catArea" id="pdv-cat-area"></div>
+        <div class="qa rel">
+          <input class="pinp" id="pdv-busca-prod" autocomplete="off" placeholder="Digite aqui para buscar o produto (Enter adiciona)..." oninput="pdvQaInput()" onkeydown="pdvQaKey(event)">
+          <div class="ac-list ac-up" id="pdv-qa-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- DIREITA -->
+    <div class="pdv-col">
+      <div class="pbox"><label>Vendedor</label><div class="ro" id="pdv-vendedor">—</div></div>
+
+      <div class="banner"><div><div class="l">QUANTIDADE</div><div class="v" id="pdv-bq">0</div></div>
+        <div style="text-align:right"><div class="l">TOTAL</div><div class="v" id="pdv-bt">R$ 0,00</div></div></div>
+
+      <div class="cart"><table><thead><tr><th class="le">Descrição</th><th>Qtd</th><th>V.Unit</th><th>Desc</th><th>Total</th><th></th></tr></thead><tbody id="pdv-cart"></tbody></table>
+        <div class="cart-vazio" id="pdv-cart-vazio">Nenhum item — busque ou navegue nas categorias à esquerda.</div></div>
+
+      <div class="totais">
+        <div class="tl"><span class="k">Subtotal</span><span id="pdv-sub">R$ 0,00</span></div>
+        <div class="tl"><span class="k">Acréscimo</span><input type="number" step="0.01" id="pdv-acr" value="0" oninput="pdvCalc()"></div>
+        <div class="tl"><span class="k">Frete</span><input type="number" step="0.01" id="pdv-fre" value="0" oninput="pdvCalc()"></div>
+        <div class="tl"><span class="k">Desconto global</span><input type="number" step="0.01" id="pdv-dgl" value="0" oninput="pdvCalc()"></div>
+        <div class="tl tot"><span>TOTAL</span><span class="v" id="pdv-tot">R$ 0,00</span></div>
+      </div>
+
+      <div class="pbox parc"><h4><span>Parcelas / Pagamento</span><button class="addp" onclick="pdvAddParcela()">+ Parcela</button></h4>
+        <div id="pdv-parcelas"></div><div class="parc-resumo" id="pdv-parc-resumo"></div></div>
+
+      <div class="pbox">
+        <div class="det">
+          <div><label>Nº pedido (opcional)</label><input class="pinp" id="pdv-numero" placeholder="auto"></div>
+          <div><label>Prazo de entrega</label><input class="pinp" type="date" id="pdv-prazo"></div>
+        </div>
+        <div style="margin-top:10px"><label>Observações</label><textarea class="pinp" id="pdv-obs" rows="2" placeholder="Ex.: arte, impressão, instruções..."></textarea></div>
+      </div>
+
+    </div>
+  </div>
+  <div class="pdv-foot">
+    <div class="acoes-inner">
+      <button class="pbtn pbtn-can" onclick="fecharPDV()">Cancelar</button>
+      <button class="pbtn pbtn-fin" id="pdv-finalizar" onclick="finalizarPDV()">Finalizar pedido</button>
+    </div>
+  </div>
+</div>
+
+<script src="js/app.js?v=20260625-pdv10"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');
