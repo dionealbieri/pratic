@@ -3,7 +3,7 @@ import sqlite3
 import re
 import unicodedata
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from database import get_conn
 
 router = APIRouter()
@@ -69,6 +69,7 @@ class CategoriaIn(BaseModel):
     nome: str
     descricao: Optional[str] = None
     tipo: Optional[str] = "producao"  # 'producao' (fabricado) ou 'revenda' (comprado pronto)
+    parent_id: Optional[int] = None
 
 class ProdutoIn(BaseModel):
     codigo: Optional[str] = None
@@ -77,6 +78,8 @@ class ProdutoIn(BaseModel):
     marca: Optional[str] = None
     unidade: Optional[str] = "unidade"
     estoque_minimo: Optional[float] = 0
+    preco: Optional[float] = 0
+    custo: Optional[float] = 0
 
 class MovimentacaoIn(BaseModel):
     produto_id: int
@@ -95,7 +98,12 @@ class MovimentacaoIn(BaseModel):
 @router.get("/categorias")
 def listar_categorias():
     conn = get_conn()
-    rows = conn.execute("SELECT * FROM estoque_categorias ORDER BY nome").fetchall()
+    rows = conn.execute("""
+        SELECT c.*, pai.nome as parent_nome
+        FROM estoque_categorias c
+        LEFT JOIN estoque_categorias pai ON c.parent_id = pai.id
+        ORDER BY COALESCE(pai.nome, c.nome), c.nome
+    """).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -103,7 +111,7 @@ def listar_categorias():
 def criar_categoria(c: CategoriaIn):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("INSERT INTO estoque_categorias (nome, descricao, tipo) VALUES (?, ?, ?)", (c.nome, c.descricao, (c.tipo or "producao")))
+    cur.execute("INSERT INTO estoque_categorias (nome, descricao, tipo, parent_id) VALUES (?, ?, ?, ?)", (c.nome, c.descricao, (c.tipo or "producao"), c.parent_id))
     conn.commit()
     id = cur.lastrowid
     conn.close()
@@ -112,10 +120,22 @@ def criar_categoria(c: CategoriaIn):
 @router.put("/categorias/{id}")
 def atualizar_categoria(id: int, c: CategoriaIn):
     conn = get_conn()
-    conn.execute("UPDATE estoque_categorias SET nome=?, descricao=?, tipo=? WHERE id=?", (c.nome, c.descricao, (c.tipo or "producao"), id))
+    conn.execute("UPDATE estoque_categorias SET nome=?, descricao=?, tipo=?, parent_id=? WHERE id=?", (c.nome, c.descricao, (c.tipo or "producao"), c.parent_id, id))
     conn.commit()
     conn.close()
     return {"mensagem": "Categoria atualizada"}
+
+class OcultarCategoriaIn(BaseModel):
+    oculta: bool = True
+
+@router.post("/categorias/{id}/ocultar")
+def ocultar_categoria(id: int, d: OcultarCategoriaIn):
+    """Mostra/oculta uma categoria no PDV sem excluí-la."""
+    conn = get_conn()
+    conn.execute("UPDATE estoque_categorias SET oculta_pdv=? WHERE id=?", (1 if d.oculta else 0, id))
+    conn.commit()
+    conn.close()
+    return {"id": id, "oculta_pdv": 1 if d.oculta else 0}
 
 @router.delete("/categorias/{id}")
 def deletar_categoria(id: int):
@@ -167,9 +187,9 @@ def criar_produto(p: ProdutoIn):
         existente = conn.execute("SELECT id FROM estoque_produtos WHERE codigo=? AND ativo=1", (codigo,)).fetchone()
         if existente:
             raise HTTPException(400, "Já existe um produto ativo com este Código/ID")
-        cur.execute("""INSERT INTO estoque_produtos (codigo, categoria_id, nome, marca, unidade, estoque_minimo)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    (codigo, p.categoria_id, p.nome, p.marca, p.unidade, p.estoque_minimo))
+        cur.execute("""INSERT INTO estoque_produtos (codigo, categoria_id, nome, marca, unidade, estoque_minimo, preco, custo)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (codigo, p.categoria_id, p.nome, p.marca, p.unidade, p.estoque_minimo, p.preco or 0, p.custo or 0))
         produto_id = cur.lastrowid
         cur.execute("INSERT INTO estoque_saldo (produto_id, quantidade) VALUES (?, 0)", (produto_id,))
         conn.commit()
@@ -180,6 +200,48 @@ def criar_produto(p: ProdutoIn):
     except sqlite3.IntegrityError as e:
         conn.rollback()
         raise HTTPException(400, f"Não foi possível salvar o produto. Verifique Código/ID, categoria e dados obrigatórios. Detalhe: {e}")
+    finally:
+        conn.close()
+
+class AtribuirCategoriaIn(BaseModel):
+    produto_ids: List[int] = []
+    categoria_id: Optional[int] = None
+
+@router.post("/produtos/atribuir-categoria")
+def atribuir_categoria(d: AtribuirCategoriaIn):
+    """Define (ou remove) a categoria de uma lista de produtos já cadastrados."""
+    if not d.produto_ids:
+        return {"atualizados": 0}
+    conn = get_conn()
+    try:
+        qmarks = ",".join("?" * len(d.produto_ids))
+        cur = conn.execute(
+            f"UPDATE estoque_produtos SET categoria_id=? WHERE id IN ({qmarks})",
+            [d.categoria_id, *d.produto_ids],
+        )
+        conn.commit()
+        return {"atualizados": cur.rowcount}
+    finally:
+        conn.close()
+
+class VisibilidadeProdutoIn(BaseModel):
+    produto_ids: List[int] = []
+    oculta: bool = True
+
+@router.post("/produtos/visibilidade-pdv")
+def visibilidade_produto_pdv(d: VisibilidadeProdutoIn):
+    """Oculta/mostra produtos no PDV sem alterar cadastro nem categoria."""
+    if not d.produto_ids:
+        return {"atualizados": 0}
+    conn = get_conn()
+    try:
+        qmarks = ",".join("?" * len(d.produto_ids))
+        cur = conn.execute(
+            f"UPDATE estoque_produtos SET oculta_pdv=? WHERE id IN ({qmarks})",
+            [1 if d.oculta else 0, *d.produto_ids],
+        )
+        conn.commit()
+        return {"atualizados": cur.rowcount}
     finally:
         conn.close()
 
@@ -215,8 +277,8 @@ def atualizar_produto(id: int, p: ProdutoIn):
         if existente:
             raise HTTPException(400, "Já existe outro produto ativo com este Código/ID")
 
-        cur = conn.execute("""UPDATE estoque_produtos SET codigo=?, categoria_id=?, nome=?, marca=?, unidade=?, estoque_minimo=?
-                            WHERE id=?""", (codigo, p.categoria_id, p.nome, p.marca, p.unidade, p.estoque_minimo, id))
+        cur = conn.execute("""UPDATE estoque_produtos SET codigo=?, categoria_id=?, nome=?, marca=?, unidade=?, estoque_minimo=?, preco=?, custo=?
+                            WHERE id=?""", (codigo, p.categoria_id, p.nome, p.marca, p.unidade, p.estoque_minimo, p.preco or 0, p.custo or 0, id))
         if cur.rowcount == 0:
             raise HTTPException(404, "Produto não encontrado")
         conn.commit()

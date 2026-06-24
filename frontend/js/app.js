@@ -4535,21 +4535,32 @@ function fecharProdCombo(idx) {
     const valor = inp.value;
     pedidoItens[idx].descricao = valor;
     
-    const desc = valor.trim().toLowerCase();
-    const matches = (produtosEstoque || []).filter(p => 
-      (p.nome || '').trim().toLowerCase() === desc ||
-      (p.codigo && String(p.codigo).trim().toLowerCase() === desc)
-    );
-    
-    if (matches.length === 1) {
-      pedidoItens[idx].produto_id = matches[0].id;
-      const u = matches[0].unidade;
-      const opts = ['unidade','und','milheiro','kg','litro','metro','caixa','pacote'];
-      if (u && opts.includes(u)) {
-        pedidoItens[idx].unidade = u;
+    const currentProdId = pedidoItens[idx].produto_id;
+    let alreadyMatched = false;
+    if (currentProdId) {
+      const p = (produtosEstoque || []).find(x => x.id === currentProdId);
+      if (p && (p.nome || '').trim().toLowerCase() === valor.trim().toLowerCase()) {
+        alreadyMatched = true;
       }
-    } else {
-      pedidoItens[idx].produto_id = null;
+    }
+    
+    if (!alreadyMatched) {
+      const desc = valor.trim().toLowerCase();
+      const matches = (produtosEstoque || []).filter(p => 
+        (p.nome || '').trim().toLowerCase() === desc ||
+        (p.codigo && String(p.codigo).trim().toLowerCase() === desc)
+      );
+      
+      if (matches.length === 1) {
+        pedidoItens[idx].produto_id = matches[0].id;
+        const u = matches[0].unidade;
+        const opts = ['unidade','und','milheiro','kg','litro','metro','caixa','pacote'];
+        if (u && opts.includes(u)) {
+          pedidoItens[idx].unidade = u;
+        }
+      } else {
+        pedidoItens[idx].produto_id = null;
+      }
     }
     renderItensPedido();
   }
@@ -4559,6 +4570,12 @@ function fecharProdComboDelayed(idx) { setTimeout(() => fecharProdCombo(idx), 15
 function selecionarProdComboItem(idx, prodId) {
   const p = (produtosEstoque || []).find(x => x.id === prodId);
   if (!p || !pedidoItens[idx]) return;
+  
+  const inp = document.getElementById('ped-item-input-' + idx);
+  if (inp) {
+    inp.value = p.nome;
+  }
+  
   pedidoItens[idx].descricao = p.nome;
   pedidoItens[idx].produto_id = p.id;
   const opts = ['unidade', 'und', 'milheiro', 'kg', 'litro', 'metro', 'caixa', 'pacote'];
