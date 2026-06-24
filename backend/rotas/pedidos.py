@@ -4,6 +4,7 @@ from typing import Optional, List
 from database import get_conn
 import httpx
 import os, re, tempfile, datetime
+from html.parser import HTMLParser
 
 router = APIRouter()
 
@@ -28,14 +29,25 @@ class ItemPedidoIn(BaseModel):
     descricao: str
     quantidade: float
     unidade: Optional[str] = "unidade"
+    valor_unitario: Optional[float] = 0.0
+    desconto: Optional[float] = 0.0
+
+class ParcelaPedidoIn(BaseModel):
+    forma_pagamento: Optional[str] = ""
+    vencimento: Optional[str] = ""
+    valor: float
 
 class PedidoIn(BaseModel):
-    numero_pedido: str
+    numero_pedido: Optional[str] = None
     cliente_id: int
-    prazo_entrega: str
+    prazo_entrega: Optional[str] = ""
     vendedor: Optional[str] = None
     observacoes: Optional[str] = None
     itens: List[ItemPedidoIn] = []
+    acrescimo: Optional[float] = 0.0
+    frete: Optional[float] = 0.0
+    desconto_global: Optional[float] = 0.0
+    parcelas: Optional[List[ParcelaPedidoIn]] = []
 
 class StatusItemIn(BaseModel):
     status: str
@@ -560,6 +572,207 @@ async def _resolver_cliente_id(parsed: dict, cur) -> int:
     return cur.lastrowid
 
 
+class _TabelaClientesHTML(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.linhas = []
+        self._linha = None
+        self._cel = None
+    def handle_starttag(self, tag, attrs):
+        if tag == "tr":
+            self._linha = []
+        elif tag == "td" and self._linha is not None:
+            self._cel = []
+    def handle_endtag(self, tag):
+        if tag == "td" and self._cel is not None:
+            self._linha.append("".join(self._cel).strip())
+            self._cel = None
+        elif tag == "tr" and self._linha is not None:
+            self.linhas.append(self._linha)
+            self._linha = None
+    def handle_data(self, data):
+        if self._cel is not None:
+            self._cel.append(data)
+
+
+def _cli_val(linha, idx, col):
+    i = idx.get(col)
+    if i is None or i >= len(linha):
+        return None
+    v = (linha[i] or "").strip()
+    return v or None
+
+
+def _col_idx(ref):
+    letras = "".join(ch for ch in ref if ch.isalpha())
+    n = 0
+    for ch in letras:
+        n = n * 26 + (ord(ch.upper()) - 64)
+    return n - 1 if n > 0 else 0
+
+
+def _ler_xlsx(raw):
+    import zipfile, io as _io
+    from xml.etree import ElementTree as ET
+    NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+    z = zipfile.ZipFile(_io.BytesIO(raw))
+    nomes = z.namelist()
+    shared = []
+    if "xl/sharedStrings.xml" in nomes:
+        root = ET.fromstring(z.read("xl/sharedStrings.xml"))
+        for si in root:
+            shared.append("".join((t.text or "") for t in si.iter(NS + "t")))
+    sheets = sorted(n for n in nomes if n.startswith("xl/worksheets/sheet") and n.endswith(".xml"))
+    if not sheets:
+        return []
+    root = ET.fromstring(z.read(sheets[0]))
+    linhas = []
+    for row in root.iter(NS + "row"):
+        celulas = {}
+        maxi = -1
+        pos = 0
+        for c in row.findall(NS + "c"):
+            ref = c.get("r") or ""
+            ci = _col_idx(ref) if ref else pos
+            pos = ci + 1
+            t = c.get("t")
+            v = c.find(NS + "v")
+            val = ""
+            if t == "s" and v is not None and v.text is not None:
+                try:
+                    val = shared[int(v.text)]
+                except Exception:
+                    val = ""
+            elif t == "inlineStr":
+                is_ = c.find(NS + "is")
+                if is_ is not None:
+                    val = "".join((tt.text or "") for tt in is_.iter(NS + "t"))
+            elif v is not None:
+                val = v.text or ""
+            celulas[ci] = (val or "").strip()
+            if ci > maxi:
+                maxi = ci
+        linha = [celulas.get(i, "") for i in range(maxi + 1)]
+        if any(linha):
+            linhas.append(linha)
+    return linhas
+
+
+def _ler_csv(texto):
+    import csv, io as _io
+    amostra = texto[:3000]
+    delim = ";" if amostra.count(";") > amostra.count(",") else ","
+    linhas = []
+    for row in csv.reader(_io.StringIO(texto), delimiter=delim):
+        if any((x or "").strip() for x in row):
+            linhas.append([(x or "").strip() for x in row])
+    return linhas
+
+
+def _extrair_linhas(raw):
+    if raw[:2] == bytes([0x50, 0x4B]):
+        return _ler_xlsx(raw)
+    if raw[:4] == bytes([0xD0, 0xCF, 0x11, 0xE0]):
+        raise HTTPException(400, "Este arquivo e um Excel binario (.xls). Salve como .xlsx ou .csv (ou use o arquivo original exportado do sistema) e tente novamente.")
+    try:
+        texto = raw.decode("ISO-8859-1")
+    except Exception:
+        texto = raw.decode("utf-8", errors="replace")
+    if "<td" in texto.lower():
+        parser = _TabelaClientesHTML()
+        parser.feed(texto)
+        return [l for l in parser.linhas if l]
+    if ("," in texto) or (";" in texto):
+        return _ler_csv(texto)
+    raise HTTPException(400, "Formato nao reconhecido. Envie o .xls exportado do sistema, ou um arquivo .xlsx/.csv.")
+
+
+@router.post("/importar-clientes")
+async def importar_clientes(file: UploadFile = File(...)):
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(400, "Arquivo vazio")
+    linhas = _extrair_linhas(raw)
+    if len(linhas) < 2:
+        raise HTTPException(400, "Nenhum cliente encontrado no arquivo (so cabecalho ou vazio).")
+    cabecalho = linhas[0]
+    idx = {nome: i for i, nome in enumerate(cabecalho)}
+    if "Nome" not in idx:
+        raise HTTPException(400, "Coluna 'Nome' nao encontrada. Verifique o arquivo exportado.")
+
+    clientes = []
+    for linha in linhas[1:]:
+        nome = _cli_val(linha, idx, "Nome")
+        if not nome:
+            continue
+        doc_raw = _cli_val(linha, idx, "Documento")
+        doc = re.sub("[^0-9]", "", doc_raw) if doc_raw else None
+        doc = doc or None
+        tel = _cli_val(linha, idx, "Celular") or _cli_val(linha, idx, "Telefone")
+        codigo = _cli_val(linha, idx, "Codigo")
+        contato = _cli_val(linha, idx, "Contato")
+        obs = ["Importado da planilha" + ((" (cod. origem %s)" % codigo) if codigo else "")]
+        if contato:
+            obs.append("Contato: %s" % contato)
+        clientes.append({
+            "cnpj": doc,
+            "razao_social": nome,
+            "nome_fantasia": _cli_val(linha, idx, "Fantasia"),
+            "ie": _cli_val(linha, idx, "InscricaoEstadual"),
+            "email": _cli_val(linha, idx, "Email"),
+            "telefone": tel,
+            "cep": _cli_val(linha, idx, "Cep"),
+            "logradouro": _cli_val(linha, idx, "Endereco"),
+            "numero": _cli_val(linha, idx, "Numero"),
+            "complemento": _cli_val(linha, idx, "Complemento"),
+            "bairro": _cli_val(linha, idx, "Bairro"),
+            "cidade": _cli_val(linha, idx, "NomeCidade"),
+            "uf": _cli_val(linha, idx, "Estado"),
+            "observacoes": " - ".join(obs),
+        })
+
+    conn = get_conn()
+    cur = conn.cursor()
+    docs = set(r[0] for r in cur.execute("SELECT cnpj FROM pedidos_clientes WHERE cnpj IS NOT NULL AND cnpj <> ''").fetchall())
+    nomes = set((r[0] or "").strip().upper() for r in cur.execute("SELECT razao_social FROM pedidos_clientes").fetchall())
+    novos = []
+    ja_existentes = 0
+    dup_arquivo = 0
+    vd = set()
+    vn = set()
+    for c in clientes:
+        doc = c["cnpj"]
+        nk = c["razao_social"].strip().upper()
+        if doc and doc in docs:
+            ja_existentes += 1
+            continue
+        if (not doc) and nk in nomes:
+            ja_existentes += 1
+            continue
+        if doc and doc in vd:
+            dup_arquivo += 1
+            continue
+        if (not doc) and nk in vn:
+            dup_arquivo += 1
+            continue
+        if doc:
+            vd.add(doc)
+        else:
+            vn.add(nk)
+        novos.append(c)
+
+    if novos:
+        cur.executemany(
+            "INSERT INTO pedidos_clientes (cnpj, razao_social, nome_fantasia, ie, email, telefone, cep, logradouro, numero, complemento, bairro, cidade, uf, observacoes, ativo) "
+            "VALUES (:cnpj, :razao_social, :nome_fantasia, :ie, :email, :telefone, :cep, :logradouro, :numero, :complemento, :bairro, :cidade, :uf, :observacoes, 1)",
+            novos
+        )
+        conn.commit()
+    amostra = [{"razao_social": c["razao_social"], "cnpj": c["cnpj"], "cidade": c["cidade"], "uf": c["uf"]} for c in novos[:5]]
+    conn.close()
+    return {"lidos": len(clientes), "inseridos": len(novos), "ja_existentes": ja_existentes, "duplicados_arquivo": dup_arquivo, "amostra": amostra}
+
+
 @router.post("/importar-arquivos-lote")
 async def importar_pedidos_lote(files: List[UploadFile] = File(...)):
     """Importa vários PDFs de pedido de uma vez: cria cliente+pedido+itens, pula duplicados (por número) e devolve um resumo."""
@@ -993,6 +1206,11 @@ def buscar_pedido(id: int):
     conn = get_conn()
     pedido = conn.execute("""
         SELECT p.*, c.razao_social as cliente_nome, c.nome_fantasia,
+               c.cnpj as cliente_cnpj, c.telefone as cliente_telefone,
+               c.cep as cliente_cep, c.logradouro as cliente_logradouro,
+               c.numero as cliente_numero, c.complemento as cliente_complemento,
+               c.bairro as cliente_bairro, c.cidade as cliente_cidade, c.uf as cliente_uf,
+               c.email as cliente_email,
                julianday(p.prazo_entrega) - julianday('now') as dias_restantes
         FROM pedidos p
         JOIN pedidos_clientes c ON p.cliente_id = c.id
@@ -1002,37 +1220,55 @@ def buscar_pedido(id: int):
         conn.close()
         raise HTTPException(404, "Pedido não encontrado")
     itens = conn.execute("""
-        SELECT i.*, ep.nome as produto_nome, ec.tipo as categoria_tipo
+        SELECT i.*, ep.nome as produto_nome, ep.codigo as produto_codigo, ec.tipo as categoria_tipo
         FROM pedidos_itens i
         LEFT JOIN estoque_produtos ep ON i.produto_id = ep.id
         LEFT JOIN estoque_categorias ec ON ep.categoria_id = ec.id
         WHERE i.pedido_id=?
         ORDER BY i.id
     """, (id,)).fetchall()
+    parcelas = conn.execute("""
+        SELECT id, forma_pagamento, vencimento, valor
+        FROM pedidos_parcelas
+        WHERE pedido_id = ?
+        ORDER BY id
+    """, (id,)).fetchall()
     conn.close()
     result = dict(pedido)
     result["itens"] = [dict(i) for i in itens]
+    result["parcelas"] = [dict(pa) for pa in parcelas]
     return result
 
 @router.post("/")
 def criar_pedido(p: PedidoIn):
     conn = get_conn()
     cur = conn.cursor()
-    if p.numero_pedido:
-        dup = cur.execute("SELECT id FROM pedidos WHERE numero_pedido=?", (str(p.numero_pedido),)).fetchone()
-        if dup:
-            conn.close()
-            raise HTTPException(400, f"Pedido número {p.numero_pedido} já existe (pedido #{dup['id']}).")
+    if not p.numero_pedido or not str(p.numero_pedido).strip():
+        last = cur.execute("SELECT numero_pedido FROM pedidos WHERE numero_pedido GLOB '[0-9]*' ORDER BY CAST(numero_pedido AS INTEGER) DESC LIMIT 1").fetchone()
+        if last and last[0].isdigit():
+            p.numero_pedido = str(int(last[0]) + 1)
+        else:
+            p.numero_pedido = "1"
+    dup = cur.execute("SELECT id FROM pedidos WHERE numero_pedido=?", (str(p.numero_pedido),)).fetchone()
+    if dup:
+        conn.close()
+        raise HTTPException(400, f"Pedido número {p.numero_pedido} já existe (pedido #{dup['id']}).")
     cur.execute("""INSERT INTO pedidos
-        (numero_pedido, cliente_id, prazo_entrega, vendedor, observacoes, status)
-        VALUES (?,?,?,?,?,'aberto')""",
-        (p.numero_pedido, p.cliente_id, p.prazo_entrega, p.vendedor, p.observacoes))
+        (numero_pedido, cliente_id, prazo_entrega, vendedor, observacoes, acrescimo, frete, desconto_global, status)
+        VALUES (?,?,?,?,?,?,?,?,'aberto')""",
+        (p.numero_pedido, p.cliente_id, (p.prazo_entrega or ""), p.vendedor, p.observacoes, p.acrescimo or 0, p.frete or 0, p.desconto_global or 0))
     pedido_id = cur.lastrowid
     for item in p.itens:
         cur.execute("""INSERT INTO pedidos_itens
-            (pedido_id, produto_id, descricao, quantidade, unidade, qtd_produzida, status)
-            VALUES (?,?,?,?,?,0,'aberto')""",
-            (pedido_id, item.produto_id, item.descricao, item.quantidade, item.unidade))
+            (pedido_id, produto_id, descricao, quantidade, unidade, valor_unitario, desconto, qtd_produzida, status)
+            VALUES (?,?,?,?,?,?,?,0,'aberto')""",
+            (pedido_id, item.produto_id, item.descricao, item.quantidade, item.unidade, item.valor_unitario or 0, item.desconto or 0))
+    if p.parcelas:
+        for parc in p.parcelas:
+            cur.execute("""INSERT INTO pedidos_parcelas
+                (pedido_id, forma_pagamento, vencimento, valor)
+                VALUES (?,?,?,?)""",
+                (pedido_id, (parc.forma_pagamento or ""), (parc.vencimento or ""), parc.valor or 0))
     _auto_vincular_itens(conn)
     alertas = _alertas_estoque_para_pedidos(cur, [pedido_id])
     conn.commit()
@@ -1043,15 +1279,20 @@ def criar_pedido(p: PedidoIn):
 def atualizar_pedido(id: int, p: PedidoIn):
     conn = get_conn()
     cur = conn.cursor()
-    if p.numero_pedido:
-        dup = cur.execute("SELECT id FROM pedidos WHERE numero_pedido=? AND id<>?", (str(p.numero_pedido), id)).fetchone()
-        if dup:
-            conn.close()
-            raise HTTPException(400, f"Pedido número {p.numero_pedido} já existe (pedido #{dup['id']}).")
+    if not p.numero_pedido or not str(p.numero_pedido).strip():
+        last = cur.execute("SELECT numero_pedido FROM pedidos WHERE numero_pedido GLOB '[0-9]*' AND id<>? ORDER BY CAST(numero_pedido AS INTEGER) DESC LIMIT 1", (id,)).fetchone()
+        if last and last[0].isdigit():
+            p.numero_pedido = str(int(last[0]) + 1)
+        else:
+            p.numero_pedido = "1"
+    dup = cur.execute("SELECT id FROM pedidos WHERE numero_pedido=? AND id<>?", (str(p.numero_pedido), id)).fetchone()
+    if dup:
+        conn.close()
+        raise HTTPException(400, f"Pedido número {p.numero_pedido} já existe (pedido #{dup['id']}).")
     cur.execute("""UPDATE pedidos SET
-        numero_pedido=?, cliente_id=?, prazo_entrega=?, vendedor=?, observacoes=?
+        numero_pedido=?, cliente_id=?, prazo_entrega=?, vendedor=?, observacoes=?, acrescimo=?, frete=?, desconto_global=?
         WHERE id=?""",
-        (p.numero_pedido, p.cliente_id, p.prazo_entrega, p.vendedor, p.observacoes, id))
+        (p.numero_pedido, p.cliente_id, (p.prazo_entrega or ""), p.vendedor, p.observacoes, p.acrescimo or 0, p.frete or 0, p.desconto_global or 0, id))
     
     # Mapear status e quantidade produzida dos itens atuais pela descrição (para preservar o progresso)
     progresso_itens = {}
@@ -1066,10 +1307,18 @@ def atualizar_pedido(id: int, p: PedidoIn):
         if key in progresso_itens:
             status, qtd_produzida = progresso_itens[key]
         cur.execute("""INSERT INTO pedidos_itens
-            (pedido_id, produto_id, descricao, quantidade, unidade, qtd_produzida, status)
-            VALUES (?,?,?,?,?,?,?)""",
-            (id, item.produto_id, item.descricao, item.quantidade, item.unidade, qtd_produzida, status))
+            (pedido_id, produto_id, descricao, quantidade, unidade, valor_unitario, desconto, qtd_produzida, status)
+            VALUES (?,?,?,?,?,?,?,?,?)""",
+            (id, item.produto_id, item.descricao, item.quantidade, item.unidade, item.valor_unitario or 0, item.desconto or 0, qtd_produzida, status))
             
+    cur.execute("DELETE FROM pedidos_parcelas WHERE pedido_id=?", (id,))
+    if p.parcelas:
+        for parc in p.parcelas:
+            cur.execute("""INSERT INTO pedidos_parcelas
+                (pedido_id, forma_pagamento, vencimento, valor)
+                VALUES (?,?,?,?)""",
+                (id, (parc.forma_pagamento or ""), (parc.vencimento or ""), parc.valor or 0))
+                
     _auto_vincular_itens(conn)
     _recalc_status_pedido(cur, id)
     conn.commit()
