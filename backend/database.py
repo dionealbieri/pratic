@@ -369,6 +369,42 @@ def init_db():
              WHERE nome LIKE '%lider%' OR nome LIKE '%líder%'
         """)
 
+    # Migração: módulo de vendas (preço no produto, valores no item, totais e parcelas do pedido)
+    cols_prod = [r[1] for r in conn.execute("PRAGMA table_info(estoque_produtos)").fetchall()]
+    if "preco" not in cols_prod:
+        conn.execute("ALTER TABLE estoque_produtos ADD COLUMN preco REAL DEFAULT 0")
+    if "custo" not in cols_prod:
+        conn.execute("ALTER TABLE estoque_produtos ADD COLUMN custo REAL DEFAULT 0")
+    if "oculta_pdv" not in cols_prod:
+        conn.execute("ALTER TABLE estoque_produtos ADD COLUMN oculta_pdv INTEGER DEFAULT 0")
+    cols_cat = [r[1] for r in conn.execute("PRAGMA table_info(estoque_categorias)").fetchall()]
+    if "parent_id" not in cols_cat:
+        conn.execute("ALTER TABLE estoque_categorias ADD COLUMN parent_id INTEGER")
+    if "oculta_pdv" not in cols_cat:
+        conn.execute("ALTER TABLE estoque_categorias ADD COLUMN oculta_pdv INTEGER DEFAULT 0")
+    cols_pi = [r[1] for r in conn.execute("PRAGMA table_info(pedidos_itens)").fetchall()]
+    if "valor_unitario" not in cols_pi:
+        conn.execute("ALTER TABLE pedidos_itens ADD COLUMN valor_unitario REAL DEFAULT 0")
+    if "desconto" not in cols_pi:
+        conn.execute("ALTER TABLE pedidos_itens ADD COLUMN desconto REAL DEFAULT 0")
+    cols_ped = [r[1] for r in conn.execute("PRAGMA table_info(pedidos)").fetchall()]
+    if "acrescimo" not in cols_ped:
+        conn.execute("ALTER TABLE pedidos ADD COLUMN acrescimo REAL DEFAULT 0")
+    if "frete" not in cols_ped:
+        conn.execute("ALTER TABLE pedidos ADD COLUMN frete REAL DEFAULT 0")
+    if "desconto_global" not in cols_ped:
+        conn.execute("ALTER TABLE pedidos ADD COLUMN desconto_global REAL DEFAULT 0")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS pedidos_parcelas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pedido_id INTEGER NOT NULL,
+            forma_pagamento TEXT,
+            vencimento TEXT,
+            valor REAL DEFAULT 0,
+            FOREIGN KEY (pedido_id) REFERENCES pedidos(id)
+        )
+    """)
+
     colaboradores_sql = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='colaboradores'").fetchone()
     if colaboradores_sql and "CHECK(tipo IN" in (colaboradores_sql[0] or ""):
         # A recriação precisa ocorrer fora de transação e com legacy_alter_table ligado,
@@ -399,6 +435,15 @@ def init_db():
     cols = [row[1] for row in conn.execute("PRAGMA table_info(estoque_produtos)").fetchall()]
     if "codigo" not in cols:
         conn.execute("ALTER TABLE estoque_produtos ADD COLUMN codigo TEXT")
+
+    # pedidos_clientes: garante colunas de contato/endereco em bancos antigos
+    # (tabela usa CREATE IF NOT EXISTS, entao tabelas antigas nao recebem colunas novas)
+    cols_cli = [row[1] for row in conn.execute("PRAGMA table_info(pedidos_clientes)").fetchall()]
+    for _col in ("cnpj", "nome_fantasia", "ie", "email", "telefone",
+                 "cep", "logradouro", "numero", "complemento",
+                 "bairro", "cidade", "uf", "observacoes"):
+        if _col not in cols_cli:
+            conn.execute(f"ALTER TABLE pedidos_clientes ADD COLUMN {_col} TEXT")
 
     cols_prod = [row[1] for row in conn.execute("PRAGMA table_info(producao_diaria)").fetchall()]
     if "pedido_numero" not in cols_prod:
