@@ -399,6 +399,7 @@ def resumo_mes(mes: str):
     result = []
     for r in rows:
         d = dict(r)
+        d["excedente_total"] = (d.get("total_producao") or 0) - (d.get("dias_trabalhados") or 0) * (d.get("meta") or meta_global)
         d["elegivel"] = (d["media_diaria"] or 0) >= (d["meta"] or meta_global)
         result.append(d)
     return result

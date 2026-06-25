@@ -1474,8 +1474,16 @@ async function loadProducao() {
     const cardsEl = document.getElementById('prod-cards');
     if (cardsEl) {
       const totalProd = rows.reduce((s, r) => s + (+r.producao || 0), 0);
-      const totalMeta = rows.reduce((s, r) => s + (+r.meta || 0), 0);
-      const totalExc = rows.reduce((s, r) => s + (+r.excedente || 0), 0);
+      // Meta e alvo diario por colaborador: conta 1x por colaborador/dia (nao por linha),
+      // senao varios lancamentos no mesmo dia multiplicam a meta indevidamente.
+      const _metaColabDia = {};
+      rows.forEach(r => {
+        if ((+r.producao || 0) <= 0) return;
+        const _k = r.colaborador_id + '|' + r.data;
+        if (!(_k in _metaColabDia)) _metaColabDia[_k] = (+r.meta || 0);
+      });
+      const totalMeta = Object.values(_metaColabDia).reduce((s, v) => s + v, 0);
+      const totalExc = totalProd - totalMeta;
       const dias = new Set(rows.map(r => r.data)).size;
       cardsEl.innerHTML = `
         <div class="card">
@@ -1504,22 +1512,59 @@ async function loadProducao() {
       tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:32px">Nenhum registro encontrado</td></tr>';
       return;
     }
-    tbody.innerHTML = rows.map(r => {
-      const exc = r.excedente || 0;
+    // Opção A: consolida por operador/dia. Linha-resumo com a meta diária (1x) e a
+    // produção somada; expande para ver os lançamentos por pedido (vínculos mantidos no banco).
+    const _acoesProd = (r) => `<td class="flex gap-2">
+          ${temPermissao('producao', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();editarProducao(${r.id}, ${r.colaborador_id}, ${r.maquina_id}, '${r.data}', ${r.meta}, ${r.producao}, ${r.produto_estoque_id || 'null'}, ${r.perda_quantidade || 0}, ${r.sobra_quantidade || 0}, '${r.pedido_numero || ''}')">✏️</button>` : ''}
+          ${temPermissao('producao', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deletarProducao(${r.id})">✕</button>` : ''}
+        </td>`;
+    const _grupos = {};
+    rows.forEach(r => {
+      const k = r.colaborador_id + '|' + r.data;
+      if (!_grupos[k]) _grupos[k] = { data: r.data, colaborador_id: r.colaborador_id, colaborador_nome: r.colaborador_nome, maquinas: [], meta: +r.meta || 0, producao: 0, itens: [] };
+      const g = _grupos[k];
+      if (!g.maquinas.includes(r.maquina_nome)) g.maquinas.push(r.maquina_nome);
+      if ((+r.meta || 0) > 0) g.meta = +r.meta;
+      g.producao += (+r.producao || 0);
+      g.itens.push(r);
+    });
+    tbody.innerHTML = Object.values(_grupos).map(g => {
+      const exc = g.producao - g.meta;
       const cls = exc > 0 ? 'positive' : exc < 0 ? 'negative' : 'neutral';
       const signal = exc > 0 ? '+' : '';
-      return `<tr>
-        <td>${fmtDate(r.data)}</td>
-        <td><strong>${r.colaborador_nome}</strong></td>
-        <td>${r.maquina_nome}</td>
-        <td>${fmtNum(r.meta)}</td>
-        <td>${fmtNum(r.producao)}</td>
+      const maq = g.maquinas.join(', ');
+      if (g.itens.length === 1) {
+        const r = g.itens[0];
+        return `<tr>
+          <td><span style="display:inline-block;width:14px"></span>${fmtDate(g.data)}</td>
+          <td><strong>${g.colaborador_nome}</strong></td>
+          <td>${maq}</td>
+          <td>${fmtNum(g.meta)}</td>
+          <td>${fmtNum(g.producao)}</td>
+          <td class="${cls}">${signal}${fmtNum(exc)}</td>
+          ${_acoesProd(r)}
+        </tr>`;
+      }
+      const gid = 'g' + g.colaborador_id + '_' + String(g.data).replace(/-/g, '');
+      let h = `<tr style="cursor:pointer" onclick="toggleProdGrupo('${gid}', this)">
+        <td><span class="prod-caret" style="display:inline-block;width:14px">▸</span>${fmtDate(g.data)}</td>
+        <td><strong>${g.colaborador_nome}</strong></td>
+        <td>${maq}</td>
+        <td>${fmtNum(g.meta)}</td>
+        <td>${fmtNum(g.producao)} <span style="color:var(--muted);font-size:11px">(${g.itens.length} lanç.)</span></td>
         <td class="${cls}">${signal}${fmtNum(exc)}</td>
-        <td class="flex gap-2">
-          ${temPermissao('producao', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="editarProducao(${r.id}, ${r.colaborador_id}, ${r.maquina_id}, '${r.data}', ${r.meta}, ${r.producao}, ${r.produto_estoque_id || 'null'}, ${r.perda_quantidade || 0}, ${r.sobra_quantidade || 0}, '${r.pedido_numero || ''}')">✏️</button>` : ''}
-          ${temPermissao('producao', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="deletarProducao(${r.id})">✕</button>` : ''}
-        </td>
+        <td></td>
       </tr>`;
+      h += g.itens.map(r => `<tr class="prod-sub-${gid}" style="display:none;background:var(--surface2)">
+          <td></td>
+          <td style="padding-left:18px;color:var(--muted)">↳ ${r.pedido_numero ? ('Pedido ' + r.pedido_numero) : 'Manual'}</td>
+          <td>${r.maquina_nome}</td>
+          <td style="color:var(--muted)">—</td>
+          <td>${fmtNum(r.producao)}</td>
+          <td style="color:var(--muted)">—</td>
+          ${_acoesProd(r)}
+        </tr>`).join('');
+      return h;
     }).join('');
   } catch (e) {
     showAlert('Erro ao carregar produção: ' + e.message, 'danger');
@@ -1536,6 +1581,15 @@ async function deletarProducao(id) {
   loadProducao();
   loadDashboard();
 }
+
+function toggleProdGrupo(gid, tr) {
+  const subs = document.querySelectorAll('.prod-sub-' + gid);
+  let show = false;
+  subs.forEach(sb => { show = (sb.style.display === 'none'); sb.style.display = show ? '' : 'none'; });
+  const caret = tr.querySelector('.prod-caret');
+  if (caret) caret.textContent = show ? '▾' : '▸';
+}
+window.toggleProdGrupo = toggleProdGrupo;
 
 // ── MODAL PRODUÇÃO (múltiplos produtos)
 let prodItens = [];
@@ -4535,32 +4589,21 @@ function fecharProdCombo(idx) {
     const valor = inp.value;
     pedidoItens[idx].descricao = valor;
     
-    const currentProdId = pedidoItens[idx].produto_id;
-    let alreadyMatched = false;
-    if (currentProdId) {
-      const p = (produtosEstoque || []).find(x => x.id === currentProdId);
-      if (p && (p.nome || '').trim().toLowerCase() === valor.trim().toLowerCase()) {
-        alreadyMatched = true;
-      }
-    }
+    const desc = valor.trim().toLowerCase();
+    const matches = (produtosEstoque || []).filter(p => 
+      (p.nome || '').trim().toLowerCase() === desc ||
+      (p.codigo && String(p.codigo).trim().toLowerCase() === desc)
+    );
     
-    if (!alreadyMatched) {
-      const desc = valor.trim().toLowerCase();
-      const matches = (produtosEstoque || []).filter(p => 
-        (p.nome || '').trim().toLowerCase() === desc ||
-        (p.codigo && String(p.codigo).trim().toLowerCase() === desc)
-      );
-      
-      if (matches.length === 1) {
-        pedidoItens[idx].produto_id = matches[0].id;
-        const u = matches[0].unidade;
-        const opts = ['unidade','und','milheiro','kg','litro','metro','caixa','pacote'];
-        if (u && opts.includes(u)) {
-          pedidoItens[idx].unidade = u;
-        }
-      } else {
-        pedidoItens[idx].produto_id = null;
+    if (matches.length === 1) {
+      pedidoItens[idx].produto_id = matches[0].id;
+      const u = matches[0].unidade;
+      const opts = ['unidade','und','milheiro','kg','litro','metro','caixa','pacote'];
+      if (u && opts.includes(u)) {
+        pedidoItens[idx].unidade = u;
       }
+    } else {
+      pedidoItens[idx].produto_id = null;
     }
     renderItensPedido();
   }
@@ -4570,17 +4613,16 @@ function fecharProdComboDelayed(idx) { setTimeout(() => fecharProdCombo(idx), 15
 function selecionarProdComboItem(idx, prodId) {
   const p = (produtosEstoque || []).find(x => x.id === prodId);
   if (!p || !pedidoItens[idx]) return;
-  
-  const inp = document.getElementById('ped-item-input-' + idx);
-  if (inp) {
-    inp.value = p.nome;
-  }
-  
   pedidoItens[idx].descricao = p.nome;
   pedidoItens[idx].produto_id = p.id;
   const opts = ['unidade', 'und', 'milheiro', 'kg', 'litro', 'metro', 'caixa', 'pacote'];
   if (p.unidade && opts.includes(p.unidade)) pedidoItens[idx].unidade = p.unidade;
-  fecharProdCombo(idx);
+  // sincroniza o texto da caixa com o produto escolhido e fecha o combo
+  // (NAO chamar fecharProdCombo aqui: ele relê o texto antigo e zera o produto_id)
+  const _inp = document.getElementById('ped-item-input-' + idx);
+  if (_inp) _inp.value = p.nome;
+  const _drop = document.getElementById('ped-item-drop-' + idx);
+  if (_drop) _drop.style.display = 'none';
   renderItensPedido();
 }
 window.abrirProdCombo = abrirProdCombo;

@@ -54,6 +54,7 @@ def premiacao_operadores(mes: str):
     ranking = 1
     for r in rows:
         d = dict(r)
+        d["excedente_total"] = (d.get("total_producao") or 0) - (d.get("dias_trabalhados") or 0) * (d.get("meta") or meta_global)
         media = d["media_diaria"] or 0
         concorre = bool(d.get("concorre_premio"))
         d["eh_lider"] = not concorre
@@ -283,6 +284,7 @@ def dashboard(mes: str):
     pos = 1
     for r in operadores:
         d = dict(r)
+        d["excedente_total"] = (d.get("total_producao") or 0) - (d.get("dias_trabalhados") or 0) * (d.get("meta") or meta_global)
         media = d["media_diaria"] or 0
         concorre = bool(d.get("concorre_premio"))
         d["eh_lider"] = not concorre
