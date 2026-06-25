@@ -265,6 +265,29 @@ def dashboard(mes: str):
         ORDER BY data
     """, (mes,)).fetchall()
     evolucao_diaria_list = [dict(r) for r in evolucao_diaria_rows]
+
+    # 8b. Evolução diária da produção POR colaborador (uma série por funcionário)
+    evol_colab_rows = conn.execute("""
+        SELECT p.data, c.id as colaborador_id, c.nome as colaborador,
+               SUM(p.producao) as producao
+        FROM producao_diaria p
+        JOIN colaboradores c ON p.colaborador_id = c.id
+        WHERE p.mes_referencia = ? AND p.producao > 0
+        GROUP BY p.data, c.id
+        ORDER BY p.data
+    """, (mes,)).fetchall()
+    _datas_ordem = [d["data"] for d in evolucao_diaria_list]
+    _colab_map = {}
+    for r in evol_colab_rows:
+        cid = r["colaborador_id"]
+        if cid not in _colab_map:
+            _colab_map[cid] = {"colaborador_id": cid, "colaborador": r["colaborador"], "por_data": {}}
+        _colab_map[cid]["por_data"][r["data"]] = r["producao"]
+    evolucao_colaboradores = [
+        {"colaborador_id": v["colaborador_id"], "colaborador": v["colaborador"],
+         "dados": [v["por_data"].get(d, 0) for d in _datas_ordem]}
+        for v in _colab_map.values()
+    ]
     
     # 9. Distribuição de Perdas por Categoria/Tipo para Gráfico de Pizza
     perdas_por_tipo_rows = conn.execute("""
@@ -328,5 +351,6 @@ def dashboard(mes: str):
         "estoque_alertas_count": estoque_alertas_count,
         "insumos_criticos": insumos_criticos_list,
         "evolucao_diaria": evolucao_diaria_list,
+        "evolucao_colaboradores": evolucao_colaboradores,
         "perdas_por_tipo": perdas_por_tipo_list
     }

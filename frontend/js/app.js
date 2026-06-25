@@ -1120,6 +1120,18 @@ async function loadDashboard(options = {}) {
     });
     const producoes = data.evolucao_diaria.map(item => item.producao);
     const perdas = data.evolucao_diaria.map(item => item.perda);
+    const _palColab = ['#22c55e','#f59e0b','#a855f7','#06b6d4','#ec4899','#84cc16','#f97316','#14b8a6','#eab308','#6366f1'];
+    const colabDatasets = (data.evolucao_colaboradores || []).map((c, i) => ({
+      label: c.colaborador,
+      data: c.dados,
+      borderColor: _palColab[i % _palColab.length],
+      backgroundColor: 'transparent',
+      borderWidth: 1.5,
+      borderDash: [4, 3],
+      tension: 0.3,
+      fill: false,
+      pointRadius: 2
+    }));
 
     const prodGradient = ctxEvolucao.createLinearGradient(0, 0, 0, 300);
     prodGradient.addColorStop(0, hexToRgba('#3b82f6', 0.25));
@@ -1153,7 +1165,8 @@ async function loadDashboard(options = {}) {
             tension: 0.3,
             fill: true,
             pointRadius: 3
-          }
+          },
+          ...colabDatasets
         ]
       },
       options: {
