@@ -394,6 +394,11 @@ def init_db():
         conn.execute("ALTER TABLE pedidos ADD COLUMN frete REAL DEFAULT 0")
     if "desconto_global" not in cols_ped:
         conn.execute("ALTER TABLE pedidos ADD COLUMN desconto_global REAL DEFAULT 0")
+    for _c, _t in [("transportadora","TEXT"),("nota_fiscal","TEXT"),("rastreio","TEXT"),
+                   ("volumes","INTEGER"),("previsao_entrega","TEXT"),("obs_envio","TEXT"),
+                   ("data_despacho","TEXT"),("data_entrega","TEXT"),("frete_pago","REAL DEFAULT 0")]:
+        if _c not in cols_ped:
+            conn.execute(f"ALTER TABLE pedidos ADD COLUMN {_c} {_t}")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS pedidos_parcelas (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

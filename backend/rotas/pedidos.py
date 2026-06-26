@@ -464,7 +464,14 @@ def _auto_vincular_itens(conn):
                 melhor_id = p['id']
 
         if melhor_id:
-            conn.execute("UPDATE pedidos_itens SET produto_id = ? WHERE id = ?", (melhor_id, item['id']))
+            p_info = conn.execute("SELECT preco FROM estoque_produtos WHERE id = ?", (melhor_id,)).fetchone()
+            p_price = p_info["preco"] if p_info else 0.0
+            conn.execute("""
+                UPDATE pedidos_itens 
+                SET produto_id = ?, 
+                    valor_unitario = CASE WHEN valor_unitario = 0.0 THEN ? ELSE valor_unitario END 
+                WHERE id = ?
+            """, (melhor_id, p_price, item['id']))
 
 def _alertas_estoque_para_pedidos(cur, pedido_ids):
     """Para os produtos dos pedidos informados, compara o saldo com a demanda
@@ -1047,23 +1054,40 @@ def deletar_cliente(id: int):
 
 def _recalc_status_pedido(cur, pedido_id):
     """Recalcula o status do pedido a partir do progresso real dos itens (qtd_produzida)."""
+    # Obter status atual para preservar 'enviado' se for o caso
+    pedido = cur.execute("SELECT status FROM pedidos WHERE id=?", (pedido_id,)).fetchone()
+    current_status = pedido["status"] if pedido else "aberto"
+
     counts = cur.execute("""
         SELECT COUNT(*) as total,
                COUNT(CASE WHEN status='entregue' THEN 1 END) as entregues,
-               COUNT(CASE WHEN status IN ('produzido','entregue')
-                           OR (qtd_produzida >= quantidade AND quantidade > 0) THEN 1 END) as produzidos,
-               COUNT(CASE WHEN qtd_produzida > 0
-                           OR status IN ('em_producao','produzido','entregue') THEN 1 END) as iniciados
-        FROM pedidos_itens WHERE pedido_id=?
+               COUNT(CASE WHEN (ec.tipo IS NULL OR ec.tipo != 'revenda') THEN 1 END) as total_prod,
+               COUNT(CASE WHEN (ec.tipo IS NULL OR ec.tipo != 'revenda') AND (status IN ('produzido','entregue') OR (qtd_produzida >= quantidade AND quantidade > 0)) THEN 1 END) as produzidos,
+               COUNT(CASE WHEN (ec.tipo IS NULL OR ec.tipo != 'revenda') AND (qtd_produzida > 0 OR status IN ('em_producao','produzido','entregue')) THEN 1 END) as iniciados
+        FROM pedidos_itens i
+        LEFT JOIN estoque_produtos ep ON i.produto_id = ep.id
+        LEFT JOIN estoque_categorias ec ON ep.categoria_id = ec.id
+        WHERE i.pedido_id=?
     """, (pedido_id,)).fetchone()
     total = counts["total"] or 0
+    entregues = counts["entregues"] or 0
+    total_prod = counts["total_prod"] or 0
+    produzidos = counts["produzidos"] or 0
+    iniciados = counts["iniciados"] or 0
+
     if total == 0:
         novo = 'aberto'
-    elif counts["entregues"] == total:
+    elif entregues == total:
         novo = 'entregue'
-    elif counts["produzidos"] == total:
+    elif current_status == 'entregue':
+        novo = 'entregue'
+    elif current_status == 'enviado':
+        novo = 'enviado'
+    elif total_prod == 0:
         novo = 'produzido'
-    elif counts["iniciados"] > 0:
+    elif produzidos == total_prod:
+        novo = 'produzido'
+    elif iniciados > 0:
         novo = 'em_producao'
     else:
         novo = 'aberto'
@@ -1080,16 +1104,18 @@ def listar_pedidos(status: Optional[str] = None, cliente_id: Optional[int] = Non
                c.nome_fantasia,
                COUNT(i.id) as total_itens,
                COUNT(CASE WHEN i.status = 'entregue' THEN 1 END) as itens_entregues,
-               COUNT(CASE WHEN i.status IN ('produzido','entregue')
-                           OR (i.qtd_produzida >= i.quantidade AND i.quantidade > 0) THEN 1 END) as itens_produzidos,
-               COUNT(CASE WHEN i.qtd_produzida > 0
-                           OR i.status IN ('em_producao','produzido','entregue') THEN 1 END) as itens_iniciados,
+               COUNT(CASE WHEN (ec.tipo IS NULL OR ec.tipo != 'revenda') AND (i.status IN ('produzido','entregue')
+                           OR (i.qtd_produzida >= i.quantidade AND i.quantidade > 0)) THEN 1 END) as itens_produzidos,
+               COUNT(CASE WHEN (ec.tipo IS NULL OR ec.tipo != 'revenda') AND (i.qtd_produzida > 0
+                           OR i.status IN ('em_producao','produzido','entregue')) THEN 1 END) as itens_iniciados,
+               COUNT(CASE WHEN (ec.tipo IS NULL OR ec.tipo != 'revenda') THEN 1 END) as total_itens_prod,
                GROUP_CONCAT(DISTINCT pr.marca) as marcas,
                julianday(p.prazo_entrega) - julianday('now') as dias_restantes
         FROM pedidos p
         JOIN pedidos_clientes c ON p.cliente_id = c.id
         LEFT JOIN pedidos_itens i ON i.pedido_id = p.id
         LEFT JOIN estoque_produtos pr ON pr.id = i.produto_id
+        LEFT JOIN estoque_categorias ec ON pr.categoria_id = ec.id
         WHERE 1=1
     """
     params = []
@@ -1106,17 +1132,23 @@ def listar_pedidos(status: Optional[str] = None, cliente_id: Optional[int] = Non
     for r in rows:
         d = dict(r)
         tot = d.get("total_itens") or 0
-        prod = d.get("itens_produzidos") or 0
+        tot_prod = d.get("total_itens_prod") or 0
+        prod_prod = d.get("itens_produzidos") or 0
         entr = d.get("itens_entregues") or 0
-        ini = d.get("itens_iniciados") or 0
-        if tot > 0 and entr == tot:
+        ini_prod = d.get("itens_iniciados") or 0
+        stored = d.get("status") or "aberto"
+        if stored in ("enviado", "entregue"):
+            d["status_efetivo"] = stored
+        elif tot > 0 and entr == tot:
             d["status_efetivo"] = "entregue"
-        elif tot > 0 and prod == tot:
+        elif tot_prod == 0:
             d["status_efetivo"] = "produzido"
-        elif ini > 0:
+        elif prod_prod == tot_prod:
+            d["status_efetivo"] = "produzido"
+        elif ini_prod > 0:
             d["status_efetivo"] = "em_producao"
         else:
-            d["status_efetivo"] = d.get("status") or "aberto"
+            d["status_efetivo"] = stored
         result.append(d)
     return result
 
@@ -1189,7 +1221,7 @@ def fila_producao(status: Optional[str] = None):
         JOIN pedidos_clientes c ON p.cliente_id = c.id
         LEFT JOIN estoque_produtos ep ON i.produto_id = ep.id
         LEFT JOIN estoque_categorias ec ON ep.categoria_id = ec.id
-        WHERE p.status NOT IN ('entregue')
+        WHERE p.status NOT IN ('produzido', 'enviado', 'entregue')
           AND (ec.tipo IS NULL OR ec.tipo != 'revenda')
     """
     params = []
@@ -1259,10 +1291,15 @@ def criar_pedido(p: PedidoIn):
         (p.numero_pedido, p.cliente_id, (p.prazo_entrega or ""), p.vendedor, p.observacoes, p.acrescimo or 0, p.frete or 0, p.desconto_global or 0))
     pedido_id = cur.lastrowid
     for item in p.itens:
+        vunit = item.valor_unitario or 0.0
+        if vunit == 0.0 and item.produto_id:
+            p_info = cur.execute("SELECT preco FROM estoque_produtos WHERE id=?", (item.produto_id,)).fetchone()
+            if p_info:
+                vunit = p_info["preco"] or 0.0
         cur.execute("""INSERT INTO pedidos_itens
             (pedido_id, produto_id, descricao, quantidade, unidade, valor_unitario, desconto, qtd_produzida, status)
             VALUES (?,?,?,?,?,?,?,0,'aberto')""",
-            (pedido_id, item.produto_id, item.descricao, item.quantidade, item.unidade, item.valor_unitario or 0, item.desconto or 0))
+            (pedido_id, item.produto_id, item.descricao, item.quantidade, item.unidade, vunit, item.desconto or 0))
     if p.parcelas:
         for parc in p.parcelas:
             cur.execute("""INSERT INTO pedidos_parcelas
@@ -1306,10 +1343,15 @@ def atualizar_pedido(id: int, p: PedidoIn):
         key = item.descricao.upper()
         if key in progresso_itens:
             status, qtd_produzida = progresso_itens[key]
+        vunit = item.valor_unitario or 0.0
+        if vunit == 0.0 and item.produto_id:
+            p_info = cur.execute("SELECT preco FROM estoque_produtos WHERE id=?", (item.produto_id,)).fetchone()
+            if p_info:
+                vunit = p_info["preco"] or 0.0
         cur.execute("""INSERT INTO pedidos_itens
             (pedido_id, produto_id, descricao, quantidade, unidade, valor_unitario, desconto, qtd_produzida, status)
             VALUES (?,?,?,?,?,?,?,?,?)""",
-            (id, item.produto_id, item.descricao, item.quantidade, item.unidade, item.valor_unitario or 0, item.desconto or 0, qtd_produzida, status))
+            (id, item.produto_id, item.descricao, item.quantidade, item.unidade, vunit, item.desconto or 0, qtd_produzida, status))
             
     cur.execute("DELETE FROM pedidos_parcelas WHERE pedido_id=?", (id,))
     if p.parcelas:
@@ -1325,9 +1367,47 @@ def atualizar_pedido(id: int, p: PedidoIn):
     conn.close()
     return {"mensagem": "Pedido atualizado"}
 
+class DespachoIn(BaseModel):
+    transportadora: Optional[str] = ""
+    nota_fiscal: Optional[str] = ""
+    rastreio: Optional[str] = ""
+    volumes: Optional[int] = 0
+    previsao_entrega: Optional[str] = ""
+    frete: Optional[float] = 0
+    frete_pago: Optional[float] = 0
+    obs_envio: Optional[str] = ""
+    data_despacho: Optional[str] = ""
+
+class EntregaIn(BaseModel):
+    data_entrega: Optional[str] = ""
+
+@router.post("/{id}/despachar")
+def despachar_pedido(id: int, body: DespachoIn):
+    data_desp = (body.data_despacho or "").strip() or datetime.datetime.now().strftime("%Y-%m-%d")
+    conn = get_conn()
+    conn.execute(
+        """UPDATE pedidos SET transportadora=?, nota_fiscal=?, rastreio=?, volumes=?,
+           previsao_entrega=?, frete=?, frete_pago=?, obs_envio=?, data_despacho=?, status='enviado'
+           WHERE id=?""",
+        ((body.transportadora or "").strip(), (body.nota_fiscal or "").strip(),
+         (body.rastreio or "").strip(), int(body.volumes or 0),
+         (body.previsao_entrega or "").strip(), float(body.frete or 0), float(body.frete_pago or 0),
+         (body.obs_envio or "").strip(), data_desp, id))
+    conn.commit(); conn.close()
+    return {"mensagem": "Pedido despachado", "status": "enviado"}
+
+@router.post("/{id}/confirmar-entrega")
+def confirmar_entrega(id: int, body: EntregaIn):
+    data_ent = (body.data_entrega or "").strip() or datetime.datetime.now().strftime("%Y-%m-%d")
+    conn = get_conn()
+    conn.execute("UPDATE pedidos SET status='entregue', data_entrega=? WHERE id=?", (data_ent, id))
+    conn.execute("UPDATE pedidos_itens SET status='entregue' WHERE pedido_id=?", (id,))
+    conn.commit(); conn.close()
+    return {"mensagem": "Entrega confirmada", "status": "entregue"}
+
 @router.put("/{id}/status")
 def atualizar_status_pedido(id: int, body: StatusItemIn):
-    validos = ["aberto", "em_producao", "produzido", "entregue"]
+    validos = ["aberto", "em_producao", "produzido", "enviado", "entregue"]
     if body.status not in validos:
         raise HTTPException(400, f"Status inválido. Use: {validos}")
     conn = get_conn()
@@ -1339,6 +1419,7 @@ def atualizar_status_pedido(id: int, body: StatusItemIn):
 @router.delete("/{id}")
 def deletar_pedido(id: int):
     conn = get_conn()
+    conn.execute("DELETE FROM pedidos_parcelas WHERE pedido_id=?", (id,))
     conn.execute("DELETE FROM pedidos_itens WHERE pedido_id=?", (id,))
     conn.execute("DELETE FROM pedidos WHERE id=?", (id,))
     conn.commit()
@@ -1349,7 +1430,7 @@ def deletar_pedido(id: int):
 
 @router.put("/itens/{id}/status")
 def atualizar_status_item(id: int, body: StatusItemIn):
-    validos = ["aberto", "em_producao", "produzido", "entregue"]
+    validos = ["aberto", "em_producao", "produzido", "enviado", "entregue"]
     if body.status not in validos:
         raise HTTPException(400, f"Status inválido. Use: {validos}")
     conn = get_conn()
@@ -1392,23 +1473,7 @@ def atualizar_status_item(id: int, body: StatusItemIn):
     item = cur.execute("SELECT pedido_id FROM pedidos_itens WHERE id=?", (id,)).fetchone()
     if item:
         pid = item["pedido_id"]
-        counts = cur.execute("""
-            SELECT
-                COUNT(*) as total,
-                COUNT(CASE WHEN status='entregue' THEN 1 END) as entregues,
-                COUNT(CASE WHEN status='produzido' THEN 1 END) as produzidos,
-                COUNT(CASE WHEN status='em_producao' THEN 1 END) as em_prod
-            FROM pedidos_itens WHERE pedido_id=?
-        """, (pid,)).fetchone()
-        if counts["total"] == counts["entregues"]:
-            novo_status = "entregue"
-        elif counts["produzidos"] + counts["entregues"] == counts["total"]:
-            novo_status = "produzido"
-        elif counts["em_prod"] > 0:
-            novo_status = "em_producao"
-        else:
-            novo_status = "aberto"
-        cur.execute("UPDATE pedidos SET status=? WHERE id=?", (novo_status, pid))
+        _recalc_status_pedido(cur, pid)
 
     conn.commit()
     conn.close()

@@ -3837,16 +3837,16 @@ function imprimirComprovante() {
 
 // ─── PEDIDOS ──────────────────────────────────────────────────────────────────
 
-const STATUS_LABEL_PED={aberto:'📋 Aberto',em_producao:'🏭 Em produção',produzido:'✅ Produzido',entregue:'📦 Entregue'};
-const STATUS_PILL_PED={aberto:'pill-info',em_producao:'pill-warn',produzido:'pill-success',entregue:'pill-success'};
-const STATUS_NEXT_PED={aberto:'em_producao',em_producao:'produzido',produzido:'entregue',entregue:null};
-const STATUS_NEXT_LABEL_PED={aberto:'→ Iniciar',em_producao:'→ Produzido',produzido:'→ Entregue',entregue:null};
+const STATUS_LABEL_PED={aberto:'📋 Aberto',em_producao:'🏭 Em produção',produzido:'✅ Produzido',enviado:'🚚 Enviado',entregue:'📦 Entregue'};
+const STATUS_PILL_PED={aberto:'pill-info',em_producao:'pill-warn',produzido:'pill-success',enviado:'pill-info',entregue:'pill-success'};
+const STATUS_NEXT_PED={aberto:'em_producao',em_producao:'produzido',produzido:null,entregue:null};
+const STATUS_NEXT_LABEL_PED={aberto:'→ Iniciar',em_producao:'→ Produzido',produzido:null,entregue:null};
 // Considera o item como produzido pela quantidade real, não só pelo campo status (evita divergência)
 const _itemProduzido = i => (((i.qtd_produzida||0) >= i.quantidade) && i.quantidade>0) || i.status==='produzido' || i.status==='entregue';
-const _itemStatusEf = i => i.status==='entregue' ? 'entregue' : (_itemProduzido(i) ? 'produzido' : ((i.qtd_produzida||0)>0 ? 'em_producao' : 'aberto'));
+const _itemStatusEf = i => i.status==='entregue' ? 'produzido' : (_itemProduzido(i) ? 'produzido' : ((i.qtd_produzida||0)>0 ? 'em_producao' : 'aberto'));
 
 function switchPedidosTab(tab) {
-  ['fila','pedidos','clientes'].forEach(t=>{
+  ['fila','pedidos','clientes','transportadora'].forEach(t=>{
     const el=document.getElementById('ped-tab-'+t);
     const btn=document.getElementById('ptab-'+t);
     if(el) el.style.display=t===tab?'':'none';
@@ -3855,7 +3855,497 @@ function switchPedidosTab(tab) {
   if(tab==='fila') loadFila();
   if(tab==='pedidos') loadPedidos();
   if(tab==='clientes') loadClientes();
+  if(tab==='transportadora') {
+    switchTranspTab('fila');
+    loadTransportadora();
+  }
 }
+
+async function loadTransportadora() {
+  const filtro = document.getElementById('ped-transp-filtro')?.value || 'a_despachar';
+  let rows = await api('/pedidos/');
+  const st = p => p.status_efetivo || p.status;
+  let lista;
+  if (filtro === 'a_despachar') lista = rows.filter(p => st(p) === 'produzido');
+  else if (filtro === 'enviado') lista = rows.filter(p => st(p) === 'enviado');
+  else if (filtro === 'entregue') lista = rows.filter(p => st(p) === 'entregue');
+  else lista = rows.filter(p => ['enviado','entregue'].includes(st(p)));
+  lista.sort((a,b) => (a.dias_restantes||99) - (b.dias_restantes||99));
+
+  const resumo = document.getElementById('ped-transp-resumo');
+  if (resumo) {
+    const aDesp = rows.filter(p => st(p) === 'produzido').length;
+    const emTransito = rows.filter(p => st(p) === 'enviado').length;
+    resumo.innerHTML = `
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 14px;font-size:13px">📦 <strong>${aDesp}</strong> a despachar</div>
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 14px;font-size:13px">🚚 <strong>${emTransito}</strong> em trânsito</div>`;
+  }
+
+  const tbody = document.getElementById('ped-transp-tbody');
+  if (!tbody) return;
+  if (!lista.length) { tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:24px">Nenhum pedido nesta visão</td></tr>'; return; }
+  tbody.innerHTML = lista.map(p => {
+    const s = st(p);
+    let acoes = '';
+    if (s === 'produzido' && temPermissao('pedidos','editar')) {
+      acoes = `<button class="btn btn-sm btn-primary" onclick="abrirDespacho(${p.id})">📦 Despachar</button> <button class="btn btn-sm btn-secondary" onclick="confirmarEntrega(${p.id})">✓ Entregue</button>`;
+    } else if (s === 'enviado' && temPermissao('pedidos','editar')) {
+      acoes = `<button class="btn btn-sm btn-secondary" onclick="abrirDespacho(${p.id})">✏️</button> <button class="btn btn-sm btn-primary" onclick="confirmarEntrega(${p.id})">✓ Entregue</button>`;
+    }
+    return `<tr>
+      <td><strong>${p.numero_pedido}</strong></td>
+      <td>${p.cliente_nome||'—'}</td>
+      <td>${p.transportadora||'—'}</td>
+      <td>${p.nota_fiscal||'—'}</td>
+      <td>${p.rastreio||'—'}</td>
+      <td>${p.volumes||'—'}</td>
+      <td>${p.data_despacho?fmtDate(p.data_despacho):'—'}</td>
+      <td>${fmtBRL(p.frete_pago || 0)}</td>
+      <td><span class="pill ${STATUS_PILL_PED[s]}">${STATUS_LABEL_PED[s]}</span></td>
+      <td class="flex gap-2">${acoes}</td>
+    </tr>`;
+  }).join('');
+}
+window.loadTransportadora = loadTransportadora;
+
+async function abrirDespacho(id) {
+  const p = await api('/pedidos/' + id);
+  document.getElementById('desp-pedido-id').value = id;
+  document.getElementById('desp-cabecalho').innerHTML = `Pedido <strong>${p.numero_pedido}</strong> — ${p.cliente_nome||''}`;
+  document.getElementById('desp-transportadora').value = p.transportadora || '';
+  document.getElementById('desp-nf').value = p.nota_fiscal || '';
+  document.getElementById('desp-rastreio').value = p.rastreio || '';
+  document.getElementById('desp-volumes').value = p.volumes || 1;
+  document.getElementById('desp-frete').value = p.frete || 0;
+  document.getElementById('desp-frete-pago').value = p.frete_pago || 0;
+  document.getElementById('desp-data').value = p.data_despacho || new Date().toISOString().slice(0,10);
+  document.getElementById('desp-previsao').value = p.previsao_entrega || '';
+  document.getElementById('desp-obs').value = p.obs_envio || '';
+  openModal('modal-despacho');
+}
+window.abrirDespacho = abrirDespacho;
+
+async function salvarDespacho() {
+  const id = document.getElementById('desp-pedido-id').value;
+  const body = {
+    transportadora: document.getElementById('desp-transportadora').value.trim(),
+    nota_fiscal: document.getElementById('desp-nf').value.trim(),
+    rastreio: document.getElementById('desp-rastreio').value.trim(),
+    volumes: parseInt(document.getElementById('desp-volumes').value) || 0,
+    frete: parseFloat(document.getElementById('desp-frete').value) || 0,
+    frete_pago: parseFloat(document.getElementById('desp-frete-pago').value) || 0,
+    data_despacho: document.getElementById('desp-data').value,
+    previsao_entrega: document.getElementById('desp-previsao').value,
+    obs_envio: document.getElementById('desp-obs').value.trim()
+  };
+  if (!body.transportadora) { showAlert('Informe a transportadora', 'danger'); return; }
+  try {
+    await api('/pedidos/' + id + '/despachar', 'POST', body);
+    closeModal('modal-despacho');
+    showAlert('Pedido despachado!');
+    loadTransportadora();
+  } catch(e) { showAlert(e.message, 'danger'); }
+}
+window.salvarDespacho = salvarDespacho;
+
+async function confirmarEntrega(id) {
+  if (!confirm('Confirmar a entrega deste pedido?')) return;
+  try {
+    await api('/pedidos/' + id + '/confirmar-entrega', 'POST', {});
+    showAlert('Entrega confirmada!');
+    loadTransportadora();
+    if (document.getElementById('ped-entregues-tbody')) {
+      loadPedidosEntregues();
+    }
+  } catch(e) { showAlert(e.message, 'danger'); }
+}
+window.confirmarEntrega = confirmarEntrega;
+
+// ─── TRANSPORTADORA / RELATÓRIOS ──────────────────────────────────────────────
+
+function switchTranspTab(tab) {
+  ['fila', 'entregues', 'relatorios'].forEach(t => {
+    const el = document.getElementById('transp-content-' + t);
+    const btn = document.getElementById('transp-btn-' + t);
+    if (el) el.style.display = t === tab ? '' : 'none';
+    if (btn) {
+      btn.style.borderColor = t === tab ? 'var(--accent)' : '';
+      btn.style.color = t === tab ? 'var(--accent)' : '';
+    }
+  });
+  if (tab === 'fila') {
+    loadTransportadora();
+  } else if (tab === 'entregues') {
+    loadPedidosEntregues();
+  } else if (tab === 'relatorios') {
+    populateRelTranspCarriers();
+    const today = new Date().toISOString().slice(0, 10);
+    const past30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    document.getElementById('rel-transp-data-ini').value = past30;
+    document.getElementById('rel-transp-data-fim').value = today;
+    gerarRelatorioTransp();
+  }
+}
+window.switchTranspTab = switchTranspTab;
+
+async function loadPedidosEntregues() {
+  const busca = document.getElementById('ped-entregues-busca')?.value.toLowerCase() || '';
+  const dataIni = document.getElementById('ped-entregues-data-ini')?.value || '';
+  const dataFim = document.getElementById('ped-entregues-data-fim')?.value || '';
+
+  let rows = await api('/pedidos/');
+  const st = p => p.status_efetivo || p.status;
+  let lista = rows.filter(p => st(p) === 'entregue');
+
+  if (busca) {
+    lista = lista.filter(p => 
+      String(p.numero_pedido || '').toLowerCase().includes(busca) ||
+      String(p.cliente_nome || '').toLowerCase().includes(busca) ||
+      String(p.transportadora || '').toLowerCase().includes(busca) ||
+      String(p.nota_fiscal || '').toLowerCase().includes(busca) ||
+      String(p.rastreio || '').toLowerCase().includes(busca)
+    );
+  }
+
+  if (dataIni) {
+    lista = lista.filter(p => p.data_entrega && p.data_entrega >= dataIni);
+  }
+  if (dataFim) {
+    lista = lista.filter(p => p.data_entrega && p.data_entrega <= dataFim);
+  }
+
+  lista.sort((a, b) => {
+    const dateA = a.data_entrega || '';
+    const dateB = b.data_entrega || '';
+    if (dateA !== dateB) {
+      return dateB.localeCompare(dateA);
+    }
+    return b.id - a.id;
+  });
+
+  const tbody = document.getElementById('ped-entregues-tbody');
+  if (!tbody) return;
+  if (!lista.length) {
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:24px">Nenhum pedido entregue</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = lista.map(p => {
+    return `<tr>
+      <td><strong>${p.numero_pedido}</strong></td>
+      <td>${p.cliente_nome || '—'}</td>
+      <td>${p.transportadora || '—'}</td>
+      <td>${p.nota_fiscal || '—'}</td>
+      <td>${p.rastreio || '—'}</td>
+      <td>${p.volumes || '—'}</td>
+      <td>${p.data_despacho ? fmtDate(p.data_despacho) : '—'}</td>
+      <td>${p.data_entrega ? fmtDate(p.data_entrega) : '—'}</td>
+      <td>${fmtBRL(p.frete_pago || 0)}</td>
+      <td><span class="pill ${STATUS_PILL_PED['entregue']}">${STATUS_LABEL_PED['entregue']}</span></td>
+    </tr>`;
+  }).join('');
+}
+window.loadPedidosEntregues = loadPedidosEntregues;
+
+async function populateRelTranspCarriers() {
+  try {
+    const orders = await api('/pedidos/');
+    const select = document.getElementById('rel-transp-name');
+    if (!select) return;
+    const carriers = new Set();
+    orders.forEach(p => {
+      if (p.transportadora && p.transportadora.trim()) {
+        carriers.add(p.transportadora.trim());
+      }
+    });
+    const sortedCarriers = Array.from(carriers).sort();
+    select.innerHTML = '<option value="">Todas as Transportadoras</option>' + 
+      sortedCarriers.map(c => `<option value="${c}">${c}</option>`).join('');
+  } catch (e) {
+    console.error('Erro ao carregar transportadoras', e);
+  }
+}
+window.populateRelTranspCarriers = populateRelTranspCarriers;
+
+async function gerarRelatorioTransp() {
+  const tipo = document.getElementById('rel-transp-tipo').value;
+  const transpNome = document.getElementById('rel-transp-name').value;
+  const dataIni = document.getElementById('rel-transp-data-ini').value;
+  const dataFim = document.getElementById('rel-transp-data-fim').value;
+  
+  const titleMap = {
+    extrato: 'Extrato de Envios',
+    resumo: 'Resumo Financeiro por Transportadora',
+    divergencia: 'Divergência de Frete (Cobrado vs Pago)'
+  };
+  document.getElementById('rel-transp-title').textContent = titleMap[tipo] || 'Relatório de Transportadoras';
+  
+  try {
+    let orders = await api('/pedidos/');
+    const st = p => p.status_efetivo || p.status;
+    let filtered = orders.filter(p => ['enviado', 'entregue'].includes(st(p)));
+    
+    if (transpNome) {
+      filtered = filtered.filter(p => p.transportadora && p.transportadora.trim().toLowerCase() === transpNome.trim().toLowerCase());
+    }
+    if (dataIni) {
+      filtered = filtered.filter(p => p.data_despacho && p.data_despacho >= dataIni);
+    }
+    if (dataFim) {
+      filtered = filtered.filter(p => p.data_despacho && p.data_despacho <= dataFim);
+    }
+    
+    const thead = document.getElementById('rel-transp-thead');
+    const tbody = document.getElementById('rel-transp-tbody');
+    const cards = document.getElementById('rel-transp-cards');
+    
+    if (!tbody || !thead) return;
+    
+    if (tipo === 'extrato') {
+      thead.innerHTML = `<tr>
+        <th>Nº Pedido</th>
+        <th>Cliente</th>
+        <th>Transportadora</th>
+        <th>NF</th>
+        <th>Data Despacho</th>
+        <th>Vol.</th>
+        <th>Frete Cobrado</th>
+        <th>Frete Pago</th>
+        <th>Diferença</th>
+      </tr>`;
+      
+      let totalVols = 0;
+      let totalCobrado = 0;
+      let totalPago = 0;
+      
+      tbody.innerHTML = filtered.map(p => {
+        const vols = p.volumes || 0;
+        const cobrado = p.frete || 0;
+        const pago = p.frete_pago || 0;
+        const dif = cobrado - pago;
+        
+        totalVols += vols;
+        totalCobrado += cobrado;
+        totalPago += pago;
+        
+        const difColor = dif < 0 ? 'var(--danger)' : dif > 0 ? 'var(--success)' : '';
+        const formattedDif = dif < 0 ? `- ${fmtBRL(Math.abs(dif))}` : dif > 0 ? `+ ${fmtBRL(dif)}` : fmtBRL(0);
+        
+        return `<tr>
+          <td><strong>${p.numero_pedido}</strong></td>
+          <td>${p.cliente_nome || '—'}</td>
+          <td>${p.transportadora || '—'}</td>
+          <td>${p.nota_fiscal || '—'}</td>
+          <td>${p.data_despacho ? fmtDate(p.data_despacho) : '—'}</td>
+          <td>${vols}</td>
+          <td>${fmtBRL(cobrado)}</td>
+          <td>${fmtBRL(pago)}</td>
+          <td style="color:${difColor};font-weight:bold">${formattedDif}</td>
+        </tr>`;
+      }).join('');
+      
+      if (!filtered.length) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:24px">Nenhum registro encontrado no período</td></tr>';
+      }
+      
+      const netDif = totalCobrado - totalPago;
+      const netColor = netDif < 0 ? 'var(--danger)' : netDif > 0 ? 'var(--success)' : '';
+      cards.innerHTML = `
+        <div class="card" style="padding:12px 16px;background:var(--surface2)">
+          <div style="font-size:11px;color:var(--muted)">TOTAL DE ENVIOS</div>
+          <div style="font-size:18px;font-weight:bold">${filtered.length}</div>
+        </div>
+        <div class="card" style="padding:12px 16px;background:var(--surface2)">
+          <div style="font-size:11px;color:var(--muted)">VOLUMES ENVIADOS</div>
+          <div style="font-size:18px;font-weight:bold">${totalVols}</div>
+        </div>
+        <div class="card" style="padding:12px 16px;background:var(--surface2)">
+          <div style="font-size:11px;color:var(--muted)">FRETE COBRADO</div>
+          <div style="font-size:18px;font-weight:bold">${fmtBRL(totalCobrado)}</div>
+        </div>
+        <div class="card" style="padding:12px 16px;background:var(--surface2)">
+          <div style="font-size:11px;color:var(--muted)">FRETE PAGO</div>
+          <div style="font-size:18px;font-weight:bold">${fmtBRL(totalPago)}</div>
+        </div>
+        <div class="card" style="padding:12px 16px;background:var(--surface2)">
+          <div style="font-size:11px;color:var(--muted)">SALDO LÍQUIDO</div>
+          <div style="font-size:18px;font-weight:bold;color:${netColor}">${netDif < 0 ? '-' : ''}${fmtBRL(Math.abs(netDif))}</div>
+        </div>
+      `;
+      
+    } else if (tipo === 'resumo') {
+      thead.innerHTML = `<tr>
+        <th>Transportadora</th>
+        <th>Qtd. Pedidos</th>
+        <th>Total Volumes</th>
+        <th>Frete Cobrado</th>
+        <th>Frete Pago</th>
+        <th>Saldo Líquido</th>
+      </tr>`;
+      
+      const summary = {};
+      let totalVols = 0;
+      let totalCobrado = 0;
+      let totalPago = 0;
+      
+      filtered.forEach(p => {
+        const key = (p.transportadora || 'NÃO INFORMADA').trim().toUpperCase();
+        if (!summary[key]) {
+          summary[key] = { name: p.transportadora || 'NÃO INFORMADA', orders: 0, volumes: 0, cobrado: 0, pago: 0 };
+        }
+        summary[key].orders += 1;
+        summary[key].volumes += (p.volumes || 0);
+        summary[key].cobrado += (p.frete || 0);
+        summary[key].pago += (p.frete_pago || 0);
+        
+        totalVols += (p.volumes || 0);
+        totalCobrado += (p.frete || 0);
+        totalPago += (p.frete_pago || 0);
+      });
+      
+      const summaryArray = Object.values(summary).sort((a, b) => b.orders - a.orders);
+      
+      tbody.innerHTML = summaryArray.map(s => {
+        const net = s.cobrado - s.pago;
+        const netColor = net < 0 ? 'var(--danger)' : net > 0 ? 'var(--success)' : '';
+        const formattedNet = net < 0 ? `- ${fmtBRL(Math.abs(net))}` : net > 0 ? `+ ${fmtBRL(net)}` : fmtBRL(0);
+        
+        return `<tr>
+          <td><strong>${s.name}</strong></td>
+          <td>${s.orders}</td>
+          <td>${s.volumes}</td>
+          <td>${fmtBRL(s.cobrado)}</td>
+          <td>${fmtBRL(s.pago)}</td>
+          <td style="color:${netColor};font-weight:bold">${formattedNet}</td>
+        </tr>`;
+      }).join('');
+      
+      if (!summaryArray.length) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:24px">Nenhum registro encontrado no período</td></tr>';
+      }
+      
+      const avgCost = filtered.length ? (totalPago / filtered.length) : 0;
+      cards.innerHTML = `
+        <div class="card" style="padding:12px 16px;background:var(--surface2)">
+          <div style="font-size:11px;color:var(--muted)">TOTAL DE ENVIOS</div>
+          <div style="font-size:18px;font-weight:bold">${filtered.length}</div>
+        </div>
+        <div class="card" style="padding:12px 16px;background:var(--surface2)">
+          <div style="font-size:11px;color:var(--muted)">TOTAL FRETE PAGO</div>
+          <div style="font-size:18px;font-weight:bold">${fmtBRL(totalPago)}</div>
+        </div>
+        <div class="card" style="padding:12px 16px;background:var(--surface2)">
+          <div style="font-size:11px;color:var(--muted)">MÉDIA POR PEDIDO</div>
+          <div style="font-size:18px;font-weight:bold">${fmtBRL(avgCost)}</div>
+        </div>
+      `;
+      
+    } else if (tipo === 'divergencia') {
+      thead.innerHTML = `<tr>
+        <th>Nº Pedido</th>
+        <th>Cliente</th>
+        <th>Transportadora</th>
+        <th>NF</th>
+        <th>Data Despacho</th>
+        <th>Frete Cobrado</th>
+        <th>Frete Pago</th>
+        <th>Divergência</th>
+      </tr>`;
+      
+      const discrepant = filtered.filter(p => (p.frete || 0) !== (p.frete_pago || 0));
+      
+      let totalCobrado = 0;
+      let totalPago = 0;
+      
+      tbody.innerHTML = discrepant.map(p => {
+        const cobrado = p.frete || 0;
+        const pago = p.frete_pago || 0;
+        const dif = cobrado - pago;
+        
+        totalCobrado += cobrado;
+        totalPago += pago;
+        
+        const difColor = dif < 0 ? 'var(--danger)' : dif > 0 ? 'var(--success)' : '';
+        const formattedDif = dif < 0 ? `- ${fmtBRL(Math.abs(dif))}` : dif > 0 ? `+ ${fmtBRL(dif)}` : fmtBRL(0);
+        
+        return `<tr>
+          <td><strong>${p.numero_pedido}</strong></td>
+          <td>${p.cliente_nome || '—'}</td>
+          <td>${p.transportadora || '—'}</td>
+          <td>${p.nota_fiscal || '—'}</td>
+          <td>${p.data_despacho ? fmtDate(p.data_despacho) : '—'}</td>
+          <td>${fmtBRL(cobrado)}</td>
+          <td>${fmtBRL(pago)}</td>
+          <td style="color:${difColor};font-weight:bold">${formattedDif}</td>
+        </tr>`;
+      }).join('');
+      
+      if (!discrepant.length) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">Nenhuma divergência encontrada no período</td></tr>';
+      }
+      
+      const netDif = totalCobrado - totalPago;
+      const netColor = netDif < 0 ? 'var(--danger)' : netDif > 0 ? 'var(--success)' : '';
+      cards.innerHTML = `
+        <div class="card" style="padding:12px 16px;background:var(--surface2)">
+          <div style="font-size:11px;color:var(--muted)">ENVIOS DIVERGENTES</div>
+          <div style="font-size:18px;font-weight:bold">${discrepant.length}</div>
+        </div>
+        <div class="card" style="padding:12px 16px;background:var(--surface2)">
+          <div style="font-size:11px;color:var(--muted)">TOTAL COBRADO</div>
+          <div style="font-size:18px;font-weight:bold">${fmtBRL(totalCobrado)}</div>
+        </div>
+        <div class="card" style="padding:12px 16px;background:var(--surface2)">
+          <div style="font-size:11px;color:var(--muted)">TOTAL PAGO</div>
+          <div style="font-size:18px;font-weight:bold">${fmtBRL(totalPago)}</div>
+        </div>
+        <div class="card" style="padding:12px 16px;background:var(--surface2)">
+          <div style="font-size:11px;color:var(--muted)">DIFERENÇA ACUMULADA</div>
+          <div style="font-size:18px;font-weight:bold;color:${netColor}">${netDif < 0 ? '-' : ''}${fmtBRL(Math.abs(netDif))}</div>
+        </div>
+      `;
+    }
+  } catch (e) {
+    console.error('Erro ao gerar relatório de transportadoras', e);
+  }
+}
+window.gerarRelatorioTransp = gerarRelatorioTransp;
+
+function onChangeRelTranspTipo() {
+  gerarRelatorioTransp();
+}
+window.onChangeRelTranspTipo = onChangeRelTranspTipo;
+
+function exportarRelatorioTransp(formato) {
+  const el = document.getElementById('rel-transp-tbody');
+  const table = el?.closest('table') || el;
+  const elTit = document.getElementById('rel-transp-title');
+  const tituloReport = elTit ? elTit.textContent : 'Relatório de Transportadoras';
+  
+  if (formato === 'pdf') {
+    const win = window.open('', '_blank');
+    win.document.write(`<html><head><title>${tituloReport}</title><style>@page{margin:0}body{font-family:Arial,sans-serif;margin:15mm 15mm 22mm 15mm;font-size:12px;counter-reset:page}table{width:100%;border-collapse:collapse}th{background:#333;color:#fff;padding:8px;text-align:left}td{padding:7px;border-bottom:1px solid #ddd}.print-footer{position:fixed;bottom:8mm;left:15mm;right:15mm;border-top:1px solid #ddd;padding-top:6px;display:flex;justify-content:space-between;font-size:10px;color:#777;font-family:Arial,sans-serif;counter-increment:page}.page-number::after{content:counter(page)}</style></head><body>${_getEmpresaHeader(tituloReport)}${table?.outerHTML||'<p>Sem dados</p>'}${_getPrintFooter()}</body></html>`);
+    win.document.close();
+    setTimeout(() => win.print(), 500);
+  } else {
+    if (!table) return;
+    const rows = [];
+    table.querySelectorAll('tr').forEach(tr => {
+      const row = [];
+      tr.querySelectorAll('th,td').forEach(td => row.push('"' + td.textContent.trim().replace(/"/g, '""') + '"'));
+      rows.push(row.join(';'));
+    });
+    const csv = '\uFEFF' + rows.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const tipoRel = document.getElementById('rel-transp-tipo')?.value || 'extrato';
+    const downloadName = `pratic_relatorio_transportadora_${tipoRel}_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = downloadName;
+    a.click();
+  }
+}
+window.exportarRelatorioTransp = exportarRelatorioTransp;
 
 async function loadPedidos_init() {
   await loadFila();
@@ -3941,6 +4431,7 @@ async function loadFila() {
   } catch(e){}
 
   if(!itens.length){
+    const r0=document.getElementById('ped-fila-resumo'); if(r0) r0.innerHTML='';
     el.innerHTML='<div class="table-wrap"><p style="padding:32px;text-align:center;color:var(--muted)">Nenhum item na fila de produção</p></div>';
     return;
   }
@@ -3948,28 +4439,33 @@ async function loadFila() {
   // Agrupar por pedido e ordenar por prazo (mais urgente primeiro)
   const grupos={};
   itens.forEach(i=>{const k=i.pedido_id;if(!grupos[k])grupos[k]={pedido:i,itens:[]};grupos[k].itens.push(i);});
-  const pedidosOrdenados = Object.values(grupos).sort((a,b) => {
+  let pedidosOrdenados = Object.values(grupos).sort((a,b) => {
     return (a.pedido.dias_restantes||99) - (b.pedido.dias_restantes||99);
   });
+
+  const busca = document.getElementById('ped-fila-busca')?.value.trim().toLowerCase() || '';
+  if (busca) {
+    pedidosOrdenados = pedidosOrdenados.filter(g => 
+      String(g.pedido.numero_pedido || '').toLowerCase().includes(busca)
+    );
+  }
 
   // Contar totais para resumo
   const totalPedidos = pedidosOrdenados.length;
   const urgentes = pedidosOrdenados.filter(g => Math.round(g.pedido.dias_restantes) <= 3).length;
 
-  el.innerHTML = `
-    <!-- Resumo rápido -->
-    <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">
-      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:10px 16px;font-size:13px">
+  const resumoEl = document.getElementById('ped-fila-resumo');
+  if (resumoEl) resumoEl.innerHTML = `
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 14px;font-size:13px">
         📋 <strong>${totalPedidos}</strong> pedido(s) na fila
       </div>
-      ${urgentes>0?`<div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:10px 16px;font-size:13px;color:var(--danger)">
+      ${urgentes>0?`<div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:8px 14px;font-size:13px;color:var(--danger)">
         🔴 <strong>${urgentes}</strong> urgente(s) — prazo ≤ 3 dias
       </div>`:''}
       <button class="btn btn-sm btn-secondary" onclick="toggleTodasFilas(true)" style="margin-left:auto">↕ Expandir todos</button>
       <button class="btn btn-sm btn-secondary" onclick="toggleTodasFilas(false)">↕ Recolher todos</button>
-    </div>
-
-    <!-- Cards colapsáveis -->
+  `;
+  el.innerHTML = `
     ${pedidosOrdenados.map(g => {
       const p=g.pedido;
       const dias=Math.round(p.dias_restantes);
@@ -4095,15 +4591,34 @@ function _popularFiltroMarcas(pedidos, selecionada) {
     ordenadas.map(m => `<option value="${m.replace(/"/g, '&quot;')}" ${m === selecionada ? 'selected' : ''}>${m}</option>`).join('');
 }
 
+function _popularFiltroVendedores(pedidos, selecionado) {
+  const sel = document.getElementById('ped-vendedor-filtro');
+  if (!sel) return;
+  const vends = new Set();
+  (pedidos || []).forEach(p => { const t = (p.vendedor || '').trim(); if (t) vends.add(t); });
+  const ordenados = Array.from(vends).sort((a, b) => a.localeCompare(b));
+  sel.innerHTML = '<option value="">Todos os vendedores</option>' +
+    ordenados.map(v => `<option value="${v.replace(/"/g, '&quot;')}" ${v === selecionado ? 'selected' : ''}>${v}</option>`).join('');
+}
+
 async function loadPedidos() {
   const sit = document.getElementById('ped-status-filtro')?.value ?? 'ativos';
   const prazoF = document.getElementById('ped-prazo-filtro')?.value || '';
   const marcaF = document.getElementById('ped-marca-filtro')?.value || '';
+  const vendF = document.getElementById('ped-vendedor-filtro')?.value || '';
   let rows = await api('/pedidos/');
+
+  const buscaNumero = document.getElementById('ped-busca-numero')?.value.trim().toLowerCase() || '';
+  if (buscaNumero) {
+    rows = rows.filter(p => 
+      String(p.numero_pedido || '').toLowerCase().includes(buscaNumero)
+    );
+  }
   const statusDe = p => p.status_efetivo || p.status;
 
   // Popula o filtro de marcas a partir de todos os pedidos (antes de filtrar)
   _popularFiltroMarcas(rows, marcaF);
+  _popularFiltroVendedores(rows, vendF);
 
   // Filtro de situação (usa o status real derivado da produção)
   if (sit === 'ativos') rows = rows.filter(p => statusDe(p) !== 'entregue');
@@ -4113,6 +4628,9 @@ async function loadPedidos() {
   if (marcaF) {
     rows = rows.filter(p => (p.marcas || '').split(',').map(s => s.trim()).filter(Boolean).includes(marcaF));
   }
+
+  // Filtro de vendedor
+  if (vendF) rows = rows.filter(p => (p.vendedor || '') === vendF);
 
   // Filtro de prazo
   if (prazoF) {

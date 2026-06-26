@@ -1227,3 +1227,41 @@ button:disabled.btn-loading {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* PEDIDOS: cabecalho da tabela fixo ao rolar (nao perde as colunas) */
+#page-pedidos .table-wrap { overflow: clip; }
+#page-pedidos table thead th {
+  position: sticky;
+  top: 70px;            /* altura da topbar */
+  z-index: 5;
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+@media (max-width: 800px) {
+  #page-pedidos table thead th { top: 0; }
+}
+
+/* FILA DE PRODUÇÃO: barra de controles unica e fixa ao rolar */
+#page-pedidos .fila-header {
+  position: sticky;
+  top: 70px;
+  z-index: 5;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 10px 0;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+#page-pedidos .fila-resumo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+@media (max-width: 800px) {
+  #page-pedidos .fila-header { top: 0; }
+}
+

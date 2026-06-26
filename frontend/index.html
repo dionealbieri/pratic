@@ -12,7 +12,7 @@
     document.documentElement.setAttribute('data-theme', savedTheme);
   })();
 </script>
-<link rel="stylesheet" href="css/common.css?v=4">
+<link rel="stylesheet" href="css/common.css?v=6">
 <style>
   .nav-item[data-page="comunicacao"] { color:#25d366; }
   .nav-item[data-page="comunicacao"] .icon svg { display:inline-block; }
@@ -276,21 +276,22 @@
         <button class="btn btn-secondary" id="ptab-fila" onclick="switchPedidosTab('fila')" style="border-color:var(--accent);color:var(--accent)">🏭 Fila de Produção</button>
         <button class="btn btn-secondary" id="ptab-pedidos" onclick="switchPedidosTab('pedidos')">🧾 Pedidos</button>
         <button class="btn btn-secondary" id="ptab-clientes" onclick="switchPedidosTab('clientes')">👥 Clientes</button>
+        <button class="btn btn-secondary" id="ptab-transportadora" onclick="switchPedidosTab('transportadora')">📦 Transportadora</button>
       </div>
 
       <!-- FILA DE PRODUÇÃO -->
       <div id="ped-tab-fila">
         <div id="ped-alertas-banner"></div>
-        <div class="flex items-center justify-between mb-4">
-          <div class="flex gap-2 items-center">
-            <label>Status:</label>
-            <select id="ped-fila-status" onchange="loadFila()" style="min-width:150px">
-              <option value="">Todos</option>
-              <option value="aberto">Aberto</option>
-              <option value="em_producao">Em produção</option>
-              <option value="produzido">Produzido</option>
-            </select>
-          </div>
+        <div class="fila-header">
+          <input type="text" id="ped-fila-busca" placeholder="Buscar Nº Pedido..." onkeyup="loadFila()" style="max-width:180px">
+          <label style="margin-left:12px">Status:</label>
+          <select id="ped-fila-status" onchange="loadFila()" style="min-width:150px">
+            <option value="">Todos</option>
+            <option value="aberto">Aberto</option>
+            <option value="em_producao">Em produção</option>
+            <option value="produzido">Produzido</option>
+          </select>
+          <div id="ped-fila-resumo" class="fila-resumo"></div>
         </div>
         <div id="ped-fila-cards"></div>
       </div>
@@ -298,13 +299,15 @@
       <!-- PEDIDOS -->
       <div id="ped-tab-pedidos" style="display:none">
         <div class="flex items-center justify-between mb-4">
-          <div class="flex gap-2 items-center">
+          <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+            <input type="text" id="ped-busca-numero" placeholder="Buscar Nº Pedido..." onkeyup="loadPedidos()" style="max-width:180px">
             <select id="ped-status-filtro" onchange="loadPedidos()" style="min-width:150px">
               <option value="ativos">Ativos (não entregues)</option>
               <option value="">Todos os status</option>
               <option value="aberto">Aberto</option>
               <option value="em_producao">Em produção</option>
               <option value="produzido">Produzido</option>
+              <option value="enviado">Enviado (em trânsito)</option>
               <option value="entregue">Entregue</option>
             </select>
             <select id="ped-prazo-filtro" onchange="loadPedidos()" style="min-width:150px">
@@ -316,6 +319,9 @@
             </select>
             <select id="ped-marca-filtro" onchange="loadPedidos()" style="min-width:150px">
               <option value="">Todas as marcas</option>
+            </select>
+            <select id="ped-vendedor-filtro" onchange="loadPedidos()" style="min-width:150px">
+              <option value="">Todos os vendedores</option>
             </select>
           </div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -344,6 +350,112 @@
             <thead><tr><th>Razão Social</th><th>Nome Fantasia</th><th>CNPJ</th><th>Cidade/UF</th><th>Pedidos</th><th></th></tr></thead>
             <tbody id="ped-clientes-tbody"></tbody>
           </table>
+        </div>
+      </div>
+
+      <!-- TRANSPORTADORA -->
+      <div id="ped-tab-transportadora" style="display:none">
+        <div class="barra-fixa" style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap">
+          <button class="btn btn-secondary" id="transp-btn-fila" onclick="switchTranspTab('fila')" style="border-color:var(--accent);color:var(--accent)">📦 Fila de Expedição</button>
+          <button class="btn btn-secondary" id="transp-btn-entregues" onclick="switchTranspTab('entregues')">✅ Pedidos Entregues</button>
+          <button class="btn btn-secondary" id="transp-btn-relatorios" onclick="switchTranspTab('relatorios')">📊 Relatórios</button>
+        </div>
+
+        <!-- Fila de Expedição View -->
+        <div id="transp-content-fila">
+          <div class="fila-header">
+            <label>Mostrar:</label>
+            <select id="ped-transp-filtro" onchange="loadTransportadora()" style="min-width:190px">
+              <option value="a_despachar">A despachar (produzidos)</option>
+              <option value="enviado">Enviados (em trânsito)</option>
+              <option value="entregue">Entregues</option>
+              <option value="todos">Todos despachados</option>
+            </select>
+            <div id="ped-transp-resumo" class="fila-resumo"></div>
+          </div>
+          <div class="table-wrap">
+            <div class="table-head"><span class="table-head-title">Transportadora / Expedição</span></div>
+            <table>
+              <thead><tr><th>Nº Pedido</th><th>Cliente</th><th>Transportadora</th><th>NF</th><th>Rastreio</th><th>Vol.</th><th>Despacho</th><th>Frete Pago</th><th>Status</th><th></th></tr></thead>
+              <tbody id="ped-transp-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Pedidos Entregues View -->
+        <div id="transp-content-entregues" style="display:none">
+          <div class="fila-header" style="display:flex;gap:8px;align-items:center;margin-bottom:20px;flex-wrap:wrap">
+            <input type="text" id="ped-entregues-busca" placeholder="Buscar pedido, cliente, NF..." onkeyup="loadPedidosEntregues()" style="max-width:250px">
+            <label style="margin-left:12px">Entrega de:</label>
+            <input type="date" id="ped-entregues-data-ini" onchange="loadPedidosEntregues()">
+            <span>até</span>
+            <input type="date" id="ped-entregues-data-fim" onchange="loadPedidosEntregues()">
+          </div>
+          <div class="table-wrap">
+            <div class="table-head"><span class="table-head-title">Pedidos Entregues</span></div>
+            <table>
+              <thead><tr><th>Nº Pedido</th><th>Cliente</th><th>Transportadora</th><th>NF</th><th>Rastreio</th><th>Vol.</th><th>Despacho</th><th>Entrega</th><th>Frete Pago</th><th>Status</th></tr></thead>
+              <tbody id="ped-entregues-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Relatórios View -->
+        <div id="transp-content-relatorios" style="display:none">
+          <div class="card" style="padding:16px;margin-bottom:16px">
+            <div class="flex items-center justify-between mb-4" style="gap:12px;flex-wrap:wrap">
+              <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+                <select id="rel-transp-tipo" style="min-width:230px" onchange="onChangeRelTranspTipo()">
+                  <option value="extrato">Extrato de Envios</option>
+                  <option value="resumo">Resumo Financeiro por Transportadora</option>
+                  <option value="divergencia">Divergência de Frete (Cobrado vs Pago)</option>
+                </select>
+                <select id="rel-transp-name" style="min-width:180px">
+                  <option value="">Todas as Transportadoras</option>
+                </select>
+                <input type="date" id="rel-transp-data-ini">
+                <span style="color:var(--muted)">até</span>
+                <input type="date" id="rel-transp-data-fim">
+                <button class="btn btn-secondary" onclick="gerarRelatorioTransp()">Filtrar</button>
+              </div>
+              <div class="flex gap-2">
+                <button class="btn btn-secondary" onclick="exportarRelatorioTransp('excel')">⬇ Excel</button>
+                <button class="btn btn-secondary" onclick="exportarRelatorioTransp('pdf')">⬇ PDF</button>
+              </div>
+            </div>
+            <div class="cards-grid" id="rel-transp-cards" style="margin-bottom:0"></div>
+          </div>
+          <div class="table-wrap">
+            <div class="table-head"><span class="table-head-title" id="rel-transp-title">Extrato de Envios</span></div>
+            <table id="rel-transp-table">
+              <thead id="rel-transp-thead"></thead>
+              <tbody id="rel-transp-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL DESPACHAR -->
+    <div class="modal-overlay" id="modal-despacho">
+      <div class="modal" style="max-width:560px;width:95vw">
+        <div class="modal-title">📦 Despachar pedido</div>
+        <input type="hidden" id="desp-pedido-id">
+        <div id="desp-cabecalho" style="font-size:13px;color:var(--muted);margin-bottom:12px"></div>
+        <div class="form-grid" style="margin-bottom:12px">
+          <div class="form-group" style="grid-column:1/-1"><label>Transportadora</label><input type="text" id="desp-transportadora" placeholder="Ex.: Jamef, Braspress, retirada..."></div>
+          <div class="form-group"><label>Nota Fiscal (NF-e)</label><input type="text" id="desp-nf"></div>
+          <div class="form-group"><label>Código de rastreio</label><input type="text" id="desp-rastreio"></div>
+          <div class="form-group"><label>Volumes</label><input type="number" id="desp-volumes" min="0" step="1" value="1"></div>
+          <div class="form-group"><label>Frete (R$)</label><input type="number" id="desp-frete" min="0" step="0.01" value="0"></div>
+          <div class="form-group"><label>Frete Pago (R$)</label><input type="number" id="desp-frete-pago" min="0" step="0.01" value="0"></div>
+          <div class="form-group"><label>Data do despacho</label><input type="date" id="desp-data"></div>
+          <div class="form-group"><label>Previsão de entrega</label><input type="date" id="desp-previsao"></div>
+          <div class="form-group" style="grid-column:1/-1"><label>Observações de envio</label><textarea id="desp-obs" rows="2" placeholder="Ex.: entregar após 14h, retirada no balcão..."></textarea></div>
+        </div>
+        <div class="flex gap-2 justify-end">
+          <button class="btn btn-secondary" onclick="closeModal('modal-despacho')">Cancelar</button>
+          <button class="btn btn-primary" onclick="salvarDespacho()">📦 Confirmar despacho</button>
         </div>
       </div>
     </div>
@@ -2274,7 +2386,7 @@
   </div>
 </div>
 
-<script src="js/app.js?v=20260625-pdv13"></script>
+<script src="js/app.js?v=20260625-pdv16"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');
