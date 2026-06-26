@@ -1434,8 +1434,8 @@
         <div class="form-group" style="grid-column:1/-1">
           <label>Nº Pedido <span style="color:var(--muted);font-size:11px">(opcional)</span></label>
           <div class="flex gap-2">
-            <select id="prod-pedido" onchange="onProdPedidoChange()" style="flex:1"><option value="">— Sem pedido vinculado —</option></select>
-            <input type="text" id="prod-pedido-manual" placeholder="Ou número manual" style="flex:1" onchange="buscarPedidoManual()">
+            <select id="prod-pedido" onchange="onProdPedidoChange()" style="flex: 1; min-width: 0;"><option value="">— Sem pedido vinculado —</option></select>
+            <input type="text" id="prod-pedido-manual" placeholder="Ou número manual" style="width: 150px; flex-shrink: 0;" onchange="buscarPedidoManual()">
           </div>
           <div id="prod-pedido-aviso" style="font-size:11px;margin-top:5px;min-height:14px;color:var(--muted)"></div>
         </div>
