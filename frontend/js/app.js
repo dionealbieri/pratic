@@ -4571,8 +4571,13 @@ async function avancarItemStatus(id,novoStatus,qtdTotal) {
 
 async function removerItemFila(id) {
   if(!confirm('Remover item?')) return;
-  await api('/pedidos/itens/'+id,'DELETE');
-  loadFila();
+  try {
+    await api('/pedidos/itens/'+id,'DELETE');
+    showAlert('Item removido');
+    loadFila();
+  } catch(e) {
+    showAlert('Erro: ' + e.message, 'danger');
+  }
 }
 
 function _diasAtePrazo(prazoStr) {
@@ -4771,9 +4776,13 @@ async function verDetalhesPedido(id) {
 
 async function deletarPedido(id) {
   if(!confirm('Remover pedido?')) return;
-  await api('/pedidos/'+id,'DELETE');
-  showAlert('Pedido removido');
-  loadPedidos();
+  try {
+    await api('/pedidos/'+id,'DELETE');
+    showAlert('Pedido removido');
+    loadPedidos();
+  } catch(e) {
+    showAlert('Erro: ' + e.message, 'danger');
+  }
 }
 
 

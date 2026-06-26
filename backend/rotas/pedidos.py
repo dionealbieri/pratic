@@ -1,12 +1,27 @@
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, Depends
 from pydantic import BaseModel
 from typing import Optional, List
 from database import get_conn
+from auth_utils import get_current_user
 import httpx
 import os, re, tempfile, datetime
 from html.parser import HTMLParser
 
 router = APIRouter()
+
+def verificar_permissao(modulo: str, acao: str, current_user: dict) -> bool:
+    if current_user.get("role") == "gestor":
+        return True
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT permitido FROM usuario_permissoes WHERE usuario_id = ? AND modulo = ? AND acao = ?",
+            (current_user["id"], modulo, acao)
+        ).fetchone()
+        return bool(row and row["permitido"])
+    finally:
+        conn.close()
+
 
 class ClienteIn(BaseModel):
     cnpj: Optional[str] = None
@@ -1441,14 +1456,73 @@ def atualizar_status_pedido(id: int, body: StatusItemIn):
     return {"mensagem": "Status atualizado"}
 
 @router.delete("/{id}")
-def deletar_pedido(id: int):
+def deletar_pedido(id: int, current_user = Depends(get_current_user)):
     conn = get_conn()
-    conn.execute("DELETE FROM pedidos_parcelas WHERE pedido_id=?", (id,))
-    conn.execute("DELETE FROM pedidos_itens WHERE pedido_id=?", (id,))
-    conn.execute("DELETE FROM pedidos WHERE id=?", (id,))
-    conn.commit()
-    conn.close()
+    try:
+        # 1. Verificar permissão
+        if not verificar_permissao("pedidos", "deletar", current_user):
+            raise HTTPException(403, "Você não tem permissão para excluir pedidos.")
+
+        cur = conn.cursor()
+        
+        # 2. Buscar o número do pedido para o histórico do estoque
+        ped = cur.execute("SELECT numero_pedido FROM pedidos WHERE id=?", (id,)).fetchone()
+        if not ped:
+            raise HTTPException(404, "Pedido não encontrado")
+        numero_pedido = ped["numero_pedido"]
+
+        # 3. Buscar todos os itens do pedido que estão com status 'entregue' (separados) e possuem produto_id
+        itens_com_estoque = cur.execute("""
+            SELECT i.produto_id, i.quantidade, ep.nome as produto_nome
+            FROM pedidos_itens i
+            JOIN estoque_produtos ep ON i.produto_id = ep.id
+            WHERE i.pedido_id = ? AND i.status = 'entregue'
+        """, (id,)).fetchall()
+
+        # 4. Devolver a quantidade ao estoque de cada item
+        from datetime import date
+        for item in itens_com_estoque:
+            produto_id = item["produto_id"]
+            qtd = item["quantidade"] or 0.0
+            if qtd <= 0:
+                continue
+                
+            # Obter saldo atual
+            row_saldo = cur.execute("SELECT quantidade FROM estoque_saldo WHERE produto_id=?", (produto_id,)).fetchone()
+            saldo_anterior = row_saldo["quantidade"] if row_saldo else 0.0
+            saldo_posterior = saldo_anterior + qtd
+            
+            # Registrar movimentação de entrada (estorno)
+            motivo = f"Estorno exclusão pedido {numero_pedido}"
+            cur.execute("""
+                INSERT INTO estoque_movimentacoes
+                (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior, motivo, data)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (produto_id, "saida" if qtd < 0 else "entrada", abs(qtd), saldo_anterior, saldo_posterior, motivo, str(date.today())))
+            
+            # Atualizar saldo
+            if row_saldo:
+                cur.execute("""
+                    UPDATE estoque_saldo 
+                    SET quantidade=?, ultima_atualizacao=datetime('now') 
+                    WHERE produto_id=?
+                """, (saldo_posterior, produto_id))
+            else:
+                cur.execute("""
+                    INSERT INTO estoque_saldo (produto_id, quantidade) 
+                    VALUES (?, ?)
+                """, (produto_id, saldo_posterior))
+
+        # 5. Excluir o pedido e suas dependências
+        cur.execute("DELETE FROM pedidos_parcelas WHERE pedido_id=?", (id,))
+        cur.execute("DELETE FROM pedidos_itens WHERE pedido_id=?", (id,))
+        cur.execute("DELETE FROM pedidos WHERE id=?", (id,))
+        
+        conn.commit()
+    finally:
+        conn.close()
     return {"mensagem": "Pedido removido"}
+
 
 # ─── ITENS ────────────────────────────────────────────────────────────────────
 
@@ -1589,12 +1663,69 @@ def vincular_produto_item(id: int, body: dict):
     return {"mensagem": "Produto vinculado", "produto_id": produto_id}
 
 @router.delete("/itens/{id}")
-def deletar_item(id: int):
+def deletar_item(id: int, current_user = Depends(get_current_user)):
     conn = get_conn()
-    conn.execute("DELETE FROM pedidos_itens WHERE id=?", (id,))
-    conn.commit()
-    conn.close()
+    try:
+        # 1. Verificar permissão para editar pedidos (excluir item é parte de editar)
+        if not verificar_permissao("pedidos", "editar", current_user):
+            raise HTTPException(403, "Você não tem permissão para editar pedidos.")
+
+        cur = conn.cursor()
+
+        # 2. Obter informações do item e do número do pedido
+        item = cur.execute("""
+            SELECT i.pedido_id, i.produto_id, i.quantidade, i.status, p.numero_pedido
+            FROM pedidos_itens i
+            JOIN pedidos p ON i.pedido_id = p.id
+            WHERE i.id = ?
+        """, (id,)).fetchone()
+        
+        if not item:
+            raise HTTPException(404, "Item do pedido não encontrado")
+
+        pedido_id = item["pedido_id"]
+        produto_id = item["produto_id"]
+        qtd = item["quantidade"] or 0.0
+        status_item = item["status"]
+        numero_pedido = item["numero_pedido"]
+
+        # 3. Se o item estava separado ('entregue'), estornar o estoque
+        if status_item == "entregue" and produto_id:
+            from datetime import date
+            row_saldo = cur.execute("SELECT quantidade FROM estoque_saldo WHERE produto_id=?", (produto_id,)).fetchone()
+            saldo_anterior = row_saldo["quantidade"] if row_saldo else 0.0
+            saldo_posterior = saldo_anterior + qtd
+            
+            motivo = f"Estorno exclusão item pedido {numero_pedido}"
+            cur.execute("""
+                INSERT INTO estoque_movimentacoes
+                (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior, motivo, data)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (produto_id, "saida" if qtd < 0 else "entrada", abs(qtd), saldo_anterior, saldo_posterior, motivo, str(date.today())))
+            
+            if row_saldo:
+                cur.execute("""
+                    UPDATE estoque_saldo 
+                    SET quantidade=?, ultima_atualizacao=datetime('now') 
+                    WHERE produto_id=?
+                """, (saldo_posterior, produto_id))
+            else:
+                cur.execute("""
+                    INSERT INTO estoque_saldo (produto_id, quantidade) 
+                    VALUES (?, ?)
+                """, (produto_id, saldo_posterior))
+
+        # 4. Deletar o item
+        cur.execute("DELETE FROM pedidos_itens WHERE id=?", (id,))
+        
+        # 5. Recalcular o status do pedido
+        _recalc_status_pedido(cur, pedido_id)
+        
+        conn.commit()
+    finally:
+        conn.close()
     return {"mensagem": "Item removido"}
+
 
 # ─── ALERTAS ─────────────────────────────────────────────────────────────────
 
