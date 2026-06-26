@@ -298,8 +298,8 @@
 
       <!-- PEDIDOS -->
       <div id="ped-tab-pedidos" style="display:none">
-        <div class="flex items-center justify-between mb-4">
-          <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+        <div class="flex items-center justify-between mb-4" style="flex-wrap: wrap; gap: 12px;">
+          <div class="flex gap-2 items-center" style="flex-wrap:wrap; flex: 1; min-width: 280px;">
             <input type="text" id="ped-busca-numero" placeholder="Buscar Nº Pedido..." onkeyup="loadPedidos()" style="max-width:180px">
             <select id="ped-status-filtro" onchange="loadPedidos()" style="min-width:150px">
               <option value="ativos">Ativos (não entregues)</option>
@@ -328,7 +328,7 @@
               <option value="pendente">📦 Com revenda pendente</option>
             </select>
           </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <div style="display:flex; gap:8px; flex-shrink:0;">
             <button class="btn btn-secondary" onclick="openModalImportarPedido()" data-perm-importar="pedidos">📎 Importar Pedido</button>
             <button class="btn btn-primary" onclick="abrirPDV()" data-perm-criar="pedidos">+ Novo Pedido</button>
           </div>
