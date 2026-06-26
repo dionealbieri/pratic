@@ -4007,7 +4007,9 @@ function switchTranspTab(tab) {
   ['fila', 'entregues', 'relatorios'].forEach(t => {
     const el = document.getElementById('transp-content-' + t);
     const btn = document.getElementById('transp-btn-' + t);
+    const flt = document.getElementById('transp-filter-' + t);
     if (el) el.style.display = t === tab ? '' : 'none';
+    if (flt) flt.style.display = t === tab ? 'flex' : 'none';
     if (btn) {
       btn.style.borderColor = t === tab ? 'var(--accent)' : '';
       btn.style.color = t === tab ? 'var(--accent)' : '';
