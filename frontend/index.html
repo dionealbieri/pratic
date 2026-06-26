@@ -92,19 +92,19 @@
 <!-- MAIN -->
 <main class="main">
   <div class="topbar">
-    <div style="display:flex;align-items:center;gap:24px;flex-wrap:wrap">
+    <div class="topbar-left">
       <button class="menu-toggle" onclick="toggleSidebar()" style="display:none; background:none; border:none; color:var(--text); font-size:24px; cursor:pointer; margin-right:8px;">☰</button>
-      <div class="page-title" id="topbar-title" style="font-size: 20px;">Dashboard</div>
-      <div id="topbar-info-widgets" style="display:flex;align-items:center;gap:24px;font-size:14px;color:var(--muted);border-left:1px solid var(--border);padding-left:24px;flex-wrap:wrap;font-weight:500">
-        <span id="topbar-date" style="display:flex;align-items:center;gap:6px">📅 <span style="color:var(--text)">—</span></span>
-        <span id="topbar-city" style="display:flex;align-items:center;gap:6px">📍 <span style="color:var(--text)">—</span></span>
-        <span id="topbar-temp" style="display:flex;align-items:center;gap:6px">🌡️ <span style="color:var(--accent);font-weight:700">—°C</span></span>
+      <div class="page-title" id="topbar-title">Dashboard</div>
+      <div id="topbar-info-widgets" class="topbar-widgets">
+        <span id="topbar-date" class="topbar-widget">📅 <span>—</span></span>
+        <span id="topbar-city" class="topbar-widget">📍 <span>—</span></span>
+        <span id="topbar-temp" class="topbar-widget">🌡️ <span class="temp-accent">—°C</span></span>
       </div>
     </div>
-    <div style="display:flex;align-items:center;gap:12px">
+    <div class="topbar-right">
       <!-- Seletor de Setores Dropdown -->
       <div class="sector-switcher">
-        <button class="btn btn-sm btn-secondary" onclick="toggleSectorMenu(event)">🌐 Portais ▾</button>
+        <button class="btn btn-sm btn-secondary btn-topbar" onclick="toggleSectorMenu(event)">🌐 Portais ▾</button>
         <div class="sector-switcher-menu" id="sector-menu">
           <a class="sector-switcher-item" onclick="location.href='/'">🖥️ Gestor / Dashboard</a>
           <a class="sector-switcher-item" onclick="location.href='/producao-setor'">🏭 Setor Produção</a>
@@ -113,13 +113,22 @@
         </div>
       </div>
       <!-- Alternar Tema Button -->
-      <button class="btn btn-sm btn-secondary" onclick="toggleTheme()" title="Alternar Tema" style="font-size:14px;padding:6px 10px;">🌗</button>
+      <button class="btn btn-sm btn-secondary btn-icon" onclick="toggleTheme()" title="Alternar Tema">🌗</button>
 
-      <span id="topbar-user-name" style="font-size:13px;font-weight:600;margin-right:8px;color:var(--text);display:flex;align-items:center;gap:4px">👤 <span id="topbar-user-name-txt">—</span></span>
-      <span class="setor-badge" id="topbar-setor" style="display:none"></span>
-      <span class="badge" id="topbar-mes" style="font-size:12px;padding:4px 10px;">—</span>
-      <button class="btn btn-sm btn-secondary" onclick="openModal('modal-ajuda-geral')" style="padding: 6px 12px; font-size: 12px;">❓ Ajuda</button>
-      <button class="btn btn-sm btn-danger" onclick="sairSistema()" style="padding: 6px 12px; font-size: 12px;">🚪 Sair</button>
+      <!-- Month Badge -->
+      <span class="topbar-mes-badge" id="topbar-mes">—</span>
+
+      <!-- User Profile Pill -->
+      <div class="user-profile-pill" id="topbar-user-pill">
+        <div class="user-avatar">👤</div>
+        <div class="user-details">
+          <span class="user-name" id="topbar-user-name-txt">—</span>
+          <span class="user-role" id="topbar-setor" style="display:none"></span>
+        </div>
+      </div>
+
+      <button class="btn btn-sm btn-secondary btn-topbar" onclick="openModal('modal-ajuda-geral')">❓ Ajuda</button>
+      <button class="btn btn-sm btn-danger btn-topbar" onclick="sairSistema()">🚪 Sair</button>
     </div>
   </div>
 

@@ -147,17 +147,129 @@ nav {
   position: sticky;
   top: 0;
   z-index: 50;
-  transition: background 0.3s, border-color 0.3s;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  transition: all 0.3s ease;
+}
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 24px;
 }
 .page-title {
   font-family: var(--font-head);
-  font-size: 18px;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  color: var(--text);
+}
+.topbar-widgets {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-left: 1px solid var(--border);
+  padding-left: 20px;
+}
+.topbar-widget {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  padding: 6px 14px;
+  border-radius: 30px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+}
+.topbar-widget span {
+  color: var(--text);
+}
+.topbar-widget .temp-accent {
+  color: var(--accent) !important;
   font-weight: 700;
 }
 .topbar-right {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+.user-profile-pill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  padding: 5px 14px 5px 10px;
+  border-radius: 30px;
+  transition: all 0.2s ease;
+}
+.user-profile-pill:hover {
+  border-color: var(--accent);
+}
+.user-avatar {
+  width: 26px;
+  height: 26px;
+  background: var(--border);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: var(--text);
+}
+.user-details {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.user-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.user-role {
+  font-size: 10px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.topbar-mes-badge {
+  background: rgba(240, 180, 41, 0.1);
+  border: 1px solid rgba(240, 180, 41, 0.25);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 6px 14px;
+  border-radius: 30px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+}
+.btn-topbar {
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  border-radius: 20px;
+  padding: 0 16px;
+  font-size: 12px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+  transition: all 0.2s ease;
+}
+.btn-icon {
+  width: 36px;
+  height: 36px;
+  padding: 0 !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+  transition: all 0.2s ease;
+  font-size: 14px;
 }
 .badge {
   background: var(--accent);
@@ -826,7 +938,7 @@ button:disabled.btn-loading {
   #topbar-mes,
   .topbar button[onclick*="ajuda"],
   .topbar button[onclick*="Ajuda"],
-  #topbar-user-name,
+  #topbar-user-pill,
   .sector-switcher {
     display: none !important;
   }
