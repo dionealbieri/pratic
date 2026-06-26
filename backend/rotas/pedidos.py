@@ -1109,6 +1109,8 @@ def listar_pedidos(status: Optional[str] = None, cliente_id: Optional[int] = Non
                COUNT(CASE WHEN (ec.tipo IS NULL OR ec.tipo != 'revenda') AND (i.qtd_produzida > 0
                            OR i.status IN ('em_producao','produzido','entregue')) THEN 1 END) as itens_iniciados,
                COUNT(CASE WHEN (ec.tipo IS NULL OR ec.tipo != 'revenda') THEN 1 END) as total_itens_prod,
+               COUNT(CASE WHEN ec.tipo = 'revenda' THEN 1 END) as itens_revenda,
+               COUNT(CASE WHEN ec.tipo = 'revenda' AND (i.status IS NULL OR i.status != 'entregue') THEN 1 END) as revenda_pendentes,
                GROUP_CONCAT(DISTINCT pr.marca) as marcas,
                julianday(p.prazo_entrega) - julianday('now') as dias_restantes
         FROM pedidos p
@@ -1223,6 +1225,17 @@ def fila_producao(status: Optional[str] = None):
         LEFT JOIN estoque_categorias ec ON ep.categoria_id = ec.id
         WHERE p.status NOT IN ('produzido', 'enviado', 'entregue')
           AND (ec.tipo IS NULL OR ec.tipo != 'revenda')
+          AND p.id IN (
+              SELECT i2.pedido_id
+              FROM pedidos_itens i2
+              LEFT JOIN estoque_produtos ep2 ON i2.produto_id = ep2.id
+              LEFT JOIN estoque_categorias ec2 ON ep2.categoria_id = ec2.id
+              WHERE (ec2.tipo IS NULL OR ec2.tipo != 'revenda')
+              GROUP BY i2.pedido_id
+              HAVING COUNT(*) > COUNT(CASE WHEN i2.status IN ('produzido','entregue')
+                                           OR (i2.qtd_produzida >= i2.quantidade AND i2.quantidade > 0)
+                                          THEN 1 END)
+          )
     """
     params = []
     if status:
@@ -1385,6 +1398,17 @@ class EntregaIn(BaseModel):
 def despachar_pedido(id: int, body: DespachoIn):
     data_desp = (body.data_despacho or "").strip() or datetime.datetime.now().strftime("%Y-%m-%d")
     conn = get_conn()
+    # Bloqueia despacho se houver itens de revenda (tampas) ainda nao separados
+    pend = conn.execute("""
+        SELECT COUNT(*) FROM pedidos_itens i
+        LEFT JOIN estoque_produtos ep ON i.produto_id = ep.id
+        LEFT JOIN estoque_categorias ec ON ep.categoria_id = ec.id
+        WHERE i.pedido_id = ? AND ec.tipo = 'revenda'
+          AND (i.status IS NULL OR i.status != 'entregue')
+    """, (id,)).fetchone()[0]
+    if pend > 0:
+        conn.close()
+        raise HTTPException(400, f"Ha {pend} item(ns) de revenda/tampa pendente(s) de separacao. Separe antes de despachar.")
     conn.execute(
         """UPDATE pedidos SET transportadora=?, nota_fiscal=?, rastreio=?, volumes=?,
            previsao_entrega=?, frete=?, frete_pago=?, obs_envio=?, data_despacho=?, status='enviado'

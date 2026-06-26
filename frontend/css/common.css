@@ -1265,3 +1265,18 @@ button:disabled.btn-loading {
   #page-pedidos .fila-header { top: 0; }
 }
 
+/* DETALHE DO PEDIDO: titulo e botoes fixos; so a lista de itens rola */
+#modal-ped-detalhe .modal {
+  display: flex;
+  flex-direction: column;
+  max-height: 90vh;
+  overflow: hidden;
+}
+#modal-ped-detalhe #modal-ped-det-content {
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+  margin: 4px -4px;
+  padding: 0 4px;
+}
+

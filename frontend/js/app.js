@@ -3888,7 +3888,12 @@ async function loadTransportadora() {
     const s = st(p);
     let acoes = '';
     if (s === 'produzido' && temPermissao('pedidos','editar')) {
-      acoes = `<button class="btn btn-sm btn-primary" onclick="abrirDespacho(${p.id})">📦 Despachar</button> <button class="btn btn-sm btn-secondary" onclick="confirmarEntrega(${p.id})">✓ Entregue</button>`;
+      const revPend = p.revenda_pendentes || 0;
+      if (revPend > 0) {
+        acoes = `<button class="btn btn-sm btn-secondary" style="color:var(--warn);border-color:var(--warn)" title="Separe as tampas/revenda antes de liberar para a transportadora" onclick="verDetalhesPedido(${p.id})">⚠ Separar ${revPend} revenda</button>`;
+      } else {
+        acoes = `<button class="btn btn-sm btn-primary" onclick="abrirDespacho(${p.id})">📦 Despachar</button> <button class="btn btn-sm btn-secondary" onclick="confirmarEntrega(${p.id})">✓ Entregue</button>`;
+      }
     } else if (s === 'enviado' && temPermissao('pedidos','editar')) {
       acoes = `<button class="btn btn-sm btn-secondary" onclick="abrirDespacho(${p.id})">✏️</button> <button class="btn btn-sm btn-primary" onclick="confirmarEntrega(${p.id})">✓ Entregue</button>`;
     }
@@ -4606,6 +4611,7 @@ async function loadPedidos() {
   const prazoF = document.getElementById('ped-prazo-filtro')?.value || '';
   const marcaF = document.getElementById('ped-marca-filtro')?.value || '';
   const vendF = document.getElementById('ped-vendedor-filtro')?.value || '';
+  const revF = document.getElementById('ped-revenda-filtro')?.value || '';
   let rows = await api('/pedidos/');
 
   const buscaNumero = document.getElementById('ped-busca-numero')?.value.trim().toLowerCase() || '';
@@ -4631,6 +4637,9 @@ async function loadPedidos() {
 
   // Filtro de vendedor
   if (vendF) rows = rows.filter(p => (p.vendedor || '') === vendF);
+
+  // Filtro de revenda pendente (tampas a separar)
+  if (revF === 'pendente') rows = rows.filter(p => (p.revenda_pendentes || 0) > 0);
 
   // Filtro de prazo
   if (prazoF) {
@@ -4658,9 +4667,16 @@ async function loadPedidos() {
   tbody.innerHTML=rows.map(p=>{
     const dias=Math.round(p.dias_restantes);
     const diasCor=dias<0?'var(--danger)':dias<=3?'var(--warn)':'var(--success)';
+    let revBadge='';
+    if((p.itens_revenda||0)>0){
+      const pend=p.revenda_pendentes||0;
+      revBadge = pend>0
+        ? ` <span title="${pend} item(ns) de revenda/tampa pendente(s) de separação" style="display:inline-block;font-size:10px;font-weight:700;background:rgba(245,158,11,.15);color:var(--warn);border:1px solid var(--warn);border-radius:6px;padding:1px 6px;margin-left:4px;white-space:nowrap">📦 ${pend} revenda</span>`
+        : ` <span title="Itens de revenda já separados" style="display:inline-block;font-size:10px;font-weight:600;background:var(--surface2);color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:1px 6px;margin-left:4px;white-space:nowrap">📦 revenda ✓</span>`;
+    }
     return `<tr>
       <td><strong>${p.numero_pedido}</strong></td>
-      <td>${p.cliente_nome}</td>
+      <td>${p.cliente_nome}${revBadge}</td>
       <td>${p.vendedor || '—'}</td>
       <td>${fmtDate(p.prazo_entrega)}</td>
       <td style="color:${diasCor};font-weight:700">${dias<0?'Vencido':dias+'d'}</td>
@@ -4694,6 +4710,7 @@ async function salvarVinculoProduto(itemId, produtoId) {
   } catch(e) { showAlert('Erro: '+e.message, 'danger'); }
 }
 async function marcarRevendaSeparado(pedidoId, itemId, qtd, marcar) {
+  if (marcar && !confirm('Ao separar este item de revenda, será dada BAIXA no estoque da quantidade correspondente.\n\nConfirma a separação?')) return;
   try {
     const r = await api('/pedidos/itens/'+itemId+'/separar-revenda','POST',{ marcar: !!marcar });
     if (marcar && r.sem_vinculo) {
