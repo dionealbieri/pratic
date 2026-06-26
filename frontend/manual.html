@@ -552,21 +552,42 @@
 
     <!-- COMERCIAL -->
     <section id="comercial">
-      <h2 class="section-title">💼 Gestão Comercial & Pedidos</h2>
-      <span class="badge badge-comercial">Equipe de Vendas</span>
+      <h2 class="section-title">💼 Gestão Comercial, Pedidos & Expedição</h2>
+      <span class="badge badge-comercial">Equipe de Vendas</span> <span class="badge badge-gestor">Gestor</span>
       <p>
-        O módulo comercial permite o controle de ponta a ponta da carteira de clientes e da fila de entrega de produtos.
+        O módulo comercial permite o controle completo desde o cadastro de clientes, entrada de pedidos, fluxo de fabricação, separação de revendas (tampas), até o despacho e entrega final pela transportadora.
       </p>
       
       <div class="grid-cards">
         <div class="card">
           <div class="card-title">👥 Clientes</div>
-          <div class="card-text">Cadastro de novos clientes com CNPJ/CPF, e-mail, telefone e endereço. O histórico de compras do cliente fica arquivado.</div>
+          <div class="card-text">Cadastro de novos clientes com CNPJ/CPF, dados de contato e endereço de entrega. O histórico de compras do cliente fica associado ao seu cadastro.</div>
         </div>
         <div class="card">
-          <div class="card-title">📝 Pedidos de Venda</div>
-          <div class="card-text">Entrada de novos pedidos detalhando data limite de entrega, produtos selecionados do estoque e quantidades. Os pedidos geram alertas automáticos de prazo no Dashboard.</div>
+          <div class="card-title">📝 Pedidos de Venda & Busca</div>
+          <div class="card-text">Entrada de novos pedidos detalhando prazos e produtos. Há um campo de busca por número do pedido tanto na aba **Pedidos** quanto na **Fila de Produção** para localização imediata.</div>
         </div>
+        <div class="card">
+          <div class="card-title">📦 Itens de Revenda (Tampas)</div>
+          <div class="card-text">Pedidos com itens de revenda exibem um selo visual: <span class="code-span">📦 N revenda</span> (pendente) ou <span class="code-span">📦 revenda ✓</span> (separado). Há um filtro rápido para focar apenas em pedidos com revenda pendente.</div>
+        </div>
+        <div class="card">
+          <div class="card-title">🚨 Bloqueio de Despacho</div>
+          <div class="card-text">O sistema impede o despacho de qualquer pedido que tenha itens de revenda (tampas) pendentes de separação, garantindo a entrega completa ao cliente.</div>
+        </div>
+        <div class="card">
+          <div class="card-title">🚛 Transportadora & Entregues</div>
+          <div class="card-text">Na aba **Transportadora**, a sub-aba **Fila de Expedição** lista os pedidos produzidos prontos para despacho, e a sub-aba **Pedidos Entregues** guarda o histórico de fretes e entregas concluídas.</div>
+        </div>
+        <div class="card">
+          <div class="card-title">🗑️ Exclusão Segura e Estorno</div>
+          <div class="card-text">A exclusão de pedidos é restrita a administradores ou usuários autorizados. Ao excluir um pedido ou item separado, o sistema faz o <strong>estorno automático</strong> das peças de volta ao estoque.</div>
+        </div>
+      </div>
+
+      <div class="alert-box warning">
+        <div class="alert-title">⚠️ Confirmação de Baixa no Estoque</div>
+        Ao clicar em "Separado/Entregue" em um item de revenda (tampa), o sistema exibirá uma confirmação obrigatória antes de dar baixa física nas quantidades do estoque de produtos. Certifique-se de confirmar apenas quando as peças físicas forem realmente separadas no armazém.
       </div>
     </section>
 
@@ -745,6 +766,16 @@
         </div>
         <div class="collapse-content">
           Graças à função de integridade do sistema, ao excluir um lançamento de produção diária, a baixa de estoque que foi feita automaticamente na época é **revertida** (o saldo do produto é devolvido ao estoque), e a movimentação é apagada para evitar saldos fantasmas.
+        </div>
+      </div>
+
+      <div class="collapse-container">
+        <div class="collapse-header" onclick="toggleCollapse(this)">
+          Como funciona o estorno de estoque ao excluir um pedido?
+          <span>▼</span>
+        </div>
+        <div class="collapse-content">
+          Ao excluir um pedido (ou item de pedido) cujas tampas/revendas já tenham sido marcadas como "Separado/Entregue", o sistema realiza o <strong>estorno automático</strong> das quantidades de volta ao saldo do estoque físico, gerando um registro de entrada ("Estorno exclusão pedido").
         </div>
       </div>
 
