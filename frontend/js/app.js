@@ -3913,18 +3913,52 @@ async function loadTransportadora() {
 }
 window.loadTransportadora = loadTransportadora;
 
+function adicionarDiasUteis(dataStr, dias) {
+  if (!dataStr) return '';
+  const parts = dataStr.split('-');
+  let date = new Date(parts[0], parts[1] - 1, parts[2]);
+  let added = 0;
+  while (added < dias) {
+    date.setDate(date.getDate() + 1);
+    const dayOfWeek = date.getDay();
+    if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+      added++;
+    }
+  }
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+window.adicionarDiasUteis = adicionarDiasUteis;
+
+function atualizarPrevisaoEntrega() {
+  const dispatchDate = document.getElementById('desp-data').value;
+  if (dispatchDate) {
+    document.getElementById('desp-previsao').value = adicionarDiasUteis(dispatchDate, 8);
+  }
+}
+window.atualizarPrevisaoEntrega = atualizarPrevisaoEntrega;
+
 async function abrirDespacho(id) {
   const p = await api('/pedidos/' + id);
   document.getElementById('desp-pedido-id').value = id;
-  document.getElementById('desp-cabecalho').innerHTML = `Pedido <strong>${p.numero_pedido}</strong> — ${p.cliente_nome||''}`;
+  
+  // Cabeçalho destacado e legível
+  document.getElementById('desp-cabecalho').innerHTML = `
+    Pedido: <strong style="color:var(--accent); font-size:16px;">${p.numero_pedido}</strong> — Cliente: <strong style="color:var(--text);">${p.cliente_nome||''}</strong><br>
+    Vendedor: <strong style="color:var(--text); font-weight:bold;">${p.vendedor || 'Não informado'}</strong>
+  `;
+  
   document.getElementById('desp-transportadora').value = p.transportadora || '';
   document.getElementById('desp-nf').value = p.nota_fiscal || '';
   document.getElementById('desp-rastreio').value = p.rastreio || '';
   document.getElementById('desp-volumes').value = p.volumes || 1;
   document.getElementById('desp-frete').value = p.frete || 0;
-  document.getElementById('desp-frete-pago').value = p.frete_pago || 0;
-  document.getElementById('desp-data').value = p.data_despacho || new Date().toISOString().slice(0,10);
-  document.getElementById('desp-previsao').value = p.previsao_entrega || '';
+  
+  const dataDespacho = p.data_despacho || new Date().toISOString().slice(0,10);
+  document.getElementById('desp-data').value = dataDespacho;
+  document.getElementById('desp-previsao').value = p.previsao_entrega || adicionarDiasUteis(dataDespacho, 8);
   document.getElementById('desp-obs').value = p.obs_envio || '';
   openModal('modal-despacho');
 }
@@ -3932,13 +3966,14 @@ window.abrirDespacho = abrirDespacho;
 
 async function salvarDespacho() {
   const id = document.getElementById('desp-pedido-id').value;
+  const freteVal = parseFloat(document.getElementById('desp-frete').value) || 0;
   const body = {
     transportadora: document.getElementById('desp-transportadora').value.trim(),
     nota_fiscal: document.getElementById('desp-nf').value.trim(),
     rastreio: document.getElementById('desp-rastreio').value.trim(),
     volumes: parseInt(document.getElementById('desp-volumes').value) || 0,
-    frete: parseFloat(document.getElementById('desp-frete').value) || 0,
-    frete_pago: parseFloat(document.getElementById('desp-frete-pago').value) || 0,
+    frete: freteVal,
+    frete_pago: freteVal,
     data_despacho: document.getElementById('desp-data').value,
     previsao_entrega: document.getElementById('desp-previsao').value,
     obs_envio: document.getElementById('desp-obs').value.trim()
@@ -6914,6 +6949,7 @@ async function openModalMovimentacao(prodId) {
   _setVal('est-mov-responsavel', '');
   _setVal('est-mov-fornecedor', '');
   _setVal('est-mov-custo', '');
+  _setVal('est-mov-nf', '');
   _setVal('est-mov-motivo', '');
   toggleMovTipo();
   openModal('modal-movimentacao');
@@ -6923,9 +6959,11 @@ function toggleMovTipo() {
   const tipo = _getVal('est-mov-tipo');
   const fornecedor = document.getElementById('est-mov-fornecedor-group');
   const custo = document.getElementById('est-mov-custo-group');
+  const nf = document.getElementById('est-mov-nf-group');
   const show = tipo === 'entrada';
   if (fornecedor) fornecedor.style.display = show ? '' : 'none';
   if (custo) custo.style.display = show ? '' : 'none';
+  if (nf) nf.style.display = show ? '' : 'none';
 }
 
 async function salvarMovimentacao() {
@@ -6936,6 +6974,7 @@ async function salvarMovimentacao() {
     responsavel: _getVal('est-mov-responsavel').trim(),
     fornecedor: _getVal('est-mov-fornecedor').trim(),
     custo_unitario: _numVal('est-mov-custo'),
+    nota_fiscal: _getVal('est-mov-nf').trim(),
     observacao: _getVal('est-mov-motivo').trim(),
     motivo: _getVal('est-mov-motivo').trim(),
     data: _getVal('est-mov-data') || new Date().toISOString().slice(0,10)
@@ -6980,7 +7019,10 @@ async function loadMovimentacoes() {
       <td>${fmtDate(m.data)}</td>
       <td>${m.produto_codigo || '—'}</td>
       <td>${m.produto_nome || '—'}</td>
-      <td><span class="pill">${labels[m.tipo] || m.tipo}</span></td>
+      <td>
+        <span class="pill">${labels[m.tipo] || m.tipo}</span>
+        ${m.nota_fiscal ? `<small style="display:block;color:var(--muted);margin-top:2px">NF: ${m.nota_fiscal}</small>` : ''}
+      </td>
       <td>${fmtNum(m.quantidade || 0)} ${m.unidade || ''}</td>
       <td>${fmtNum(m.saldo_anterior || 0)}</td>
       <td>${fmtNum(m.saldo_posterior || 0)}</td>

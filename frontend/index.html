@@ -445,15 +445,14 @@
       <div class="modal" style="max-width:560px;width:95vw">
         <div class="modal-title">📦 Despachar pedido</div>
         <input type="hidden" id="desp-pedido-id">
-        <div id="desp-cabecalho" style="font-size:13px;color:var(--muted);margin-bottom:12px"></div>
+        <div id="desp-cabecalho" style="font-size:14px;color:var(--text);margin-bottom:16px;background:rgba(255,255,255,0.05);padding:10px 12px;border-radius:8px;border-left:4px solid var(--accent);line-height:1.6;"></div>
         <div class="form-grid" style="margin-bottom:12px">
           <div class="form-group" style="grid-column:1/-1"><label>Transportadora</label><input type="text" id="desp-transportadora" placeholder="Ex.: Jamef, Braspress, retirada..."></div>
           <div class="form-group"><label>Nota Fiscal (NF-e)</label><input type="text" id="desp-nf"></div>
-          <div class="form-group"><label>Código de rastreio</label><input type="text" id="desp-rastreio"></div>
+          <div class="form-group"><label>Código de rastreio/cotação</label><input type="text" id="desp-rastreio"></div>
           <div class="form-group"><label>Volumes</label><input type="number" id="desp-volumes" min="0" step="1" value="1"></div>
           <div class="form-group"><label>Frete (R$)</label><input type="number" id="desp-frete" min="0" step="0.01" value="0"></div>
-          <div class="form-group"><label>Frete Pago (R$)</label><input type="number" id="desp-frete-pago" min="0" step="0.01" value="0"></div>
-          <div class="form-group"><label>Data do despacho</label><input type="date" id="desp-data"></div>
+          <div class="form-group"><label>Data do despacho</label><input type="date" id="desp-data" onchange="atualizarPrevisaoEntrega()"></div>
           <div class="form-group"><label>Previsão de entrega</label><input type="date" id="desp-previsao"></div>
           <div class="form-group" style="grid-column:1/-1"><label>Observações de envio</label><textarea id="desp-obs" rows="2" placeholder="Ex.: entregar após 14h, retirada no balcão..."></textarea></div>
         </div>
@@ -1753,6 +1752,10 @@
       <div class="form-group" id="est-mov-custo-group">
         <label>Custo Unitário (R$)</label>
         <input type="number" id="est-mov-custo" min="0" step="0.01">
+      </div>
+      <div class="form-group" id="est-mov-nf-group">
+        <label>Nota Fiscal (NF-e)</label>
+        <input type="text" id="est-mov-nf">
       </div>
       <div class="form-group" style="grid-column:1/-1">
         <label>Motivo / Observação</label>

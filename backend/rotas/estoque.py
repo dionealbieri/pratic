@@ -92,6 +92,7 @@ class MovimentacaoIn(BaseModel):
     custo_unitario: Optional[float] = None
     observacao: Optional[str] = None
     data: Optional[str] = None
+    nota_fiscal: Optional[str] = ""
 
 # ─── CATEGORIAS ───────────────────────────────────────────────────────────────
 
@@ -361,11 +362,11 @@ def registrar_movimentacao(m: MovimentacaoIn):
     cur = conn.cursor()
     cur.execute("""INSERT INTO estoque_movimentacoes
                    (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior,
-                    motivo, tipo_perda, responsavel, fornecedor, custo_unitario, observacao, data)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    motivo, tipo_perda, responsavel, fornecedor, custo_unitario, observacao, data, nota_fiscal)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (m.produto_id, m.tipo, m.quantidade, saldo_atual, novo_saldo,
                  m.motivo, m.tipo_perda, m.responsavel, m.fornecedor,
-                 m.custo_unitario, m.observacao, data))
+                 m.custo_unitario, m.observacao, data, m.nota_fiscal))
 
     if saldo_row:
         conn.execute("UPDATE estoque_saldo SET quantidade=?, ultima_atualizacao=datetime('now') WHERE produto_id=?",

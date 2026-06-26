@@ -176,6 +176,7 @@ def init_db():
             custo_unitario REAL,
             observacao TEXT,
             data TEXT NOT NULL,
+            nota_fiscal TEXT,
             criado_em TEXT DEFAULT (datetime('now')),
             FOREIGN KEY (produto_id) REFERENCES estoque_produtos(id)
         );
@@ -478,6 +479,11 @@ def init_db():
         conn.execute("""UPDATE comunicacao_recados SET conversa_usuario_id = autor_id
                         WHERE conversa_usuario_id IS NULL AND autor_setor IS NOT NULL
                           AND autor_setor != 'gestor'""")
+
+    # Migração para adicionar campo nota_fiscal em estoque_movimentacoes
+    cols_mov = [row[1] for row in conn.execute("PRAGMA table_info(estoque_movimentacoes)").fetchall()]
+    if "nota_fiscal" not in cols_mov:
+        conn.execute("ALTER TABLE estoque_movimentacoes ADD COLUMN nota_fiscal TEXT")
 
     # Migração do campo Código/ID:
     # A versão anterior criou um índice UNIQUE apenas em codigo. Isso gerava erro 500
