@@ -5222,7 +5222,20 @@ function fecharProdCombo(idx) {
         pedidoItens[idx].unidade = u;
       }
     } else {
-      pedidoItens[idx].produto_id = null;
+      // Busca frouxa por similaridade
+      const bestId = findBestStockMatch(valor, produtosEstoque || []);
+      if (bestId) {
+        pedidoItens[idx].produto_id = bestId;
+        const matchedProd = (produtosEstoque || []).find(p => p.id === bestId);
+        if (matchedProd && matchedProd.unidade) {
+          const opts = ['unidade','und','milheiro','kg','litro','metro','caixa','pacote'];
+          if (opts.includes(matchedProd.unidade)) {
+            pedidoItens[idx].unidade = matchedProd.unidade;
+          }
+        }
+      } else {
+        pedidoItens[idx].produto_id = null;
+      }
     }
     renderItensPedido();
   }
@@ -5267,6 +5280,19 @@ function renderItensPedido() {
           const opts = ['unidade','und','milheiro','kg','litro','metro','caixa','pacote'];
           if (u && opts.includes(u)) {
             item.unidade = u;
+          }
+        } else {
+          // Busca frouxa por similaridade
+          const bestId = findBestStockMatch(item.descricao, produtosEstoque);
+          if (bestId) {
+            item.produto_id = bestId;
+            const matchedProd = produtosEstoque.find(p => p.id === bestId);
+            if (matchedProd && matchedProd.unidade) {
+              const opts = ['unidade','und','milheiro','kg','litro','metro','caixa','pacote'];
+              if (opts.includes(matchedProd.unidade)) {
+                item.unidade = matchedProd.unidade;
+              }
+            }
           }
         }
       }
@@ -5346,7 +5372,13 @@ async function salvarPedido() {
       if (matches.length === 1) {
         item.produto_id = matches[0].id;
       } else if (!item.produto_id) {
-        item.produto_id = null;
+        // Busca frouxa por similaridade
+        const bestId = findBestStockMatch(item.descricao, produtosEstoque || []);
+        if (bestId) {
+          item.produto_id = bestId;
+        } else {
+          item.produto_id = null;
+        }
       }
     }
   });
