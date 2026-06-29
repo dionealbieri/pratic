@@ -1628,6 +1628,8 @@ async function openModalProducao() {
   aplicarTravaMetaProd();
   document.getElementById('prod-edit-id').value = '';
   document.getElementById('prod-pedido-manual').value = '';
+  const aviso = document.getElementById('prod-pedido-aviso');
+  if (aviso) aviso.textContent = '';
   document.getElementById('prod-pedido').innerHTML = '<option value="">— Sem pedido vinculado —</option>' +
     pedidos.filter(p => p.status !== 'entregue').map(p => `<option value="${p.id}">${p.numero_pedido} — ${p.cliente_nome}</option>`).join('');
   document.getElementById('modal-prod-title').textContent = 'Registrar Produção';
@@ -1652,6 +1654,7 @@ async function openModalProducao() {
 
   toggleFormSimplificado();
   openModal('modal-producao');
+  return pedidos || [];
 }
 
 function toggleFormSimplificado() {
@@ -1961,7 +1964,7 @@ function aplicarTravaMetaProd() {
   el.title = isGestor ? '' : 'Meta global definida pelo gestor — nao editavel';
 }
 async function editarProducao(id, colId, maqId, data, meta, producao, produtoEstoqueId = null, perdaQtd = 0, sobraQtd = 0, pedidoNumero = '') {
-  await openModalProducao();
+  const pedidos = await openModalProducao();
   document.getElementById('prod-edit-id').value = id;
   document.getElementById('prod-colaborador').value = colId;
   document.getElementById('prod-maquina').value = maqId;
@@ -1992,6 +1995,28 @@ async function editarProducao(id, colId, maqId, data, meta, producao, produtoEst
 
   toggleFormSimplificado();
   atualizarTotalProd();
+
+  if (pedidoNumero) {
+    const num = String(pedidoNumero).trim();
+    const achado = (pedidos || []).find(p => String(p.numero_pedido).trim() === num);
+    if (achado) {
+      const sel = document.getElementById('prod-pedido');
+      const aviso = document.getElementById('prod-pedido-aviso');
+      if (sel) {
+        if (![...sel.options].some(o => o.value === String(achado.id))) {
+          const opt = document.createElement('option');
+          opt.value = achado.id;
+          opt.textContent = achado.numero_pedido + ' — ' + achado.cliente_nome;
+          sel.appendChild(opt);
+        }
+        sel.value = String(achado.id);
+      }
+      if (aviso) {
+        aviso.textContent = '✔ Pedido de ' + achado.cliente_nome;
+        aviso.style.color = '#46d369';
+      }
+    }
+  }
 }
 
 async function postProducaoComConfirmacao(payload) {
