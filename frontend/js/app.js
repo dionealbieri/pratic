@@ -3843,7 +3843,7 @@ const STATUS_NEXT_PED={aberto:'em_producao',em_producao:'produzido',produzido:nu
 const STATUS_NEXT_LABEL_PED={aberto:'→ Iniciar',em_producao:'→ Produzido',produzido:null,entregue:null};
 // Considera o item como produzido pela quantidade real, não só pelo campo status (evita divergência)
 const _itemProduzido = i => (((i.qtd_produzida||0) >= i.quantidade) && i.quantidade>0) || i.status==='produzido' || i.status==='entregue';
-const _itemStatusEf = i => i.status==='entregue' ? 'produzido' : (_itemProduzido(i) ? 'produzido' : ((i.qtd_produzida||0)>0 ? 'em_producao' : 'aberto'));
+const _itemStatusEf = i => i.status==='entregue' ? 'produzido' : (_itemProduzido(i) ? 'produzido' : (((i.qtd_produzida||0)>0 || i.status==='em_producao') ? 'em_producao' : 'aberto'));
 
 function switchPedidosTab(tab) {
   ['fila','pedidos','clientes','transportadora'].forEach(t=>{
