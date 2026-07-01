@@ -72,6 +72,13 @@ class StatusItemIn(BaseModel):
 class SepararRevendaIn(BaseModel):
     marcar: bool = True
 
+class ProgramarSeparacaoIn(BaseModel):
+    itens_ids: List[int]
+    data_programada: str
+
+class MarcarSeparadoIn(BaseModel):
+    marcar: bool = True
+
 
 # ─── IMPORTAÇÃO DE PEDIDO POR ARQUIVO ────────────────────────────────────────
 
@@ -1261,6 +1268,112 @@ def fila_producao(status: Optional[str] = None):
     conn.close()
     return [dict(r) for r in rows]
 
+@router.post("/programar-separacao")
+def programar_separacao(body: ProgramarSeparacaoIn, current_user: dict = Depends(get_current_user)):
+    """Cria entradas de programação (data prevista) para os itens informados,
+    permitindo que o estoque antecipe a separação. Não mexe em máquina,
+    colaborador nem em producao_diaria — é só um aviso antecipado.
+    Bloqueia duplicidade: item que já está com separação pendente não pode
+    ser reprogramado até ser marcado como separado."""
+    if not body.itens_ids:
+        raise HTTPException(400, "Informe ao menos um item")
+    hoje = datetime.date.today().isoformat()
+    if (body.data_programada or "") < hoje:
+        raise HTTPException(400, "A data programada não pode ser no passado")
+    conn = get_conn()
+    cur = conn.cursor()
+    criados = 0
+    duplicados = []
+    usuario = current_user.get("nome") or current_user.get("username") or "sistema"
+    for item_id in body.itens_ids:
+        item = cur.execute("SELECT id, quantidade, descricao, status_separacao FROM pedidos_itens WHERE id=?", (item_id,)).fetchone()
+        if not item:
+            continue
+        if item["status_separacao"] == "pendente":
+            duplicados.append({"id": item_id, "descricao": item["descricao"]})
+            continue
+        cur.execute("""INSERT INTO producao_programada (pedido_item_id, data_programada, quantidade_programada)
+                       VALUES (?, ?, ?)""", (item_id, body.data_programada, item["quantidade"]))
+        cur.execute("UPDATE pedidos_itens SET status_separacao='pendente' WHERE id=?", (item_id,))
+        cur.execute("""INSERT INTO auditoria (usuario, acao, entidade, entidade_id, descricao, valor_anterior, valor_novo)
+                       VALUES (?, 'programar_separacao', 'pedidos_itens', ?, ?, ?, ?)""",
+                    (usuario, item_id, f"Item '{item['descricao']}' programado para {body.data_programada}",
+                     item["status_separacao"] or "", "pendente"))
+        criados += 1
+    conn.commit()
+    conn.close()
+    if criados == 0 and duplicados:
+        raise HTTPException(409, "Todos os itens selecionados já estão programados, aguardando separação")
+    return {
+        "mensagem": "Programação enviada para separação",
+        "itens_programados": criados,
+        "itens_duplicados": duplicados,
+    }
+
+@router.get("/separacao")
+def listar_separacao(incluir_separados: bool = False):
+    """Lista de itens programados para o estoque, ordenada pela data programada
+    mais próxima. Por padrão só mostra o que ainda está pendente de separação."""
+    conn = get_conn()
+    query = """
+        SELECT pp.id as programacao_id, pp.data_programada, pp.quantidade_programada,
+               i.id as item_id, i.descricao, i.quantidade, i.status_separacao,
+               p.id as pedido_id, p.numero_pedido,
+               c.razao_social as cliente_nome
+        FROM producao_programada pp
+        JOIN pedidos_itens i ON i.id = pp.pedido_item_id
+        JOIN pedidos p ON p.id = i.pedido_id
+        JOIN pedidos_clientes c ON c.id = p.cliente_id
+    """
+    if not incluir_separados:
+        query += " WHERE i.status_separacao != 'separado' OR i.status_separacao IS NULL"
+    query += " ORDER BY pp.data_programada ASC, pp.id ASC"
+    rows = conn.execute(query).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+@router.delete("/itens/{id}/programacao")
+def cancelar_programacao_item(id: int, current_user: dict = Depends(get_current_user)):
+    """Cancela a programação de separação de um item (uso para corrigir testes
+    ou desfazer um envio por engano). Remove os registros de producao_programada
+    e volta o item ao estado 'nunca programado'. Não mexe em estoque nem em
+    producao_diaria — o pedido/item em si não é afetado."""
+    conn = get_conn()
+    item = conn.execute("SELECT id, descricao, status_separacao FROM pedidos_itens WHERE id=?", (id,)).fetchone()
+    if not item:
+        conn.close()
+        raise HTTPException(404, "Item do pedido não encontrado")
+    usuario = current_user.get("nome") or current_user.get("username") or "sistema"
+    conn.execute("DELETE FROM producao_programada WHERE pedido_item_id=?", (id,))
+    conn.execute("UPDATE pedidos_itens SET status_separacao=NULL WHERE id=?", (id,))
+    conn.execute("""INSERT INTO auditoria (usuario, acao, entidade, entidade_id, descricao, valor_anterior, valor_novo)
+                   VALUES (?, 'cancelar_programacao', 'pedidos_itens', ?, ?, ?, ?)""",
+                (usuario, id, f"Programação cancelada para o item '{item['descricao']}'", item["status_separacao"] or "", ""))
+    conn.commit()
+    conn.close()
+    return {"mensagem": "Programação cancelada"}
+
+@router.post("/itens/{id}/marcar-separado")
+def marcar_item_separado(id: int, body: MarcarSeparadoIn, current_user: dict = Depends(get_current_user)):
+    """Marca (ou desfaz) a separação de um item de produção para o estoque.
+    Não gera movimentação de estoque — a baixa continua acontecendo somente
+    no lançamento da produção diária."""
+    conn = get_conn()
+    item = conn.execute("SELECT id, descricao, status_separacao FROM pedidos_itens WHERE id=?", (id,)).fetchone()
+    if not item:
+        conn.close()
+        raise HTTPException(404, "Item do pedido não encontrado")
+    novo_status = "separado" if body.marcar else "pendente"
+    usuario = current_user.get("nome") or current_user.get("username") or "sistema"
+    conn.execute("UPDATE pedidos_itens SET status_separacao=? WHERE id=?", (novo_status, id))
+    conn.execute("""INSERT INTO auditoria (usuario, acao, entidade, entidade_id, descricao, valor_anterior, valor_novo)
+                   VALUES (?, ?, 'pedidos_itens', ?, ?, ?, ?)""",
+                (usuario, "marcar_separado" if body.marcar else "desfazer_separado", id,
+                 f"Item '{item['descricao']}'", item["status_separacao"] or "", novo_status))
+    conn.commit()
+    conn.close()
+    return {"mensagem": "Item marcado como separado" if body.marcar else "Marcação desfeita", "status_separacao": novo_status}
+
 @router.get("/{id}")
 def buscar_pedido(id: int):
     conn = get_conn()
@@ -1514,6 +1627,8 @@ def deletar_pedido(id: int, current_user = Depends(get_current_user)):
                 """, (produto_id, saldo_posterior))
 
         # 5. Excluir o pedido e suas dependências
+        cur.execute("""DELETE FROM producao_programada WHERE pedido_item_id IN
+                       (SELECT id FROM pedidos_itens WHERE pedido_id=?)""", (id,))
         cur.execute("DELETE FROM pedidos_parcelas WHERE pedido_id=?", (id,))
         cur.execute("DELETE FROM pedidos_itens WHERE pedido_id=?", (id,))
         cur.execute("DELETE FROM pedidos WHERE id=?", (id,))

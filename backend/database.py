@@ -388,6 +388,18 @@ def init_db():
         conn.execute("ALTER TABLE pedidos_itens ADD COLUMN valor_unitario REAL DEFAULT 0")
     if "desconto" not in cols_pi:
         conn.execute("ALTER TABLE pedidos_itens ADD COLUMN desconto REAL DEFAULT 0")
+    if "status_separacao" not in cols_pi:
+        conn.execute("ALTER TABLE pedidos_itens ADD COLUMN status_separacao TEXT")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS producao_programada (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pedido_item_id INTEGER NOT NULL,
+            data_programada TEXT NOT NULL,
+            quantidade_programada REAL NOT NULL,
+            criado_em TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (pedido_item_id) REFERENCES pedidos_itens(id)
+        )
+    """)
     cols_ped = [r[1] for r in conn.execute("PRAGMA table_info(pedidos)").fetchall()]
     if "acrescimo" not in cols_ped:
         conn.execute("ALTER TABLE pedidos ADD COLUMN acrescimo REAL DEFAULT 0")

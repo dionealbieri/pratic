@@ -283,6 +283,7 @@
     <div class="page" id="page-pedidos">
       <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap">
         <button class="btn btn-secondary" id="ptab-fila" onclick="switchPedidosTab('fila')" style="border-color:var(--accent);color:var(--accent)">🏭 Fila de Produção</button>
+        <button class="btn btn-secondary" id="ptab-programacao" onclick="switchPedidosTab('programacao')">🗓️ Programar Separação <span style="font-size:10px;background:var(--danger);color:#fff;padding:1px 6px;border-radius:4px;margin-left:4px;font-weight:700;vertical-align:1px">NOVO</span></button>
         <button class="btn btn-secondary" id="ptab-pedidos" onclick="switchPedidosTab('pedidos')">🧾 Pedidos</button>
         <button class="btn btn-secondary" id="ptab-clientes" onclick="switchPedidosTab('clientes')">👥 Clientes</button>
         <button class="btn btn-secondary" id="ptab-transportadora" onclick="switchPedidosTab('transportadora')">📦 Transportadora</button>
@@ -303,6 +304,32 @@
           <div id="ped-fila-resumo" class="fila-resumo"></div>
         </div>
         <div id="ped-fila-cards"></div>
+      </div>
+
+      <!-- PROGRAMAR SEPARAÇÃO -->
+      <div id="ped-tab-programacao" style="display:none">
+        <div class="flex gap-2 items-center mb-4" style="flex-wrap:wrap">
+          <button class="btn btn-sm btn-secondary" id="prog-view-buscar" onclick="switchProgView('buscar')" style="border-color:var(--accent);color:var(--accent)">🔎 Buscar pedido</button>
+          <button class="btn btn-sm btn-secondary" id="prog-view-agenda" onclick="switchProgView('agenda')">📅 Ver programação</button>
+        </div>
+
+        <div id="prog-view-buscar-pane">
+          <div class="flex gap-2 items-center mb-4" style="flex-wrap:wrap">
+            <input type="text" id="prog-busca" placeholder="Buscar por nº do pedido ou cliente..." onkeyup="if(event.key==='Enter') buscarPedidosProgramacao()" style="min-width:280px;flex:1;max-width:400px">
+            <button class="btn btn-secondary" onclick="buscarPedidosProgramacao()">🔎 Buscar</button>
+          </div>
+          <div id="prog-resultados"></div>
+        </div>
+
+        <div id="prog-view-agenda-pane" style="display:none">
+          <div class="flex items-center justify-between mb-4" style="flex-wrap:wrap;gap:12px">
+            <div id="prog-agenda-resumo" class="fila-resumo"></div>
+            <label style="font-size:13px;color:var(--muted)">
+              <input type="checkbox" id="prog-agenda-incluir-separados" checked onchange="loadProgramacaoAgenda()"> Mostrar já separados
+            </label>
+          </div>
+          <div id="prog-agenda-lista"></div>
+        </div>
       </div>
 
       <!-- PEDIDOS -->
@@ -489,6 +516,7 @@
     <div class="page" id="page-estoque">
       <div class="barra-fixa" style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap">
         <button class="btn btn-secondary" id="tab-produtos" onclick="switchEstoqueTab('produtos')" style="border-color:var(--accent);color:var(--accent)">📦 Produtos</button>
+        <button class="btn btn-secondary" id="tab-separacao" onclick="switchEstoqueTab('separacao')">🗓️ Separação de Produção <span style="font-size:10px;background:var(--danger);color:#fff;padding:1px 6px;border-radius:4px;margin-left:4px;font-weight:700;vertical-align:1px">NOVO</span></button>
         <button class="btn btn-secondary" id="tab-movimentacoes" onclick="switchEstoqueTab('movimentacoes')">📋 Movimentações</button>
         <button class="btn btn-secondary" id="tab-perdas" onclick="switchEstoqueTab('perdas')">⚠️ Perdas</button>
         <button class="btn btn-secondary" id="tab-categorias" onclick="switchEstoqueTab('categorias')">🏷️ Categorias</button>
@@ -531,6 +559,17 @@
             <tbody id="est-produtos-tbody"></tbody>
           </table>
         </div>
+      </div>
+
+      <!-- SEPARAÇÃO DE PRODUÇÃO -->
+      <div id="est-tab-separacao" style="display:none">
+        <div class="flex items-center justify-between mb-4" style="flex-wrap:wrap;gap:12px">
+          <div id="sep-resumo" class="fila-resumo"></div>
+          <label style="font-size:13px;color:var(--muted)">
+            <input type="checkbox" id="sep-incluir-separados" onchange="loadSeparacaoProducao()"> Mostrar já separados
+          </label>
+        </div>
+        <div id="sep-lista"></div>
       </div>
 
       <!-- MOVIMENTAÇÕES -->
@@ -2415,7 +2454,7 @@
   </div>
 </div>
 
-<script src="js/app.js?v=20260629-exp2"></script>
+<script src="js/app.js?v=20260701-progseparacao7"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');
