@@ -7237,6 +7237,8 @@ function _atualizarSugestoesProdutos(prods) {
 
 async function loadProdutos() {
   const catId = _getVal('est-filtro-cat');
+  const btnRelCat = document.getElementById('est-btn-relatorio-cat');
+  if (btnRelCat) btnRelCat.style.display = catId ? '' : 'none';
   let url = '/estoque/produtos';
   if (catId) url += '?categoria_id=' + encodeURIComponent(catId);
 
@@ -8538,12 +8540,14 @@ function gerarListaCompras() {
 function exportarListaCompras(formato) {
   const table = document.getElementById('lista-compras-table');
   if (!table) return;
+  const tituloEl = document.querySelector('#modal-lista-compras .modal-title');
+  const titulo = (tituloEl?.textContent || 'Lista de Compras').replace(/^[^\wÀ-ú]+/, '').trim();
   if (formato === 'pdf') {
     const win = window.open('','_blank');
-    win.document.write(`<html><head><title>Lista de Compras PRATIC</title>
+    win.document.write(`<html><head><title>${titulo} PRATIC</title>
       <style>@page{margin:0}body{font-family:Arial,sans-serif;margin:15mm 15mm 22mm 15mm;font-size:12px;counter-reset:page}table{width:100%;border-collapse:collapse}th{background:#333;color:#fff;padding:8px;text-align:left}td{padding:7px;border-bottom:1px solid #ddd}.print-footer{position:fixed;bottom:8mm;left:15mm;right:15mm;border-top:1px solid #ddd;padding-top:6px;display:flex;justify-content:space-between;font-size:10px;color:#777;font-family:Arial,sans-serif;counter-increment:page}.page-number::after{content:counter(page)}</style>
       </head><body>
-      ${_getEmpresaHeader('Lista de Compras')}
+      ${_getEmpresaHeader(titulo)}
       ${table.outerHTML}
       ${_getPrintFooter()}
       </body></html>`);
@@ -8560,7 +8564,7 @@ function exportarListaCompras(formato) {
     const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `lista_compras_${new Date().toISOString().slice(0,10)}.csv`;
+    a.download = `${titulo.toLowerCase().replace(/[^a-z0-9]+/g,'_')}_${new Date().toISOString().slice(0,10)}.csv`;
     a.click();
   }
 }
@@ -9363,7 +9367,12 @@ window.imprimirPedido = imprimirPedido;
 
 async function gerarListaComprasEstoque() {
   try {
-    const todos = await api('/estoque/produtos');
+    const catId = _getVal('est-filtro-cat');
+    const catSel = document.getElementById('est-filtro-cat');
+    const catNome = catId && catSel ? catSel.selectedOptions[0]?.text : '';
+    let url = '/estoque/produtos';
+    if (catId) url += '?categoria_id=' + encodeURIComponent(catId);
+    const todos = await api(url);
     const itens = todos.filter(p => {
       const qtd = Number(p.quantidade_atual || 0);
       const min = Number(p.estoque_minimo || 0);
@@ -9371,7 +9380,7 @@ async function gerarListaComprasEstoque() {
     });
 
     if (!itens.length) {
-      showAlert('Nenhum produto em falta ou abaixo do mínimo no estoque!');
+      showAlert(catId ? `Nenhum produto em falta ou abaixo do mínimo em "${catNome}"!` : 'Nenhum produto em falta ou abaixo do mínimo no estoque!');
       return;
     }
 
@@ -9424,12 +9433,74 @@ async function gerarListaComprasEstoque() {
 
     const titleEl = document.querySelector('#modal-lista-compras .modal-title');
     if (titleEl) {
-      titleEl.textContent = '🛒 Lista de Compras (Estoque)';
+      titleEl.textContent = catId ? `🛒 Lista de Compras (Estoque) — ${catNome}` : '🛒 Lista de Compras (Estoque)';
     }
 
     openModal('modal-lista-compras');
   } catch(e) {
     showAlert('Erro ao gerar lista de compras: ' + e.message, 'danger');
+  }
+}
+
+async function gerarRelatorioCategoriaEstoque() {
+  const catId = _getVal('est-filtro-cat');
+  if (!catId) { showAlert('Selecione uma categoria primeiro', 'warn'); return; }
+  const catSel = document.getElementById('est-filtro-cat');
+  const catNome = catSel?.selectedOptions[0]?.text || 'Categoria';
+
+  try {
+    const itens = await api('/estoque/produtos?categoria_id=' + encodeURIComponent(catId));
+    if (!itens.length) { showAlert(`Nenhum produto cadastrado em "${catNome}"`, 'warn'); return; }
+
+    itens.sort((a, b) => (a.nome || '').toLowerCase().localeCompare((b.nome || '').toLowerCase()));
+
+    const totalItens = itens.length;
+    const emFalta = itens.filter(p => Number(p.quantidade_atual || 0) <= 0).length;
+    const baixo = itens.filter(p => {
+      const qtd = Number(p.quantidade_atual || 0);
+      const min = Number(p.estoque_minimo || 0);
+      return min > 0 && qtd > 0 && qtd <= min;
+    }).length;
+    const qtdTotal = itens.reduce((s, p) => s + Number(p.quantidade_atual || 0), 0);
+
+    document.getElementById('modal-lista-compras-content').innerHTML = `
+      <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
+        ${totalItens} produto(s) · ${fmtNum(qtdTotal)} un. em estoque no total · ${emFalta} em falta · ${baixo} abaixo do mínimo.
+      </p>
+      <div class="table-wrap">
+        <table id="lista-compras-table">
+          <thead>
+            <tr>
+              <th>Código</th>
+              <th>Produto</th>
+              <th>Marca</th>
+              <th>Qtd. Atual</th>
+              <th>Mínimo</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${itens.map(p => {
+              const st = _statusProduto(p);
+              return `<tr>
+                <td><strong>${p.codigo || '—'}</strong></td>
+                <td><strong>${p.nome || ''}</strong></td>
+                <td>${p.marca || '—'}</td>
+                <td>${fmtNum(p.quantidade_atual || 0)} ${p.unidade || 'un'}</td>
+                <td>${fmtNum(p.estoque_minimo || 0)} ${p.unidade || 'un'}</td>
+                <td><span class="pill ${st.classe}">${st.texto}</span></td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>`;
+
+    const titleEl = document.querySelector('#modal-lista-compras .modal-title');
+    if (titleEl) titleEl.textContent = `📄 Relatório de Estoque — ${catNome}`;
+
+    openModal('modal-lista-compras');
+  } catch(e) {
+    showAlert('Erro ao gerar relatório da categoria: ' + e.message, 'danger');
   }
 }
 
