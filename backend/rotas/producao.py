@@ -20,6 +20,7 @@ class ProducaoIn(BaseModel):
     pedido_id: Optional[int] = None
     pedido_numero: Optional[str] = None
     confirmado: Optional[bool] = False
+    movimentacao_manual: Optional[bool] = False
 
 @router.get("/")
 def listar(mes: Optional[str] = None, colaborador_id: Optional[int] = None):
@@ -127,7 +128,9 @@ def registrar(p: ProducaoIn, current_user = Depends(get_current_user)):
                          (p.produto_estoque_id, novo_saldo))
 
     # ── Registrar perda mesmo sem estoque vinculado
-    elif perda > 0:
+    # (pulado quando o frontend já fez as movimentações manualmente por produto,
+    # caso de lançamento com múltiplos produtos — evita duplicar/atribuir errado)
+    elif perda > 0 and not p.movimentacao_manual:
         # Tenta encontrar qualquer produto cadastrado para registrar a perda
         # Se não tiver produto, registra só na producao_diaria (já salvo acima)
         primeiro_produto = conn.execute(
@@ -306,7 +309,7 @@ def atualizar(id: int, p: ProducaoIn, current_user = Depends(get_current_user)):
                 cur.execute("INSERT INTO estoque_saldo (produto_id, quantidade) VALUES (?, ?)",
                              (p.produto_estoque_id, novo_saldo))
     
-        elif perda > 0:
+        elif perda > 0 and not p.movimentacao_manual:
             primeiro_produto = cur.execute(
                 "SELECT id FROM estoque_produtos WHERE ativo=1 LIMIT 1"
             ).fetchone()

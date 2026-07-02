@@ -18,29 +18,44 @@ def _periodo_where(alias: str = "p", mes_ini: Optional[str] = None, mes_fim: Opt
 @router.get("/evolucao-mensal")
 def evolucao_mensal(mes_ini: Optional[str] = None, mes_fim: Optional[str] = None):
     conn = get_conn()
-    extra_where, params = _periodo_where("p", mes_ini, mes_fim)
+    extra_where, params = _periodo_where("pd", mes_ini, mes_fim)
     where_sql = " AND ".join(["LOWER(c.tipo) IN (SELECT LOWER(nome) FROM colaborador_tipos WHERE aparece_producao = 1)"] + extra_where)
+    # Agrega primeiro por (colaborador, dia) — um colaborador pode ter mais de um
+    # lançamento no mesmo dia (ex: duas máquinas), e contar linhas direto inflava
+    # "dias trabalhados" e distorcia médias/excedente (meta subtraída em dobro).
     rows = conn.execute(f"""
+        WITH por_dia AS (
+            SELECT
+                p.colaborador_id,
+                p.mes_referencia,
+                p.data,
+                SUM(p.producao) as producao_dia,
+                COALESCE(SUM(p.perda_quantidade), 0) as perda_dia,
+                COALESCE(SUM(p.sobra_quantidade), 0) as sobra_dia,
+                MAX(p.meta) as meta_dia
+            FROM producao_diaria p
+            GROUP BY p.colaborador_id, p.data, p.mes_referencia
+        )
         SELECT 
-            p.mes_referencia,
+            pd.mes_referencia,
             c.id as colaborador_id,
             c.nome as colaborador,
-            SUM(p.producao) as total_producao,
-            COALESCE(SUM(p.perda_quantidade), 0) as total_perdas,
-            COALESCE(SUM(p.sobra_quantidade), 0) as total_sobras,
-            COUNT(CASE WHEN p.producao > 0 THEN 1 END) as dias_trabalhados,
-            AVG(CASE WHEN p.producao > 0 THEN p.producao ELSE NULL END) as media_diaria,
-            AVG(p.meta) as meta_media,
-            SUM(CASE WHEN p.excedente > 0 THEN p.excedente ELSE 0 END) as excedente_positivo,
-            SUM(CASE WHEN p.excedente < 0 THEN p.excedente ELSE 0 END) as excedente_negativo,
-            SUM(p.excedente) as excedente_total,
-            COUNT(CASE WHEN p.producao >= p.meta THEN 1 END) as dias_acima_meta,
-            COUNT(CASE WHEN p.producao > 0 AND p.producao < p.meta THEN 1 END) as dias_abaixo_meta
-        FROM producao_diaria p
-        JOIN colaboradores c ON p.colaborador_id = c.id
+            SUM(pd.producao_dia) as total_producao,
+            SUM(pd.perda_dia) as total_perdas,
+            SUM(pd.sobra_dia) as total_sobras,
+            COUNT(CASE WHEN pd.producao_dia > 0 THEN 1 END) as dias_trabalhados,
+            AVG(CASE WHEN pd.producao_dia > 0 THEN pd.producao_dia ELSE NULL END) as media_diaria,
+            AVG(pd.meta_dia) as meta_media,
+            SUM(CASE WHEN (pd.producao_dia - pd.meta_dia) > 0 THEN (pd.producao_dia - pd.meta_dia) ELSE 0 END) as excedente_positivo,
+            SUM(CASE WHEN (pd.producao_dia - pd.meta_dia) < 0 THEN (pd.producao_dia - pd.meta_dia) ELSE 0 END) as excedente_negativo,
+            SUM(pd.producao_dia - pd.meta_dia) as excedente_total,
+            COUNT(CASE WHEN pd.producao_dia >= pd.meta_dia THEN 1 END) as dias_acima_meta,
+            COUNT(CASE WHEN pd.producao_dia > 0 AND pd.producao_dia < pd.meta_dia THEN 1 END) as dias_abaixo_meta
+        FROM por_dia pd
+        JOIN colaboradores c ON pd.colaborador_id = c.id
         WHERE {where_sql}
-        GROUP BY p.mes_referencia, c.id
-        ORDER BY p.mes_referencia ASC, c.nome ASC
+        GROUP BY pd.mes_referencia, c.id
+        ORDER BY pd.mes_referencia ASC, c.nome ASC
     """, params).fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -101,27 +116,39 @@ def comparativo_operadores():
 @router.get("/ranking-historico")
 def ranking_historico(mes_ini: Optional[str] = None, mes_fim: Optional[str] = None):
     conn = get_conn()
-    extra_where, params = _periodo_where("p", mes_ini, mes_fim)
+    extra_where, params = _periodo_where("pd", mes_ini, mes_fim)
     where_sql = " AND ".join(["LOWER(c.tipo) IN (SELECT LOWER(nome) FROM colaborador_tipos WHERE aparece_producao = 1)"] + extra_where)
     rows = conn.execute(f"""
+        WITH por_dia AS (
+            SELECT
+                p.colaborador_id,
+                p.mes_referencia,
+                p.data,
+                SUM(p.producao) as producao_dia,
+                COALESCE(SUM(p.perda_quantidade), 0) as perda_dia,
+                COALESCE(SUM(p.sobra_quantidade), 0) as sobra_dia,
+                MAX(p.meta) as meta_dia
+            FROM producao_diaria p
+            GROUP BY p.colaborador_id, p.data, p.mes_referencia
+        )
         SELECT 
             c.nome as colaborador,
-            COUNT(DISTINCT p.mes_referencia) as meses_trabalhados,
-            SUM(p.producao) as total_geral,
-            COALESCE(SUM(p.perda_quantidade), 0) as total_perdas,
-            COALESCE(SUM(p.sobra_quantidade), 0) as total_sobras,
-            AVG(CASE WHEN p.producao > 0 THEN p.producao ELSE NULL END) as media_geral,
-            AVG(p.meta) as media_meta,
-            SUM(p.excedente) as saldo_excedente,
-            SUM(CASE WHEN p.excedente > 0 THEN p.excedente ELSE 0 END) as total_excedente_positivo,
-            SUM(CASE WHEN p.excedente < 0 THEN p.excedente ELSE 0 END) as total_excedente_negativo,
-            COUNT(CASE WHEN p.producao >= p.meta THEN 1 END) as dias_acima_meta,
-            COUNT(CASE WHEN p.producao > 0 AND p.producao < p.meta THEN 1 END) as dias_abaixo_meta,
-            COUNT(CASE WHEN p.producao > 0 THEN 1 END) as total_dias,
-            MAX(p.producao) as melhor_dia,
-            MIN(CASE WHEN p.producao > 0 THEN p.producao ELSE NULL END) as pior_dia
-        FROM producao_diaria p
-        JOIN colaboradores c ON p.colaborador_id = c.id
+            COUNT(DISTINCT pd.mes_referencia) as meses_trabalhados,
+            SUM(pd.producao_dia) as total_geral,
+            COALESCE(SUM(pd.perda_dia), 0) as total_perdas,
+            COALESCE(SUM(pd.sobra_dia), 0) as total_sobras,
+            AVG(CASE WHEN pd.producao_dia > 0 THEN pd.producao_dia ELSE NULL END) as media_geral,
+            AVG(pd.meta_dia) as media_meta,
+            SUM(pd.producao_dia - pd.meta_dia) as saldo_excedente,
+            SUM(CASE WHEN (pd.producao_dia - pd.meta_dia) > 0 THEN (pd.producao_dia - pd.meta_dia) ELSE 0 END) as total_excedente_positivo,
+            SUM(CASE WHEN (pd.producao_dia - pd.meta_dia) < 0 THEN (pd.producao_dia - pd.meta_dia) ELSE 0 END) as total_excedente_negativo,
+            COUNT(CASE WHEN pd.producao_dia >= pd.meta_dia THEN 1 END) as dias_acima_meta,
+            COUNT(CASE WHEN pd.producao_dia > 0 AND pd.producao_dia < pd.meta_dia THEN 1 END) as dias_abaixo_meta,
+            COUNT(CASE WHEN pd.producao_dia > 0 THEN 1 END) as total_dias,
+            MAX(pd.producao_dia) as melhor_dia,
+            MIN(CASE WHEN pd.producao_dia > 0 THEN pd.producao_dia ELSE NULL END) as pior_dia
+        FROM por_dia pd
+        JOIN colaboradores c ON pd.colaborador_id = c.id
         WHERE {where_sql}
         GROUP BY c.id
         ORDER BY media_geral DESC
@@ -148,7 +175,6 @@ def resumo_periodo(mes_ini: Optional[str] = None, mes_fim: Optional[str] = None)
             COALESCE(SUM(p.producao), 0) as total_producao,
             COALESCE(SUM(p.perda_quantidade), 0) as total_perdas,
             COALESCE(SUM(p.sobra_quantidade), 0) as total_sobras,
-            COALESCE(SUM(p.excedente), 0) as saldo_excedente,
             COUNT(p.id) as total_lancamentos,
             COUNT(DISTINCT p.data) as dias_registrados
         FROM producao_diaria p
@@ -156,25 +182,50 @@ def resumo_periodo(mes_ini: Optional[str] = None, mes_fim: Optional[str] = None)
         WHERE {where_sql}
     """, params).fetchone()
 
+    # Saldo excedente à parte: precisa agregar por (colaborador, dia) primeiro,
+    # senão um colaborador com 2 lançamentos no mesmo dia (ex: duas máquinas)
+    # teria a meta subtraída em dobro.
+    extra_where_pd, params_pd = _periodo_where("pd", mes_ini, mes_fim)
+    where_sql_pd = " AND ".join(["LOWER(c.tipo) IN (SELECT LOWER(nome) FROM colaborador_tipos WHERE aparece_producao = 1)"] + extra_where_pd)
+    excedente_row = conn.execute(f"""
+        WITH por_dia AS (
+            SELECT p.colaborador_id, p.mes_referencia, p.data,
+                   SUM(p.producao) as producao_dia, MAX(p.meta) as meta_dia
+            FROM producao_diaria p
+            GROUP BY p.colaborador_id, p.data, p.mes_referencia
+        )
+        SELECT COALESCE(SUM(pd.producao_dia - pd.meta_dia), 0) as saldo_excedente
+        FROM por_dia pd
+        JOIN colaboradores c ON pd.colaborador_id = c.id
+        WHERE {where_sql_pd}
+    """, params_pd).fetchone()
+
     melhor = conn.execute(f"""
+        WITH por_dia AS (
+            SELECT p.colaborador_id, p.mes_referencia, p.data,
+                   SUM(p.producao) as producao_dia, MAX(p.meta) as meta_dia
+            FROM producao_diaria p
+            GROUP BY p.colaborador_id, p.data, p.mes_referencia
+        )
         SELECT
             c.nome as colaborador,
-            COALESCE(SUM(p.producao), 0) as total_producao,
-            COUNT(CASE WHEN p.producao > 0 THEN 1 END) as dias_trabalhados,
-            AVG(CASE WHEN p.producao > 0 THEN p.producao ELSE NULL END) as media_diaria,
-            COALESCE(SUM(p.excedente), 0) as saldo_excedente
-        FROM producao_diaria p
-        JOIN colaboradores c ON p.colaborador_id = c.id
-        WHERE {where_sql}
+            COALESCE(SUM(pd.producao_dia), 0) as total_producao,
+            COUNT(CASE WHEN pd.producao_dia > 0 THEN 1 END) as dias_trabalhados,
+            AVG(CASE WHEN pd.producao_dia > 0 THEN pd.producao_dia ELSE NULL END) as media_diaria,
+            COALESCE(SUM(pd.producao_dia - pd.meta_dia), 0) as saldo_excedente
+        FROM por_dia pd
+        JOIN colaboradores c ON pd.colaborador_id = c.id
+        WHERE {where_sql_pd}
         GROUP BY c.id
         HAVING total_producao > 0
         ORDER BY media_diaria DESC
         LIMIT 1
-    """, params).fetchone()
+    """, params_pd).fetchone()
 
     conn.close()
 
     d = dict(resumo) if resumo else {}
+    d["saldo_excedente"] = dict(excedente_row).get("saldo_excedente", 0) if excedente_row else 0
     total = d.get("total_producao") or 0
     dias = d.get("dias_registrados") or 0
     perdas = d.get("total_perdas") or 0

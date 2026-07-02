@@ -1609,7 +1609,7 @@ let prodItens = [];
 let prodEstoqueCache = [];
 let prodRevendaCache = [];
 let revendaProdutos = [];
-const TIPOS_PERDA_MOD = ['Quebra','Defeito','Contaminação','Mal formado','Rebarba','Fora de especificação','Outros'];
+const TIPOS_PERDA_MOD = ['Quebra','Defeito','Contaminação','Mal formado','Rebarba','Fora de especificação','Falta na embalagem','Outros'];
 
 async function openModalProducao() {
   const [mqs, cols, prods, pedidos] = await Promise.all([
@@ -2149,13 +2149,18 @@ async function executarSalvarProducao() {
       } else {
         // Múltiplos produtos válidos:
         // 1. Registra a produção diária principal sem vincular a um produto estoque
-        // (evitando que o backend dê baixa da soma total em um único produto)
+        // (evitando que o backend dê baixa da soma total em um único produto), mas
+        // envia a SOMA de perda/sobra de todos os itens para os relatórios ficarem
+        // corretos — a baixa de estoque em si é feita item a item logo abaixo.
+        const totalPerda = itensValidos.reduce((s, i) => s + (i.perda || 0), 0);
+        const totalSobra = itensValidos.reduce((s, i) => s + (i.sobra || 0), 0);
         res = await postProducaoComConfirmacao({
           colaborador_id: colId, maquina_id: maqId, data, meta,
           producao: totalProducao,
           produto_estoque_id: null,
-          perda_quantidade: 0,
-          sobra_quantidade: 0,
+          perda_quantidade: totalPerda,
+          sobra_quantidade: totalSobra,
+          movimentacao_manual: true,
           pedido_numero: pedidoManual || null
         });
 

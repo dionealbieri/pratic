@@ -218,6 +218,7 @@
           <option value="Mal formado">Mal formado</option>
           <option value="Rebarba">Rebarba</option>
           <option value="Fora de especificação">Fora de especificação</option>
+          <option value="Falta na embalagem">Falta na embalagem</option>
           <option value="Outros">Outros</option>
         </select>
       </div>
@@ -658,7 +659,7 @@ async function loadProducao() {
 let prodItens = [];
 let prodEstoqueCache = [];
 let temAcessoSimplificado = false;
-const TIPOS_PERDA_MOD = ['Quebra','Defeito','Contaminação','Mal formado','Rebarba','Fora de especificação','Outros'];
+const TIPOS_PERDA_MOD = ['Quebra','Defeito','Contaminação','Mal formado','Rebarba','Fora de especificação','Falta na embalagem','Outros'];
 
 async function openModalProducao() {
   const [mqs, cols, prods, pedidos] = await Promise.all([
@@ -836,16 +837,24 @@ async function salvarProducao() {
       await req('/producao/'+editId,'PUT',{colaborador_id:colId,maquina_id:maqId,data,meta,producao:item.producao||0,produto_estoque_id:item.produto_id,perda_quantidade:item.perda||0,sobra_quantidade:item.sobra||0});
       showAlertProd('Produção atualizada!');
     } else {
-      const itensValidos=prodItens.filter(i=>(i.producao||0)>0||(i.perda||0)>0);
+      const itensValidos=prodItens.filter(i=>(i.producao||0)>0||(i.perda||0)>0||(i.sobra||0)>0);
       if(!itensValidos.length){showAlertProd('Informe pelo menos uma produção','danger');return;}
-      const primItem=itensValidos[0];
-      await req('/producao/','POST',{colaborador_id:colId,maquina_id:maqId,data,meta,producao:totalProducao,produto_estoque_id:primItem.produto_id,perda_quantidade:primItem.perda||0,perda_tipo:primItem.tipo_perda,sobra_quantidade:primItem.sobra||0,pedido_numero:pedidoManual||null});
-      for(let i=1;i<itensValidos.length;i++){
-        const item=itensValidos[i];
-        if(item.produto_id&&(item.producao>0||item.perda>0)){
-          if(item.producao>0) await req('/estoque/movimentacoes','POST',{produto_id:item.produto_id,tipo:'saida',quantidade:item.producao,motivo:'Produção diária — '+data,data});
-          if(item.perda>0) await req('/estoque/movimentacoes','POST',{produto_id:item.produto_id,tipo:'perda',quantidade:item.perda,motivo:'Perda na produção',tipo_perda:item.tipo_perda,data});
-          if(item.sobra>0) await req('/estoque/movimentacoes','POST',{produto_id:item.produto_id,tipo:'sobra',quantidade:item.sobra,motivo:'Sobra de produção',data});
+      if(itensValidos.length===1){
+        const item=itensValidos[0];
+        await req('/producao/','POST',{colaborador_id:colId,maquina_id:maqId,data,meta,producao:totalProducao,produto_estoque_id:item.produto_id,perda_quantidade:item.perda||0,perda_tipo:item.tipo_perda,sobra_quantidade:item.sobra||0,pedido_numero:pedidoManual||null});
+      } else {
+        // Múltiplos produtos: registro principal sem vincular produto (evita debitar
+        // a soma total de tudo num produto só), soma perda/sobra pros relatórios,
+        // e faz a baixa de estoque item a item, cada um com sua própria quantidade.
+        const totalPerda=itensValidos.reduce((s,i)=>s+(i.perda||0),0);
+        const totalSobra=itensValidos.reduce((s,i)=>s+(i.sobra||0),0);
+        await req('/producao/','POST',{colaborador_id:colId,maquina_id:maqId,data,meta,producao:totalProducao,produto_estoque_id:null,perda_quantidade:totalPerda,sobra_quantidade:totalSobra,movimentacao_manual:true,pedido_numero:pedidoManual||null});
+        for(const item of itensValidos){
+          if(item.produto_id&&(item.producao>0||item.perda>0||item.sobra>0)){
+            if(item.producao>0) await req('/estoque/movimentacoes','POST',{produto_id:item.produto_id,tipo:'saida',quantidade:item.producao,motivo:'Produção diária — '+data,data});
+            if(item.perda>0) await req('/estoque/movimentacoes','POST',{produto_id:item.produto_id,tipo:'perda',quantidade:item.perda,motivo:'Perda na produção',tipo_perda:item.tipo_perda,data});
+            if(item.sobra>0) await req('/estoque/movimentacoes','POST',{produto_id:item.produto_id,tipo:'sobra',quantidade:item.sobra,motivo:'Sobra de produção',data});
+          }
         }
       }
       showAlertProd('Produção registrada! Total: '+fmtNum(totalProducao)+' peças');
