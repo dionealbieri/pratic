@@ -4899,9 +4899,9 @@ async function toggleProgramacaoPedido(pedidoId) {
 window.toggleProgramacaoPedido = toggleProgramacaoPedido;
 
 function _sepBadge(status) {
-  if (status === 'separado') return '<span style="font-size:11px;padding:2px 8px;border-radius:6px;background:var(--surface2);color:var(--muted);border:1px solid var(--border)">Separado</span>';
-  if (status === 'pendente') return '<span style="font-size:11px;padding:2px 8px;border-radius:6px;background:rgba(230,150,50,0.15);color:#e69632">Aguardando separação</span>';
-  return '';
+  if (status === 'separado') return '<span class="pill pill-success">✅ Separado</span>';
+  if (status === 'pendente') return '<span class="pill pill-warn">⏳ Aguardando separação</span>';
+  return '<span class="pill pill-slate">— Não programado</span>';
 }
 
 async function loadProgramacaoItens(pedidoId) {
@@ -4916,8 +4916,9 @@ async function loadProgramacaoItens(pedidoId) {
     <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
       ${itens.map(i => {
         const bloqueado = i.status_separacao === 'pendente' || i.status_separacao === 'separado';
+        const corBorda = i.status_separacao === 'separado' ? 'var(--success)' : (i.status_separacao === 'pendente' ? 'var(--accent)' : 'transparent');
         return `
-        <label style="display:flex;align-items:center;gap:10px;font-size:13px;padding:6px 0;border-bottom:1px solid var(--border);${bloqueado ? 'opacity:0.6' : ''}">
+        <label style="display:flex;align-items:center;gap:10px;font-size:13px;padding:6px 10px;border-bottom:1px solid var(--border);border-left:3px solid ${corBorda};${bloqueado ? 'opacity:0.85' : ''}">
           <input type="checkbox" class="prog-item-check" value="${i.id}" ${bloqueado ? 'disabled' : 'checked'}>
           <span style="flex:1">${i.descricao}</span>
           <span style="color:var(--muted)">${fmtNum(i.quantidade)} ${i.unidade || ''}</span>
@@ -4967,6 +4968,27 @@ window.enviarProgramacaoSeparacao = enviarProgramacaoSeparacao;
 
 // ─── SEPARAÇÃO DE PRODUÇÃO (aba Estoque, uso do estoque) ────────────────────
 
+let _sepGruposCache = [];
+
+const _AVATAR_PALETTE = [
+  { bg: 'rgba(168,85,247,.18)', fg: '#a855f7' },   // roxo
+  { bg: 'rgba(20,184,166,.18)', fg: '#14b8a6' },   // teal
+  { bg: 'rgba(236,72,153,.18)', fg: '#ec4899' },   // rosa
+  { bg: 'rgba(59,130,246,.18)', fg: '#3b82f6' },   // azul
+  { bg: 'rgba(240,180,41,.18)', fg: '#f0b429' },   // âmbar
+];
+
+function _avatarProduto(descricao) {
+  const texto = (descricao || '').trim();
+  let hash = 0;
+  for (let i = 0; i < texto.length; i++) hash = (hash * 31 + texto.charCodeAt(i)) >>> 0;
+  const cor = _AVATAR_PALETTE[hash % _AVATAR_PALETTE.length];
+  const palavras = texto.split(/\s+/).filter(Boolean);
+  let iniciais = palavras.slice(0, 2).map(p => p[0]).join('').toUpperCase();
+  if (!iniciais) iniciais = '?';
+  return { bg: cor.bg, fg: cor.fg, iniciais };
+}
+
 async function loadSeparacaoProducao() {
   const cont = document.getElementById('sep-lista');
   const resumoEl = document.getElementById('sep-resumo');
@@ -5002,32 +5024,114 @@ async function loadSeparacaoProducao() {
   }
 
   if (!lista.length) { cont.innerHTML = '<p style="color:var(--muted)">Nenhum item programado no momento.</p>'; return; }
-  cont.innerHTML = lista.map(it => {
-    const separado = it.status_separacao === 'separado';
-    const dias = diasRestantes(it.data_programada);
-    let dataCor = 'var(--muted)';
-    let dataLabel = 'Programado ' + it.data_programada;
-    if (!separado && dias !== null) {
-      if (dias < 0) { dataCor = 'var(--danger)'; dataLabel = `⚠ Atrasado há ${Math.abs(dias)}d (${it.data_programada})`; }
-      else if (dias === 0) { dataCor = 'var(--warn)'; dataLabel = `⚠ Programado para hoje`; }
+
+  // Agrupar por produto, somando a quantidade dos vários pedidos
+  const gruposMap = {};
+  lista.forEach(it => {
+    const key = (it.descricao || '(sem descrição)').trim();
+    if (!gruposMap[key]) gruposMap[key] = { descricao: key, itens: [] };
+    gruposMap[key].itens.push(it);
+  });
+  _sepGruposCache = Object.values(gruposMap).map(g => {
+    const pedidosSet = new Set(g.itens.map(i => i.numero_pedido));
+    const pendentes = g.itens.filter(i => i.status_separacao !== 'separado');
+    const totalQtd = g.itens.reduce((s, i) => s + (i.quantidade || 0), 0);
+    const dataMaisProxima = pendentes.map(i => i.data_programada).filter(Boolean).sort()[0] || null;
+    return { ...g, pedidosCount: pedidosSet.size, pendentesCount: pendentes.length, separadosCount: g.itens.length - pendentes.length, totalQtd, dataMaisProxima };
+  }).sort((a, b) => {
+    if (a.dataMaisProxima && b.dataMaisProxima) return a.dataMaisProxima.localeCompare(b.dataMaisProxima);
+    if (a.dataMaisProxima) return -1;
+    if (b.dataMaisProxima) return 1;
+    return a.descricao.localeCompare(b.descricao);
+  });
+
+  cont.innerHTML = _sepGruposCache.map((g, idx) => {
+    const dias = diasRestantes(g.dataMaisProxima);
+    let urgenciaBadge = '<span class="pill pill-success">✅ Tudo separado</span>';
+    if (g.pendentesCount > 0) {
+      if (dias !== null && dias < 0) urgenciaBadge = `<span class="pill pill-danger">⚠ Atrasado há ${Math.abs(dias)}d</span>`;
+      else if (dias === 0) urgenciaBadge = `<span class="pill pill-warn">⚠ Hoje</span>`;
+      else urgenciaBadge = `<span class="pill pill-slate">📅 ${g.dataMaisProxima || '-'}</span>`;
     }
+    const avatar = _avatarProduto(g.descricao);
+    const itemRow = (it) => {
+      const separado = it.status_separacao === 'separado';
+      const diasIt = diasRestantes(it.data_programada);
+      let dataCor = 'var(--muted)';
+      let dataLabel = 'Programado ' + it.data_programada;
+      if (!separado && diasIt !== null) {
+        if (diasIt < 0) { dataCor = 'var(--danger)'; dataLabel = `⚠ Atrasado há ${Math.abs(diasIt)}d`; }
+        else if (diasIt === 0) { dataCor = 'var(--warn)'; dataLabel = '⚠ Hoje'; }
+      }
+      return { separado, dataCor, dataLabel };
+    };
+
+    // Grupo com um único pedido: card compacto, sem accordion (nada extra pra revelar)
+    if (g.itens.length === 1) {
+      const it = g.itens[0];
+      const { separado, dataCor, dataLabel } = itemRow(it);
+      return `
+      <div class="card" style="margin-bottom:8px;padding:12px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <div style="width:36px;height:36px;border-radius:10px;background:${avatar.bg};color:${avatar.fg};display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0">${avatar.iniciais}</div>
+        <div style="flex:1;min-width:200px">
+          <div style="font-size:14px;font-weight:600;letter-spacing:.2px">${g.descricao}</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:1px">${it.numero_pedido} · ${it.cliente_nome || ''}</div>
+        </div>
+        <div style="text-align:right;min-width:80px">
+          <div style="font-size:17px;font-weight:700;line-height:1">${fmtNum(g.totalQtd)}<span style="font-size:11px;color:var(--muted);font-weight:500"> un</span></div>
+          <div style="font-size:11px;color:${dataCor};margin-top:2px;white-space:nowrap">${dataLabel}</div>
+        </div>
+        ${separado
+          ? `<button class="btn btn-sm btn-secondary" onclick="marcarItemSeparado(${it.item_id}, false)" data-perm-movimentar="estoque">↺ Desfazer</button>`
+          : `<button class="btn btn-sm btn-primary" onclick="marcarItemSeparado(${it.item_id}, true)" data-perm-movimentar="estoque">Marcar separado</button>`}
+        <button class="btn btn-sm btn-secondary" onclick="cancelarProgramacaoSeparacaoLista(${it.item_id})" data-perm-deletar="pedidos" title="Cancelar programação">✕</button>
+      </div>`;
+    }
+
+    // Grupo com vários pedidos: card em destaque, com detalhamento expansível
     return `
-    <div class="card" style="margin-bottom:8px;padding:12px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;${separado ? 'opacity:0.65' : ''}">
-      <div style="flex:1;min-width:220px">
-        <div style="font-size:13px;font-weight:500">${it.numero_pedido} <span style="color:var(--muted);font-weight:400">· ${it.cliente_nome || ''}</span></div>
-        <div style="font-size:12px;color:var(--muted);margin-top:2px">${it.descricao} · ${fmtNum(it.quantidade)} un</div>
+    <div class="card" style="margin-bottom:10px;padding:0;overflow:hidden">
+      <div style="padding:16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;cursor:pointer" onclick="toggleSepGrupo(${idx})">
+        <div style="width:44px;height:44px;border-radius:12px;background:${avatar.bg};color:${avatar.fg};display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;flex-shrink:0">${avatar.iniciais}</div>
+        <div style="flex:1;min-width:200px">
+          <div style="font-size:16px;font-weight:700;letter-spacing:.2px">${g.descricao}</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:3px">${g.pedidosCount} pedidos · ${g.pendentesCount} pendente(s)${g.separadosCount ? ' · ' + g.separadosCount + ' já separado(s)' : ''}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:24px;font-weight:800;line-height:1;color:var(--accent)">${fmtNum(g.totalQtd)}<span style="font-size:12px;color:var(--muted);font-weight:600"> un</span></div>
+        </div>
+        ${urgenciaBadge}
+        <span style="font-size:12px;color:var(--accent);white-space:nowrap">Detalhar ▾</span>
       </div>
-      <div style="font-size:12px;color:${dataCor};white-space:nowrap;font-weight:${dataCor === 'var(--muted)' ? '400' : '500'}">${dataLabel}</div>
-      ${separado
-        ? `<button class="btn btn-sm btn-secondary" onclick="marcarItemSeparado(${it.item_id}, false)" data-perm-movimentar="estoque">↺ Desfazer</button>`
-        : `<button class="btn btn-sm btn-primary" onclick="marcarItemSeparado(${it.item_id}, true)" data-perm-movimentar="estoque">Marcar separado</button>`}
-      <button class="btn btn-sm btn-secondary" onclick="cancelarProgramacaoSeparacaoLista(${it.item_id})" data-perm-deletar="pedidos" title="Cancelar programação">✕</button>
-    </div>
-  `;
+      <div id="sep-grupo-${idx}" style="display:none;border-top:1px solid var(--border);padding:4px 16px 12px;background:var(--surface2)">
+        ${g.itens.map(it => {
+          const { separado, dataCor, dataLabel } = itemRow(it);
+          return `
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--border)">
+            <div style="flex:1;min-width:180px">
+              <div style="font-size:13px;font-weight:500">${it.numero_pedido} <span style="color:var(--muted);font-weight:400">· ${it.cliente_nome || ''}</span></div>
+              <div style="font-size:12px;color:var(--muted)">${fmtNum(it.quantidade)} un</div>
+            </div>
+            <div style="font-size:12px;color:${dataCor};white-space:nowrap">${dataLabel}</div>
+            ${separado
+              ? `<button class="btn btn-sm btn-secondary" onclick="marcarItemSeparado(${it.item_id}, false)" data-perm-movimentar="estoque">↺ Desfazer</button>`
+              : `<button class="btn btn-sm btn-primary" onclick="marcarItemSeparado(${it.item_id}, true)" data-perm-movimentar="estoque">Marcar separado</button>`}
+            <button class="btn btn-sm btn-secondary" onclick="cancelarProgramacaoSeparacaoLista(${it.item_id})" data-perm-deletar="pedidos" title="Cancelar programação">✕</button>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
   }).join('');
   if (typeof aplicarPermissoesUI === 'function') aplicarPermissoesUI();
 }
 window.loadSeparacaoProducao = loadSeparacaoProducao;
+
+function toggleSepGrupo(idx) {
+  const el = document.getElementById('sep-grupo-' + idx);
+  if (!el) return;
+  el.style.display = el.style.display === 'none' ? '' : 'none';
+}
+window.toggleSepGrupo = toggleSepGrupo;
 
 async function cancelarProgramacaoSeparacaoLista(itemId) {
   if (!confirm('Cancelar a programação de separação deste item? Isso não afeta o pedido, só remove o agendamento.')) return;
