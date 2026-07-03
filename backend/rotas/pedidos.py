@@ -1557,6 +1557,30 @@ def confirmar_entrega(id: int, body: EntregaIn):
     conn.commit(); conn.close()
     return {"mensagem": "Entrega confirmada", "status": "entregue"}
 
+@router.post("/{id}/desfazer-despacho")
+def desfazer_despacho(id: int, current_user: dict = Depends(get_current_user)):
+    """Desfaz o despacho de um pedido 'enviado', limpando os dados de envio e
+    voltando o status para 'produzido' — o pedido reaparece na fila de
+    expedição como 'a despachar', pronto pra ser reenviado."""
+    conn = get_conn()
+    ped = conn.execute("SELECT id, status, numero_pedido FROM pedidos WHERE id=?", (id,)).fetchone()
+    if not ped:
+        conn.close()
+        raise HTTPException(404, "Pedido não encontrado")
+    if ped["status"] != "enviado":
+        conn.close()
+        raise HTTPException(400, "Só é possível desfazer o envio de pedidos com status 'enviado'")
+    conn.execute("""UPDATE pedidos SET status='produzido', transportadora=NULL, nota_fiscal=NULL,
+                    rastreio=NULL, volumes=NULL, frete=0, frete_pago=0, obs_envio=NULL,
+                    data_despacho=NULL, previsao_entrega=NULL WHERE id=?""", (id,))
+    usuario = current_user.get("nome") or current_user.get("username") or "sistema"
+    conn.execute("""INSERT INTO auditoria (usuario, acao, entidade, entidade_id, descricao, valor_anterior, valor_novo)
+                   VALUES (?, 'desfazer_despacho', 'pedidos', ?, ?, 'enviado', 'produzido')""",
+                (usuario, id, f"Envio desfeito do pedido '{ped['numero_pedido']}'"))
+    conn.commit()
+    conn.close()
+    return {"mensagem": "Envio desfeito, pedido voltou para a fila de expedição", "status": "produzido"}
+
 @router.put("/{id}/status")
 def atualizar_status_pedido(id: int, body: StatusItemIn):
     validos = ["aberto", "em_producao", "produzido", "enviado", "entregue"]

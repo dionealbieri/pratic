@@ -3893,6 +3893,7 @@ function switchPedidosTab(tab) {
 
 async function loadTransportadora() {
   const filtro = document.getElementById('ped-transp-filtro')?.value || 'a_despachar';
+  const busca = (document.getElementById('ped-transp-busca')?.value || '').trim().toLowerCase();
   let rows = await api('/pedidos/');
   const st = p => p.status_efetivo || p.status;
   let lista;
@@ -3900,6 +3901,7 @@ async function loadTransportadora() {
   else if (filtro === 'enviado') lista = rows.filter(p => st(p) === 'enviado');
   else if (filtro === 'entregue') lista = rows.filter(p => st(p) === 'entregue');
   else lista = rows.filter(p => ['enviado','entregue'].includes(st(p)));
+  if (busca) lista = lista.filter(p => (p.numero_pedido || '').toLowerCase().includes(busca));
   lista.sort((a,b) => (a.dias_restantes||99) - (b.dias_restantes||99));
 
   const resumo = document.getElementById('ped-transp-resumo');
@@ -3925,7 +3927,7 @@ async function loadTransportadora() {
         acoes = `<button class="btn btn-sm btn-primary" onclick="abrirDespacho(${p.id})">📦 Despachar</button> <button class="btn btn-sm btn-secondary" onclick="confirmarEntrega(${p.id})">✓ Entregue</button>`;
       }
     } else if (s === 'enviado' && temPermissao('pedidos','editar')) {
-      acoes = `<button class="btn btn-sm btn-secondary" onclick="abrirDespacho(${p.id})">✏️</button> <button class="btn btn-sm btn-primary" onclick="confirmarEntrega(${p.id})">✓ Entregue</button>`;
+      acoes = `<button class="btn btn-sm btn-secondary" onclick="verProdutosEnviados(${p.id})">👁 Produtos</button> <button class="btn btn-sm btn-secondary" onclick="abrirDespacho(${p.id})">✏️</button> <button class="btn btn-sm btn-primary" onclick="confirmarEntrega(${p.id})">✓ Entregue</button>`;
     }
     return `<tr>
       <td><strong>${p.numero_pedido}</strong></td>
@@ -4017,6 +4019,53 @@ async function salvarDespacho() {
   } catch(e) { showAlert(e.message, 'danger'); }
 }
 window.salvarDespacho = salvarDespacho;
+
+async function verProdutosEnviados(id) {
+  let p;
+  try { p = await api('/pedidos/' + id); } catch(e) { showAlert('Erro ao carregar pedido: ' + e.message, 'danger'); return; }
+  document.getElementById('envio-detalhe-pedido-id').value = id;
+  const itens = p.itens || [];
+  document.getElementById('envio-detalhe-content').innerHTML = `
+    <div style="font-size:13px;color:var(--text);margin-bottom:16px;background:rgba(255,255,255,0.05);padding:10px 12px;border-radius:8px;border-left:4px solid var(--accent);line-height:1.7">
+      Pedido: <strong style="color:var(--accent)">${p.numero_pedido}</strong> — Cliente: <strong>${p.cliente_nome || ''}</strong><br>
+      Transportadora: <strong>${p.transportadora || '—'}</strong> · NF: <strong>${p.nota_fiscal || '—'}</strong> · Rastreio: <strong>${p.rastreio || '—'}</strong><br>
+      Despacho: <strong>${p.data_despacho ? fmtDate(p.data_despacho) : '—'}</strong> · Volumes: <strong>${p.volumes || '—'}</strong> · Frete pago: <strong>${fmtBRL(p.frete_pago || 0)}</strong>
+    </div>
+    <div style="font-size:13px;font-weight:600;margin-bottom:8px">Produtos enviados</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Produto</th><th>Quantidade</th></tr></thead>
+        <tbody>
+          ${itens.length ? itens.map(i => `<tr><td>${i.descricao}</td><td>${fmtNum(i.quantidade)} ${i.unidade || ''}</td></tr>`).join('') : '<tr><td colspan="2" style="text-align:center;color:var(--muted)">Nenhum item encontrado</td></tr>'}
+        </tbody>
+      </table>
+    </div>`;
+  if (typeof aplicarPermissoesUI === 'function') aplicarPermissoesUI();
+  openModal('modal-envio-detalhe');
+}
+window.verProdutosEnviados = verProdutosEnviados;
+
+function editarEnvioAPartirDoDetalhe() {
+  const id = document.getElementById('envio-detalhe-pedido-id').value;
+  closeModal('modal-envio-detalhe');
+  abrirDespacho(parseInt(id));
+}
+window.editarEnvioAPartirDoDetalhe = editarEnvioAPartirDoDetalhe;
+
+async function desfazerEnvio() {
+  const id = document.getElementById('envio-detalhe-pedido-id').value;
+  if (!id) return;
+  if (!confirm('Desfazer o envio deste pedido? Ele volta para "A despachar" na fila de expedição, e os dados de transportadora/NF/rastreio serão apagados.')) return;
+  try {
+    await api('/pedidos/' + id + '/desfazer-despacho', 'POST');
+    showAlert('Envio desfeito — pedido voltou para a fila de expedição');
+    closeModal('modal-envio-detalhe');
+    const filtroSel = document.getElementById('ped-transp-filtro');
+    if (filtroSel) filtroSel.value = 'a_despachar';
+    loadTransportadora();
+  } catch(e) { showAlert(e.message, 'danger'); }
+}
+window.desfazerEnvio = desfazerEnvio;
 
 async function confirmarEntrega(id) {
   if (!confirm('Confirmar a entrega deste pedido?')) return;

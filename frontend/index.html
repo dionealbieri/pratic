@@ -407,6 +407,7 @@
           <div style="display:flex; align-items:center;">
             <!-- Filtros da Fila de Expedição -->
             <div id="transp-filter-fila" style="display:flex; align-items:center; gap:8px;">
+              <input type="text" id="ped-transp-busca" placeholder="Buscar por nº do pedido..." oninput="loadTransportadora()" style="max-width:190px; height:32px; font-size:12px; padding:4px 8px;">
               <label style="font-size:13px; color:var(--muted)">Mostrar:</label>
               <select id="ped-transp-filtro" onchange="loadTransportadora()" style="min-width:190px; height:32px; font-size:12px; padding:4px 8px;">
                 <option value="a_despachar">A despachar (produzidos)</option>
@@ -485,6 +486,20 @@
               <tbody id="rel-transp-tbody"></tbody>
             </table>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL DETALHES DO ENVIO (produtos enviados, editar, desfazer) -->
+    <div class="modal-overlay" id="modal-envio-detalhe">
+      <div class="modal" style="max-width:560px;width:95vw">
+        <div class="modal-title">🚚 Detalhes do Envio</div>
+        <input type="hidden" id="envio-detalhe-pedido-id">
+        <div id="envio-detalhe-content"></div>
+        <div class="flex gap-2 justify-end" style="margin-top:16px;flex-wrap:wrap">
+          <button class="btn btn-secondary" onclick="closeModal('modal-envio-detalhe')">Fechar</button>
+          <button class="btn btn-secondary" onclick="desfazerEnvio()" data-perm-editar="pedidos">↺ Desfazer Envio</button>
+          <button class="btn btn-primary" onclick="editarEnvioAPartirDoDetalhe()" data-perm-editar="pedidos">✏️ Editar Envio</button>
         </div>
       </div>
     </div>
@@ -2456,7 +2471,7 @@
   </div>
 </div>
 
-<script src="js/app.js?v=20260701-relcategoria1"></script>
+<script src="js/app.js?v=20260701-transpenvio1"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');
