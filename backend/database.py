@@ -1,8 +1,47 @@
 import sqlite3
 import os
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "banco", "pratic.db")
+
+def _pascoa(ano: int) -> date:
+    """Calcula a data da Páscoa (algoritmo de Gauss/computus gregoriano)."""
+    a = ano % 19
+    b = ano // 100
+    c = ano % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    mes = (h + l - 7 * m + 114) // 31
+    dia = ((h + l - 7 * m + 114) % 31) + 1
+    return date(ano, mes, dia)
+
+def _feriados_nacionais(ano: int):
+    """Feriados nacionais fixos + móveis (calculados a partir da Páscoa) de um
+    ano qualquer. Feriados estaduais/municipais não entram aqui — são
+    cadastrados manualmente pelo usuário."""
+    pascoa = _pascoa(ano)
+    return [
+        (f"{ano}-01-01", "Confraternização Universal"),
+        ((pascoa - timedelta(days=48)).isoformat(), "Carnaval (segunda-feira)"),
+        ((pascoa - timedelta(days=47)).isoformat(), "Carnaval (terça-feira)"),
+        ((pascoa - timedelta(days=2)).isoformat(), "Sexta-feira Santa"),
+        (f"{ano}-04-21", "Tiradentes"),
+        (f"{ano}-05-01", "Dia do Trabalho"),
+        ((pascoa + timedelta(days=60)).isoformat(), "Corpus Christi"),
+        (f"{ano}-09-07", "Independência do Brasil"),
+        (f"{ano}-10-12", "Nossa Senhora Aparecida"),
+        (f"{ano}-11-02", "Finados"),
+        (f"{ano}-11-15", "Proclamação da República"),
+        (f"{ano}-11-20", "Dia Nacional de Zumbi e da Consciência Negra"),
+        (f"{ano}-12-25", "Natal"),
+    ]
 
 def get_conn():
     conn = sqlite3.connect(DB_PATH, timeout=30.0)
@@ -467,9 +506,49 @@ def init_db():
     if "pedido_numero" not in cols_prod:
         conn.execute("ALTER TABLE producao_diaria ADD COLUMN pedido_numero TEXT")
 
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS producao_diaria_itens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            producao_diaria_id INTEGER NOT NULL,
+            produto_estoque_id INTEGER,
+            quantidade REAL NOT NULL DEFAULT 0,
+            perda_quantidade REAL DEFAULT 0,
+            sobra_quantidade REAL DEFAULT 0,
+            FOREIGN KEY (producao_diaria_id) REFERENCES producao_diaria(id),
+            FOREIGN KEY (produto_estoque_id) REFERENCES estoque_produtos(id)
+        )
+    """)
+    # Migração única: lançamentos antigos de produto único (já têm produto vinculado
+    # no cabeçalho) ganham a linha de detalhe correspondente, se ainda não existir.
+    # Lançamentos multi-produto antigos não têm como recuperar o detalhe por
+    # produto (só o total ficou salvo) e ficam de fora dessa migração.
+    conn.execute("""
+        INSERT INTO producao_diaria_itens (producao_diaria_id, produto_estoque_id, quantidade, perda_quantidade, sobra_quantidade)
+        SELECT p.id, p.produto_estoque_id, p.producao, p.perda_quantidade, p.sobra_quantidade
+        FROM producao_diaria p
+        WHERE p.produto_estoque_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM producao_diaria_itens pdi WHERE pdi.producao_diaria_id = p.id)
+    """)
+
     cols_cat = [row[1] for row in conn.execute("PRAGMA table_info(estoque_categorias)").fetchall()]
     if "tipo" not in cols_cat:
         conn.execute("ALTER TABLE estoque_categorias ADD COLUMN tipo TEXT DEFAULT 'producao'")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS feriados (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            data TEXT NOT NULL UNIQUE,
+            descricao TEXT,
+            criado_em TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    # Gera automaticamente os feriados nacionais do ano atual e do próximo
+    # (fixos + móveis calculados a partir da Páscoa), toda vez que o sistema
+    # sobe — assim nunca fica desatualizado quando o ano vira. Feriados
+    # estaduais/municipais continuam por conta do cadastro manual.
+    for _ano in (datetime.now().year, datetime.now().year + 1):
+        for _data, _desc in _feriados_nacionais(_ano):
+            conn.execute("INSERT OR IGNORE INTO feriados (data, descricao) VALUES (?, ?)", (_data, _desc))
 
     # Anexos na comunicação (foto/documento por recado)
     cols_com = [row[1] for row in conn.execute("PRAGMA table_info(comunicacao_recados)").fetchall()]

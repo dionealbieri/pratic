@@ -12,7 +12,7 @@
     document.documentElement.setAttribute('data-theme', savedTheme);
   })();
 </script>
-<link rel="stylesheet" href="css/common.css?v=8">
+<link rel="stylesheet" href="css/common.css?v=9">
 <style>
   .nav-item[data-page="comunicacao"] { color:#25d366; }
   .nav-item[data-page="comunicacao"] .icon svg { display:inline-block; }
@@ -197,33 +197,120 @@
 
     <!-- PRODUÇÃO -->
     <div class="page" id="page-producao">
-      <div class="barra-fixa flex items-center justify-between mb-4">
-        <div class="flex gap-2 items-center" style="flex-wrap:wrap">
-          <div class="month-bar" style="margin-bottom:0">
-            <label>Mês:</label>
-            <input type="month" id="prod-mes" onchange="loadProducao()">
-          </div>
-          <div class="month-bar" style="margin-bottom:0">
-            <label>Operador:</label>
-            <select id="prod-filtro-colaborador" onchange="loadProducao()" style="min-width:160px">
-              <option value="">Todos</option>
-            </select>
-          </div>
-        </div>
-        <button class="btn btn-primary" onclick="openModalProducao()" data-perm-criar="producao">+ Registrar Produção</button>
+      <div class="barra-fixa" style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap">
+        <button class="btn btn-secondary" id="prodpg-tab-painel" onclick="switchProducaoPageTab('painel')" style="border-color:var(--accent);color:var(--accent)">🔔 Painel do Dia</button>
+        <button class="btn btn-secondary" id="prodpg-tab-lancamentos" onclick="switchProducaoPageTab('lancamentos')">📋 Lançamentos</button>
+        <button class="btn btn-secondary" id="prodpg-tab-relatorios" onclick="switchProducaoPageTab('relatorios')">📊 Relatórios</button>
+        <button class="btn btn-secondary" id="prodpg-tab-feriados" onclick="switchProducaoPageTab('feriados')">🗓️ Feriados</button>
       </div>
-      <div class="cards-grid" id="prod-cards" style="margin-bottom:20px"></div>
-      <div class="table-wrap">
-        <div class="table-head">
-          <span class="table-head-title">Registros de Produção</span>
+
+      <div id="prodpg-content-painel">
+        <div class="flex items-center justify-between mb-4" style="flex-wrap:wrap;gap:12px">
+          <div class="flex gap-2 items-center">
+            <label style="font-size:13px;color:var(--muted)">Referência:</label>
+            <input type="date" id="painel-data" onchange="loadPainelDoDia()">
+          </div>
         </div>
-        <table>
-          <thead><tr>
-            <th>Data</th><th>Colaborador</th><th>Máquina</th>
-            <th>Meta</th><th>Produção</th><th>Excedente</th><th></th>
-          </tr></thead>
-          <tbody id="prod-tbody"></tbody>
-        </table>
+        <div class="cards-grid" id="painel-cards" style="margin-bottom:20px"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+          <div class="table-wrap">
+            <div class="table-head"><span class="table-head-title">✅ Lançaram produção</span></div>
+            <div id="painel-lancaram" style="padding:14px"></div>
+          </div>
+          <div class="table-wrap">
+            <div class="table-head"><span class="table-head-title">⚠️ Sem lançamento</span></div>
+            <div id="painel-sem-lancamento" style="padding:14px"></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="prodpg-content-lancamentos" style="display:none">
+        <div class="barra-fixa flex items-center justify-between mb-4">
+          <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+            <div class="month-bar" style="margin-bottom:0">
+              <label>Mês:</label>
+              <input type="month" id="prod-mes" onchange="loadProducao()">
+            </div>
+            <div class="month-bar" style="margin-bottom:0">
+              <label>Operador:</label>
+              <select id="prod-filtro-colaborador" onchange="loadProducao()" style="min-width:160px">
+                <option value="">Todos</option>
+              </select>
+            </div>
+          </div>
+          <button class="btn btn-primary" onclick="openModalProducao()" data-perm-criar="producao">+ Registrar Produção</button>
+        </div>
+        <div class="cards-grid" id="prod-cards" style="margin-bottom:20px"></div>
+        <div class="table-wrap">
+          <div class="table-head">
+            <span class="table-head-title">Registros de Produção</span>
+          </div>
+          <table>
+            <thead><tr>
+              <th>Data</th><th>Colaborador</th><th>Máquina</th>
+              <th>Meta</th><th>Produção</th><th>Excedente</th><th></th>
+            </tr></thead>
+            <tbody id="prod-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="prodpg-content-relatorios" style="display:none">
+        <div class="flex items-center justify-between mb-4" style="flex-wrap:wrap;gap:12px">
+          <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+            <select id="prodrel-tipo" onchange="onChangeProdRelTipo()" style="min-width:260px">
+              <option value="matriz">🗂️ Matriz Operador × Categoria</option>
+              <option value="diario">📅 Resumo Diário de Produção</option>
+              <option value="meta">🎯 Meta x Produção</option>
+              <option value="perdas-tipo">📛 Perdas por Tipo</option>
+              <option value="maquina">⚙️ Produtividade por Máquina</option>
+              <option value="ociosidade">🚫 Dias sem Lançamento</option>
+              <option value="comparativo">🔁 Comparativo entre Períodos</option>
+            </select>
+            <input type="month" id="prodrel-mes-ini">
+            <span style="color:var(--muted)">até</span>
+            <input type="month" id="prodrel-mes-fim">
+            <span id="prodrel-comparativo-b-wrap" style="display:none;gap:8px;align-items:center" class="flex">
+              <span style="color:var(--muted);margin-left:8px">| Período B:</span>
+              <input type="month" id="prodrel-mes-ini-b">
+              <span style="color:var(--muted)">até</span>
+              <input type="month" id="prodrel-mes-fim-b">
+            </span>
+            <button class="btn btn-secondary" onclick="loadProdRelatorio()">Filtrar</button>
+          </div>
+          <div class="flex gap-2">
+            <button class="btn btn-secondary" onclick="exportarProdRelatorio('excel')">⬇ Excel</button>
+            <button class="btn btn-secondary" onclick="exportarProdRelatorio('pdf')">⬇ PDF</button>
+          </div>
+        </div>
+        <div class="cards-grid" id="prodrel-cards" style="margin-bottom:20px"></div>
+        <div class="table-wrap">
+          <div class="table-head"><span class="table-head-title" id="prodrel-title">Matriz Operador × Categoria</span></div>
+          <table id="prodrel-table">
+            <thead id="prodrel-thead"></thead>
+            <tbody id="prodrel-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div id="prodpg-content-feriados" style="display:none">
+        <div class="flex items-center justify-between mb-4" style="flex-wrap:wrap;gap:12px">
+          <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+            <input type="date" id="feriado-data">
+            <input type="text" id="feriado-descricao" placeholder="Descrição (ex: Feriado municipal)" style="min-width:220px">
+            <button class="btn btn-primary" onclick="cadastrarFeriado()" data-perm-criar="producao">+ Adicionar</button>
+          </div>
+          <select id="feriado-filtro-ano" onchange="loadFeriados()" style="min-width:100px"></select>
+        </div>
+        <p style="color:var(--muted);font-size:12px;margin-bottom:12px">
+          Os feriados nacionais de 2026 já vêm cadastrados. Feriados estaduais/municipais precisam ser adicionados manualmente aqui — eles entram automaticamente no cálculo de "dias úteis restantes" do relatório Meta x Produção.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Data</th><th>Descrição</th><th></th></tr></thead>
+            <tbody id="feriados-tbody"></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -2471,7 +2558,7 @@
   </div>
 </div>
 
-<script src="js/app.js?v=20260701-transpenvio1"></script>
+<script src="js/app.js?v=20260701-painel1"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');

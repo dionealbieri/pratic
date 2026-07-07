@@ -1,10 +1,16 @@
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from database import get_conn
 from auth_utils import get_current_user
 
 router = APIRouter()
+
+class ProducaoItemIn(BaseModel):
+    produto_estoque_id: Optional[int] = None
+    quantidade: float = 0
+    perda_quantidade: Optional[float] = 0
+    sobra_quantidade: Optional[float] = 0
 
 class ProducaoIn(BaseModel):
     colaborador_id: int
@@ -21,6 +27,30 @@ class ProducaoIn(BaseModel):
     pedido_numero: Optional[str] = None
     confirmado: Optional[bool] = False
     movimentacao_manual: Optional[bool] = False
+    itens: Optional[List[ProducaoItemIn]] = None
+
+def _salvar_itens_detalhe(cur, prod_id: int, p: "ProducaoIn"):
+    """Grava o detalhe por produto de um lançamento em producao_diaria_itens.
+    Se o frontend mandou a lista de itens (lançamento multi-produto), grava cada
+    um. Senão, espelha o cabeçalho como um único item (lançamento de produto
+    único) — assim todo lançamento, novo ou editado, sempre tem detalhe
+    consultável pros relatórios por categoria/produto."""
+    cur.execute("DELETE FROM producao_diaria_itens WHERE producao_diaria_id=?", (prod_id,))
+    if p.itens:
+        for item in p.itens:
+            if (item.quantidade or 0) <= 0 and (item.perda_quantidade or 0) <= 0 and (item.sobra_quantidade or 0) <= 0:
+                continue
+            cur.execute("""INSERT INTO producao_diaria_itens
+                          (producao_diaria_id, produto_estoque_id, quantidade, perda_quantidade, sobra_quantidade)
+                          VALUES (?, ?, ?, ?, ?)""",
+                       (prod_id, item.produto_estoque_id, item.quantidade or 0,
+                        item.perda_quantidade or 0, item.sobra_quantidade or 0))
+    else:
+        cur.execute("""INSERT INTO producao_diaria_itens
+                      (producao_diaria_id, produto_estoque_id, quantidade, perda_quantidade, sobra_quantidade)
+                      VALUES (?, ?, ?, ?, ?)""",
+                   (prod_id, p.produto_estoque_id, p.producao,
+                    p.perda_quantidade or 0, p.sobra_quantidade or 0))
 
 @router.get("/")
 def listar(mes: Optional[str] = None, colaborador_id: Optional[int] = None):
@@ -79,6 +109,7 @@ def registrar(p: ProducaoIn, current_user = Depends(get_current_user)):
                p.produto_estoque_id, p.perda_quantidade or 0, p.sobra_quantidade or 0, p.pedido_numero))
     prod_id = c.lastrowid
     perda = p.perda_quantidade or 0
+    _salvar_itens_detalhe(c, prod_id, p)
 
     # ── Baixa no estoque se produto vinculado
     if p.produto_estoque_id and p.producao > 0:
@@ -261,6 +292,7 @@ def atualizar(id: int, p: ProducaoIn, current_user = Depends(get_current_user)):
                         WHERE id=?""",
                      (p.colaborador_id, p.maquina_id, p.data, mes, p.meta, p.producao, excedente,
                       p.produto_estoque_id, p.perda_quantidade or 0, p.sobra_quantidade or 0, p.pedido_numero, id))
+        _salvar_itens_detalhe(cur, id, p)
                       
         # 3. Registrar novos movimentos de estoque
         col = cur.execute("SELECT nome FROM colaboradores WHERE id=?", (p.colaborador_id,)).fetchone()
@@ -352,6 +384,7 @@ def deletar(id: int):
         _reverter_estoque_producao(cur, id)
         
         # 2. Deletar registro de produção
+        cur.execute("DELETE FROM producao_diaria_itens WHERE producao_diaria_id = ?", (id,))
         cur.execute("DELETE FROM producao_diaria WHERE id = ?", (id,))
         conn.commit()
         return {"mensagem": "Registro removido com sucesso"}
@@ -373,6 +406,44 @@ def listar_meses():
     """).fetchall()
     conn.close()
     return [r[0] for r in rows]
+
+class FeriadoIn(BaseModel):
+    data: str
+    descricao: Optional[str] = None
+
+@router.get("/feriados")
+def listar_feriados(ano: Optional[str] = None):
+    conn = get_conn()
+    query = "SELECT * FROM feriados"
+    params = []
+    if ano:
+        query += " WHERE data LIKE ?"
+        params.append(f"{ano}-%")
+    query += " ORDER BY data ASC"
+    rows = conn.execute(query, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+@router.post("/feriados")
+def criar_feriado(f: FeriadoIn):
+    conn = get_conn()
+    existe = conn.execute("SELECT id FROM feriados WHERE data=?", (f.data,)).fetchone()
+    if existe:
+        conn.close()
+        raise HTTPException(409, "Já existe um feriado cadastrado nessa data")
+    cur = conn.execute("INSERT INTO feriados (data, descricao) VALUES (?, ?)", (f.data, f.descricao))
+    novo_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return {"id": novo_id, "mensagem": "Feriado cadastrado"}
+
+@router.delete("/feriados/{id}")
+def deletar_feriado(id: int):
+    conn = get_conn()
+    conn.execute("DELETE FROM feriados WHERE id=?", (id,))
+    conn.commit()
+    conn.close()
+    return {"mensagem": "Feriado removido"}
 
 @router.get("/resumo/{mes}")
 def resumo_mes(mes: str):

@@ -341,7 +341,7 @@ function showPage(name) {
 
   const handlers = {
     dashboard: loadDashboard,
-    producao: loadProducao,
+    producao: initProducaoPage,
     premiacao: loadPremiacao,
     colaboradores: loadColaboradores,
     maquinas: loadMaquinas,
@@ -1584,6 +1584,409 @@ async function loadProducao() {
   }
 }
 
+function switchProducaoPageTab(tab) {
+  ['painel', 'lancamentos', 'relatorios', 'feriados'].forEach(t => {
+    const pane = document.getElementById('prodpg-content-' + t);
+    const btn = document.getElementById('prodpg-tab-' + t);
+    if (pane) pane.style.display = (t === tab) ? '' : 'none';
+    if (btn) { btn.style.borderColor = (t === tab) ? 'var(--accent)' : ''; btn.style.color = (t === tab) ? 'var(--accent)' : ''; }
+  });
+  if (tab === 'painel') loadPainelDoDia();
+  if (tab === 'lancamentos') loadProducao();
+  if (tab === 'relatorios') {
+    const ini = document.getElementById('prodrel-mes-ini');
+    const fim = document.getElementById('prodrel-mes-fim');
+    if (ini && !ini.value) ini.value = currentMonth();
+    if (fim && !fim.value) fim.value = currentMonth();
+    loadProdRelatorio();
+  }
+  if (tab === 'feriados') loadFeriados();
+}
+window.switchProducaoPageTab = switchProducaoPageTab;
+
+function initProducaoPage() {
+  switchProducaoPageTab('painel');
+}
+window.initProducaoPage = initProducaoPage;
+
+async function loadPainelDoDia() {
+  const dataEl = document.getElementById('painel-data');
+  const cardsEl = document.getElementById('painel-cards');
+  const lancaramEl = document.getElementById('painel-lancaram');
+  const semEl = document.getElementById('painel-sem-lancamento');
+  if (cardsEl) cardsEl.innerHTML = '<p style="color:var(--muted)">Carregando...</p>';
+  try {
+    let url = '/relatorios/painel-do-dia';
+    if (dataEl?.value) url += '?data=' + dataEl.value;
+    const d = await api(url);
+    if (dataEl && !dataEl.value) dataEl.value = d.data;
+    if (cardsEl) {
+      cardsEl.innerHTML = `
+        <div class="card"><div class="card-label">Total Produzido</div><div class="card-value accent">${fmtNum(d.total_producao)}</div><div class="card-sub">${fmtDate(d.data)}</div></div>
+        <div class="card"><div class="card-label">Perdas</div><div class="card-value negative">${fmtNum(d.total_perdas)}</div></div>
+        <div class="card"><div class="card-label">Sobras</div><div class="card-value success">${fmtNum(d.total_sobras)}</div></div>
+        <div class="card"><div class="card-label">Lançamentos</div><div class="card-value info">${d.total_lancamentos}</div></div>
+        <div class="card"><div class="card-label">Sem Lançamento</div><div class="card-value ${d.colaboradores_sem_lancamento.length ? 'negative' : 'success'}">${d.colaboradores_sem_lancamento.length}</div></div>`;
+    }
+    if (lancaramEl) {
+      lancaramEl.innerHTML = d.colaboradores_lancaram.length
+        ? d.colaboradores_lancaram.map(n => `<div style="padding:6px 0;border-bottom:1px solid var(--border)">✅ ${n}</div>`).join('')
+        : '<p style="color:var(--muted)">Ninguém lançou produção nesse dia ainda.</p>';
+    }
+    if (semEl) {
+      semEl.innerHTML = d.colaboradores_sem_lancamento.length
+        ? d.colaboradores_sem_lancamento.map(n => `<div style="padding:6px 0;border-bottom:1px solid var(--border);color:var(--danger)">⚠️ ${n}</div>`).join('')
+        : '<p style="color:var(--success)">Todo mundo lançou produção nesse dia. ✅</p>';
+    }
+  } catch (e) {
+    if (cardsEl) cardsEl.innerHTML = `<p style="color:var(--danger)">Erro ao carregar: ${e.message}</p>`;
+  }
+}
+window.loadPainelDoDia = loadPainelDoDia;
+
+const PROD_REL_TITULOS = {
+  matriz: '🗂️ Matriz Operador × Categoria',
+  diario: '📅 Resumo Diário de Produção',
+  meta: '🎯 Meta x Produção',
+  'perdas-tipo': '📛 Perdas por Tipo',
+  maquina: '⚙️ Produtividade por Máquina',
+  ociosidade: '🚫 Dias sem Lançamento',
+  comparativo: '🔁 Comparativo entre Períodos'
+};
+
+function onChangeProdRelTipo() {
+  const tipo = document.getElementById('prodrel-tipo')?.value;
+  const wrapB = document.getElementById('prodrel-comparativo-b-wrap');
+  if (wrapB) wrapB.style.display = (tipo === 'comparativo') ? 'inline-flex' : 'none';
+  loadProdRelatorio();
+}
+window.onChangeProdRelTipo = onChangeProdRelTipo;
+
+async function loadProdRelatorio() {
+  const tipo = document.getElementById('prodrel-tipo')?.value || 'matriz';
+  const mesIni = document.getElementById('prodrel-mes-ini')?.value || currentMonth();
+  const mesFim = document.getElementById('prodrel-mes-fim')?.value || mesIni;
+  const titleEl = document.getElementById('prodrel-title');
+  if (titleEl) titleEl.textContent = PROD_REL_TITULOS[tipo] || '';
+  const cardsEl = document.getElementById('prodrel-cards');
+  const theadEl = document.getElementById('prodrel-thead');
+  const tbodyEl = document.getElementById('prodrel-tbody');
+  if (cardsEl) cardsEl.innerHTML = '';
+  if (theadEl) theadEl.innerHTML = '';
+  if (tbodyEl) tbodyEl.innerHTML = '<tr><td style="text-align:center;color:var(--muted);padding:24px">Carregando...</td></tr>';
+
+  try {
+    if (tipo === 'matriz') {
+      const d = await api(`/relatorios/matriz-operador-categoria?mes_ini=${mesIni}&mes_fim=${mesFim}`);
+      const categorias = d.categorias || [];
+      const linhas = d.linhas || [];
+      if (cardsEl) {
+        cardsEl.innerHTML = `
+          <div class="card"><div class="card-label">Operadores</div><div class="card-value accent">${linhas.length}</div></div>
+          <div class="card"><div class="card-label">Categorias</div><div class="card-value info">${categorias.length}</div></div>
+          <div class="card"><div class="card-label">Total Produzido</div><div class="card-value accent">${fmtNum(linhas.reduce((s,l)=>s+l.total,0))}</div></div>`;
+      }
+      if (theadEl) theadEl.innerHTML = `<tr><th>Operador</th>${categorias.map(c=>`<th>${c}</th>`).join('')}<th>Total</th></tr>`;
+      if (tbodyEl) {
+        if (!linhas.length) { tbodyEl.innerHTML = '<tr><td colspan="99" style="text-align:center;color:var(--muted);padding:24px">Nenhum dado no período</td></tr>'; }
+        else tbodyEl.innerHTML = linhas.map(l => `<tr>
+          <td><strong>${l.colaborador}</strong></td>
+          ${categorias.map(c => `<td>${fmtNum(l.valores[c] || 0)}</td>`).join('')}
+          <td><strong>${fmtNum(l.total)}</strong></td>
+        </tr>`).join('');
+      }
+
+    } else if (tipo === 'diario') {
+      const dias = await api(`/relatorios/resumo-diario-producao?mes_ini=${mesIni}&mes_fim=${mesFim}`);
+      if (cardsEl) {
+        const totalProd = dias.reduce((s,d)=>s+(d.total_producao||0),0);
+        const totalPerdas = dias.reduce((s,d)=>s+(d.total_perdas||0),0);
+        const totalSobras = dias.reduce((s,d)=>s+(d.total_sobras||0),0);
+        cardsEl.innerHTML = `
+          <div class="card"><div class="card-label">Dias com Produção</div><div class="card-value accent">${dias.length}</div></div>
+          <div class="card"><div class="card-label">Total Produzido</div><div class="card-value accent">${fmtNum(totalProd)}</div></div>
+          <div class="card"><div class="card-label">Total Perdas</div><div class="card-value negative">${fmtNum(totalPerdas)}</div></div>
+          <div class="card"><div class="card-label">Total Sobras</div><div class="card-value success">${fmtNum(totalSobras)}</div></div>`;
+      }
+      if (theadEl) theadEl.innerHTML = '<tr><th></th><th>Data</th><th>Produzido</th><th>Perdas</th><th>Sobras</th><th>Lançamentos</th><th>Colaboradores Ativos</th><th>Categoria Destaque</th></tr>';
+      if (tbodyEl) {
+        if (!dias.length) { tbodyEl.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">Nenhum dado no período</td></tr>'; }
+        else tbodyEl.innerHTML = dias.map((d, idx) => {
+          const temCategorias = (d.categorias || []).length > 0;
+          const linhaPrincipal = `<tr style="${temCategorias ? 'cursor:pointer' : ''}" onclick="${temCategorias ? `toggleResumoDiaCategorias(${idx})` : ''}">
+            <td>${temCategorias ? `<span class="prod-caret" id="prodrel-dia-caret-${idx}" style="display:inline-block;width:14px">▸</span>` : ''}</td>
+            <td>${fmtDate(d.data)}</td>
+            <td><strong>${fmtNum(d.total_producao)}</strong></td>
+            <td style="color:var(--danger)">${fmtNum(d.total_perdas)}</td>
+            <td style="color:var(--success)">${fmtNum(d.total_sobras)}</td>
+            <td>${d.total_lancamentos}</td>
+            <td>${d.colaboradores_ativos}</td>
+            <td>${d.categoria_destaque || '—'} ${d.categoria_destaque ? '<span style="color:var(--muted)">(' + fmtNum(d.categoria_destaque_qtd) + ')</span>' : ''}</td>
+          </tr>`;
+          const linhaDetalhe = temCategorias ? `<tr id="prodrel-dia-detalhe-${idx}" style="display:none;background:var(--surface2)">
+            <td></td>
+            <td colspan="7" style="padding:10px 16px">
+              <div style="display:flex;flex-wrap:wrap;gap:8px">
+                ${d.categorias.map(c => `<span class="pill pill-slate">${c.categoria}: <strong>${fmtNum(c.quantidade)}</strong></span>`).join('')}
+              </div>
+            </td>
+          </tr>` : '';
+          return linhaPrincipal + linhaDetalhe;
+        }).join('');
+      }
+
+    } else if (tipo === 'meta') {
+      const resp = await api(`/relatorios/meta-producao?mes_ini=${mesIni}&mes_fim=${mesFim}`);
+      const linhas = resp.linhas || [];
+      const fab = resp.fabrica || {};
+      if (cardsEl) {
+        const acima = linhas.filter(l => l.saldo >= 0).length;
+        const abaixo = linhas.filter(l => l.saldo < 0).length;
+        let fabCard = '';
+        if (fab.dias_uteis_restantes === null || fab.dias_uteis_restantes === undefined) {
+          fabCard = `<div class="card"><div class="card-label">Projeção da Fábrica</div><div class="card-value" style="color:var(--muted);font-size:16px">Mês encerrado</div></div>`;
+        } else if (fab.meta_batida) {
+          fabCard = `<div class="card"><div class="card-label">Projeção da Fábrica</div><div class="card-value success">✅ Meta batida</div></div>`;
+        } else {
+          fabCard = `<div class="card"><div class="card-label">Fábrica precisa/dia p/ fechar</div><div class="card-value accent">${fmtNum(fab.necessario_dia)}</div><div class="card-sub">${fab.dias_uteis_restantes} dias úteis restantes</div></div>`;
+        }
+        cardsEl.innerHTML = `
+          <div class="card"><div class="card-label">Operadores</div><div class="card-value accent">${linhas.length}</div></div>
+          <div class="card"><div class="card-label">Acima da Meta</div><div class="card-value success">${acima}</div></div>
+          <div class="card"><div class="card-label">Abaixo da Meta</div><div class="card-value negative">${abaixo}</div></div>
+          ${fabCard}`;
+      }
+      if (theadEl) theadEl.innerHTML = '<tr><th>Operador</th><th>Dias Trabalhados</th><th>Meta do Período</th><th>Produzido</th><th>Saldo</th><th>Aderência</th><th>Dias Úteis Restantes</th><th>Necessário/Dia p/ Fechar o Mês</th></tr>';
+      if (tbodyEl) {
+        if (!linhas.length) { tbodyEl.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">Nenhum dado no período</td></tr>'; }
+        else tbodyEl.innerHTML = linhas.map(l => {
+          let necessarioCel;
+          if (l.dias_uteis_restantes === null || l.dias_uteis_restantes === undefined) necessarioCel = '<span style="color:var(--muted)">Mês encerrado</span>';
+          else if (l.meta_batida) necessarioCel = '<span style="color:var(--success)">✅ Meta batida</span>';
+          else if (l.necessario_dia === null) necessarioCel = '<span style="color:var(--muted)">—</span>';
+          else necessarioCel = `<strong>${fmtNum(l.necessario_dia)}</strong>/dia`;
+          return `<tr>
+          <td><strong>${l.colaborador}</strong></td>
+          <td>${l.dias_trabalhados}</td>
+          <td>${fmtNum(l.meta_periodo)}</td>
+          <td>${fmtNum(l.produzido)}</td>
+          <td style="color:${l.saldo >= 0 ? 'var(--success)' : 'var(--danger)'};font-weight:600">${l.saldo >= 0 ? '🟢 +' : '🔴 '}${fmtNum(l.saldo)}</td>
+          <td>${l.aderencia}%</td>
+          <td>${l.dias_uteis_restantes ?? '—'}</td>
+          <td>${necessarioCel}</td>
+        </tr>`;
+        }).join('');
+      }
+
+    } else if (tipo === 'perdas-tipo') {
+      const linhas = await api(`/relatorios/perdas-por-tipo?mes_ini=${mesIni}&mes_fim=${mesFim}`);
+      if (cardsEl) {
+        const total = linhas.reduce((s, l) => s + (l.quantidade || 0), 0);
+        const piorTipo = linhas[0];
+        cardsEl.innerHTML = `
+          <div class="card"><div class="card-label">Total Perdido</div><div class="card-value negative">${fmtNum(total)}</div></div>
+          <div class="card"><div class="card-label">Tipos Diferentes</div><div class="card-value accent">${linhas.length}</div></div>
+          <div class="card"><div class="card-label">Maior Causa</div><div class="card-value" style="font-size:16px">${piorTipo ? piorTipo.tipo_perda : '—'}</div><div class="card-sub">${piorTipo ? piorTipo.percentual + '% do total' : ''}</div></div>`;
+      }
+      if (theadEl) theadEl.innerHTML = '<tr><th>Tipo de Perda</th><th>Quantidade</th><th>Ocorrências</th><th>% do Total</th></tr>';
+      if (tbodyEl) {
+        if (!linhas.length) { tbodyEl.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:24px">Nenhuma perda registrada no período</td></tr>'; }
+        else tbodyEl.innerHTML = linhas.map(l => `<tr>
+          <td><strong>${l.tipo_perda}</strong></td>
+          <td style="color:var(--danger)">${fmtNum(l.quantidade)}</td>
+          <td>${l.ocorrencias}</td>
+          <td>${l.percentual}%</td>
+        </tr>`).join('');
+      }
+
+    } else if (tipo === 'maquina') {
+      const linhas = await api(`/relatorios/produtividade-maquina?mes_ini=${mesIni}&mes_fim=${mesFim}`);
+      if (cardsEl) {
+        cardsEl.innerHTML = `
+          <div class="card"><div class="card-label">Máquinas em Uso</div><div class="card-value accent">${linhas.length}</div></div>
+          <div class="card"><div class="card-label">Total Produzido</div><div class="card-value accent">${fmtNum(linhas.reduce((s,l)=>s+(l.total_producao||0),0))}</div></div>`;
+      }
+      if (theadEl) theadEl.innerHTML = '<tr><th>Máquina</th><th>Dias em Uso</th><th>Operadores Diferentes</th><th>Total Produzido</th><th>Média/Dia</th><th>Perdas</th><th>Índice de Perda</th></tr>';
+      if (tbodyEl) {
+        if (!linhas.length) { tbodyEl.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px">Nenhum dado no período</td></tr>'; }
+        else tbodyEl.innerHTML = linhas.map(l => `<tr>
+          <td><strong>${l.maquina}</strong></td>
+          <td>${l.dias_utilizada}</td>
+          <td>${l.operadores_diferentes}</td>
+          <td>${fmtNum(l.total_producao)}</td>
+          <td>${fmtNum(l.media_dia)}</td>
+          <td style="color:var(--danger)">${fmtNum(l.total_perdas)}</td>
+          <td>${l.indice_perda}%</td>
+        </tr>`).join('');
+      }
+
+    } else if (tipo === 'ociosidade') {
+      const linhas = await api(`/relatorios/dias-sem-lancamento?mes_ini=${mesIni}&mes_fim=${mesFim}`);
+      if (cardsEl) {
+        cardsEl.innerHTML = `
+          <div class="card"><div class="card-label">Operadores no Período</div><div class="card-value accent">${linhas.length}</div></div>
+          <div class="card"><div class="card-label">Dias Úteis do Período</div><div class="card-value info">${linhas[0]?.dias_uteis_periodo || 0}</div></div>`;
+      }
+      if (theadEl) theadEl.innerHTML = '<tr><th></th><th>Operador</th><th>Dias Trabalhados</th><th>Dias Úteis do Período</th><th>Dias sem Lançamento</th></tr>';
+      if (tbodyEl) {
+        if (!linhas.length) { tbodyEl.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px">Nenhum dado no período</td></tr>'; }
+        else tbodyEl.innerHTML = linhas.map((l, idx) => {
+          const temFaltas = (l.datas_faltantes || []).length > 0;
+          const principal = `<tr style="${temFaltas ? 'cursor:pointer' : ''}" onclick="${temFaltas ? `toggleOciosidadeDatas(${idx})` : ''}">
+            <td>${temFaltas ? `<span class="prod-caret" id="prodrel-ocio-caret-${idx}" style="display:inline-block;width:14px">▸</span>` : ''}</td>
+            <td><strong>${l.colaborador}</strong></td>
+            <td>${l.dias_trabalhados}</td>
+            <td>${l.dias_uteis_periodo}</td>
+            <td style="color:${l.dias_sem_lancamento > 0 ? 'var(--danger)' : 'var(--success)'};font-weight:600">${l.dias_sem_lancamento}</td>
+          </tr>`;
+          const detalhe = temFaltas ? `<tr id="prodrel-ocio-detalhe-${idx}" style="display:none;background:var(--surface2)">
+            <td></td><td colspan="4" style="padding:10px 16px">
+              <div style="display:flex;flex-wrap:wrap;gap:6px">
+                ${l.datas_faltantes.map(dt => `<span class="pill pill-danger">${fmtDate(dt)}</span>`).join('')}
+              </div>
+            </td>
+          </tr>` : '';
+          return principal + detalhe;
+        }).join('');
+      }
+
+    } else if (tipo === 'comparativo') {
+      const iniB = document.getElementById('prodrel-mes-ini-b')?.value || mesIni;
+      const fimB = document.getElementById('prodrel-mes-fim-b')?.value || mesFim;
+      const resp = await api(`/relatorios/comparativo-periodos?mes_ini_a=${mesIni}&mes_fim_a=${mesFim}&mes_ini_b=${iniB}&mes_fim_b=${fimB}`);
+      const g = resp.geral || {};
+      const linhas = resp.linhas || [];
+      if (cardsEl) {
+        const varProd = g.variacao_producao || 0;
+        cardsEl.innerHTML = `
+          <div class="card"><div class="card-label">Período A — Produzido</div><div class="card-value accent">${fmtNum(g.periodo_a?.producao)}</div></div>
+          <div class="card"><div class="card-label">Período B — Produzido</div><div class="card-value info">${fmtNum(g.periodo_b?.producao)}</div></div>
+          <div class="card"><div class="card-label">Variação</div><div class="card-value ${varProd >= 0 ? 'success' : 'negative'}">${varProd >= 0 ? '+' : ''}${varProd}%</div></div>`;
+      }
+      if (theadEl) theadEl.innerHTML = '<tr><th>Operador</th><th>Período A</th><th>Período B</th><th>Variação</th></tr>';
+      if (tbodyEl) {
+        if (!linhas.length) { tbodyEl.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:24px">Nenhum dado nos períodos</td></tr>'; }
+        else tbodyEl.innerHTML = linhas.map(l => `<tr>
+          <td><strong>${l.colaborador}</strong></td>
+          <td>${fmtNum(l.periodo_a)}</td>
+          <td>${fmtNum(l.periodo_b)}</td>
+          <td style="color:${l.variacao >= 0 ? 'var(--success)' : 'var(--danger)'};font-weight:600">${l.variacao >= 0 ? '+' : ''}${l.variacao}%</td>
+        </tr>`).join('');
+      }
+    }
+  } catch (e) {
+    if (tbodyEl) tbodyEl.innerHTML = `<tr><td colspan="99" style="text-align:center;color:var(--danger);padding:24px">Erro ao carregar: ${e.message}</td></tr>`;
+  }
+}
+window.loadProdRelatorio = loadProdRelatorio;
+
+function toggleResumoDiaCategorias(idx) {
+  const row = document.getElementById('prodrel-dia-detalhe-' + idx);
+  const caret = document.getElementById('prodrel-dia-caret-' + idx);
+  if (!row) return;
+  const mostrar = row.style.display === 'none';
+  row.style.display = mostrar ? '' : 'none';
+  if (caret) caret.textContent = mostrar ? '▾' : '▸';
+}
+window.toggleResumoDiaCategorias = toggleResumoDiaCategorias;
+
+function toggleOciosidadeDatas(idx) {
+  const row = document.getElementById('prodrel-ocio-detalhe-' + idx);
+  const caret = document.getElementById('prodrel-ocio-caret-' + idx);
+  if (!row) return;
+  const mostrar = row.style.display === 'none';
+  row.style.display = mostrar ? '' : 'none';
+  if (caret) caret.textContent = mostrar ? '▾' : '▸';
+}
+window.toggleOciosidadeDatas = toggleOciosidadeDatas;
+
+function exportarProdRelatorio(formato) {
+  const table = document.getElementById('prodrel-table');
+  if (!table) return;
+  const titulo = document.getElementById('prodrel-title')?.textContent?.replace(/^[^\wÀ-ú]+/, '').trim() || 'Relatorio de Producao';
+  if (formato === 'pdf') {
+    const win = window.open('', '_blank');
+    win.document.write(`<html><head><title>${titulo} PRATIC</title>
+      <style>@page{margin:0}body{font-family:Arial,sans-serif;margin:15mm 15mm 22mm 15mm;font-size:11px;counter-reset:page}table{width:100%;border-collapse:collapse}th{background:#333;color:#fff;padding:6px;text-align:left;font-size:10px}td{padding:6px;border-bottom:1px solid #ddd}.print-footer{position:fixed;bottom:8mm;left:15mm;right:15mm;border-top:1px solid #ddd;padding-top:6px;display:flex;justify-content:space-between;font-size:10px;color:#777;font-family:Arial,sans-serif;counter-increment:page}.page-number::after{content:counter(page)}</style>
+      </head><body>
+      ${_getEmpresaHeader(titulo)}
+      ${table.outerHTML}
+      ${_getPrintFooter()}
+      </body></html>`);
+    win.document.close();
+    setTimeout(() => win.print(), 500);
+  } else {
+    const rows = [];
+    table.querySelectorAll('tr').forEach(tr => {
+      const row = [];
+      tr.querySelectorAll('th,td').forEach(td => row.push('"' + td.textContent.trim().replace(/"/g, '""') + '"'));
+      rows.push(row.join(';'));
+    });
+    const csv = '\uFEFF' + rows.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${titulo.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+  }
+}
+window.exportarProdRelatorio = exportarProdRelatorio;
+
+async function loadFeriados() {
+  const anoSel = document.getElementById('feriado-filtro-ano');
+  if (anoSel && !anoSel.options.length) {
+    const anoAtual = new Date().getFullYear();
+    for (let a = anoAtual - 1; a <= anoAtual + 2; a++) {
+      const opt = document.createElement('option');
+      opt.value = a; opt.textContent = a;
+      if (a === anoAtual) opt.selected = true;
+      anoSel.appendChild(opt);
+    }
+  }
+  const ano = anoSel?.value || String(new Date().getFullYear());
+  const tbody = document.getElementById('feriados-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--muted)">Carregando...</td></tr>';
+  try {
+    const lista = await api('/producao/feriados?ano=' + ano);
+    if (!lista.length) { tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--muted);padding:20px">Nenhum feriado cadastrado em ' + ano + '</td></tr>'; return; }
+    tbody.innerHTML = lista.map(f => `<tr>
+      <td>${fmtDate(f.data)}</td>
+      <td>${f.descricao || '—'}</td>
+      <td>${temPermissao('producao','deletar') ? `<button class="btn btn-sm btn-danger" onclick="deletarFeriado(${f.id})">✕</button>` : ''}</td>
+    </tr>`).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="3" style="text-align:center;color:var(--danger)">Erro: ${e.message}</td></tr>`;
+  }
+}
+window.loadFeriados = loadFeriados;
+
+async function cadastrarFeriado() {
+  const data = document.getElementById('feriado-data')?.value;
+  const descricao = document.getElementById('feriado-descricao')?.value?.trim();
+  if (!data) { showAlert('Informe a data do feriado', 'warn'); return; }
+  try {
+    await api('/producao/feriados', 'POST', { data, descricao: descricao || null });
+    showAlert('Feriado cadastrado');
+    document.getElementById('feriado-data').value = '';
+    document.getElementById('feriado-descricao').value = '';
+    const anoSel = document.getElementById('feriado-filtro-ano');
+    if (anoSel) anoSel.value = data.slice(0, 4);
+    loadFeriados();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+window.cadastrarFeriado = cadastrarFeriado;
+
+async function deletarFeriado(id) {
+  if (!confirm('Remover este feriado? Isso muda o cálculo de dias úteis do relatório Meta x Produção.')) return;
+  try {
+    await api('/producao/feriados/' + id, 'DELETE');
+    showAlert('Feriado removido');
+    loadFeriados();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+window.deletarFeriado = deletarFeriado;
+
 let maquinas = [], colaboradores = [];
 
 
@@ -2161,7 +2564,13 @@ async function executarSalvarProducao() {
           perda_quantidade: totalPerda,
           sobra_quantidade: totalSobra,
           movimentacao_manual: true,
-          pedido_numero: pedidoManual || null
+          pedido_numero: pedidoManual || null,
+          itens: itensValidos.map(i => ({
+            produto_estoque_id: i.produto_id,
+            quantidade: i.producao || 0,
+            perda_quantidade: i.perda || 0,
+            sobra_quantidade: i.sobra || 0
+          }))
         });
 
         // 2. Faz as baixas/movimentações manuais no estoque para TODOS os itens válidos

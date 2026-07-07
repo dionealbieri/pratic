@@ -1352,6 +1352,19 @@ button:disabled.btn-loading {
   #page-pedidos table thead th { top: 0; }
 }
 
+/* SALDO VS DEMANDA: cabecalho da tabela fixo ao rolar (empilha abaixo da
+   .barra-fixa de filtros, que já é fixa nessa página) */
+#page-saldo-demanda .table-wrap { overflow: clip; }
+#page-saldo-demanda table thead th {
+  position: sticky;
+  top: 130px;            /* 70px da topbar + altura da .barra-fixa de filtros */
+  z-index: 5;
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+@media (max-width: 800px) {
+  #page-saldo-demanda table thead th { top: 112px; }
+}
+
 /* FILA DE PRODUÇÃO: barra de controles unica e fixa ao rolar */
 #page-pedidos .fila-header {
   position: sticky;

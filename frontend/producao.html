@@ -848,7 +848,7 @@ async function salvarProducao() {
         // e faz a baixa de estoque item a item, cada um com sua própria quantidade.
         const totalPerda=itensValidos.reduce((s,i)=>s+(i.perda||0),0);
         const totalSobra=itensValidos.reduce((s,i)=>s+(i.sobra||0),0);
-        await req('/producao/','POST',{colaborador_id:colId,maquina_id:maqId,data,meta,producao:totalProducao,produto_estoque_id:null,perda_quantidade:totalPerda,sobra_quantidade:totalSobra,movimentacao_manual:true,pedido_numero:pedidoManual||null});
+        await req('/producao/','POST',{colaborador_id:colId,maquina_id:maqId,data,meta,producao:totalProducao,produto_estoque_id:null,perda_quantidade:totalPerda,sobra_quantidade:totalSobra,movimentacao_manual:true,pedido_numero:pedidoManual||null,itens:itensValidos.map(i=>({produto_estoque_id:i.produto_id,quantidade:i.producao||0,perda_quantidade:i.perda||0,sobra_quantidade:i.sobra||0}))});
         for(const item of itensValidos){
           if(item.produto_id&&(item.producao>0||item.perda>0||item.sobra>0)){
             if(item.producao>0) await req('/estoque/movimentacoes','POST',{produto_id:item.produto_id,tipo:'saida',quantidade:item.producao,motivo:'Produção diária — '+data,data});
