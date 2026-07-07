@@ -729,3 +729,42 @@ def painel_do_dia(data: Optional[str] = None):
         "colaboradores_lancaram": [c["nome"] for c in colaboradores if c["id"] in lancaram_ids],
         "colaboradores_sem_lancamento": [c["nome"] for c in colaboradores if c["id"] not in lancaram_ids],
     }
+
+@router.get("/producao-hoje-por-operador")
+def producao_hoje_por_operador(data: Optional[str] = None):
+    """Produção do dia (hoje, ou uma data específica), por operador — pensado
+    pra virar cards na tela de Meta x Produção, complementando a visão de
+    período com o que está acontecendo agora."""
+    conn = get_conn()
+    if not data:
+        data = datetime.date.today().isoformat()
+
+    colaboradores = conn.execute("""
+        SELECT id, nome FROM colaboradores
+        WHERE LOWER(tipo) IN (SELECT LOWER(nome) FROM colaborador_tipos WHERE aparece_producao=1)
+          AND ativo = 1
+        ORDER BY nome ASC
+    """).fetchall()
+
+    lancamentos = conn.execute("""
+        SELECT colaborador_id, SUM(producao) as producao, MAX(meta) as meta
+        FROM producao_diaria WHERE data=?
+        GROUP BY colaborador_id
+    """, (data,)).fetchall()
+    conn.close()
+
+    por_colaborador = {r["colaborador_id"]: r for r in lancamentos}
+    resultado = []
+    for c in colaboradores:
+        l = por_colaborador.get(c["id"])
+        producao = l["producao"] if l else 0
+        meta = l["meta"] if l else 0
+        resultado.append({
+            "colaborador": c["nome"],
+            "lancou": l is not None,
+            "producao": producao or 0,
+            "meta": meta or 0,
+            "saldo": (producao or 0) - (meta or 0) if l else None,
+            "aderencia": round((producao or 0) / meta * 100, 1) if meta else None,
+        })
+    return {"data": data, "operadores": resultado}

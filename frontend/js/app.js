@@ -1584,6 +1584,8 @@ async function loadProducao() {
   }
 }
 
+let _prodRelHojeCache = [];
+
 function switchProducaoPageTab(tab) {
   ['painel', 'lancamentos', 'relatorios', 'feriados'].forEach(t => {
     const pane = document.getElementById('prodpg-content-' + t);
@@ -1671,9 +1673,13 @@ async function loadProdRelatorio() {
   const cardsEl = document.getElementById('prodrel-cards');
   const theadEl = document.getElementById('prodrel-thead');
   const tbodyEl = document.getElementById('prodrel-tbody');
+  const hojeWrapEl = document.getElementById('prodrel-hoje-wrap');
+  const hojeCardsEl = document.getElementById('prodrel-hoje-cards');
   if (cardsEl) cardsEl.innerHTML = '';
   if (theadEl) theadEl.innerHTML = '';
   if (tbodyEl) tbodyEl.innerHTML = '<tr><td style="text-align:center;color:var(--muted);padding:24px">Carregando...</td></tr>';
+  if (hojeWrapEl) hojeWrapEl.style.display = 'none';
+  _prodRelHojeCache = [];
 
   try {
     if (tipo === 'matriz') {
@@ -1776,6 +1782,31 @@ async function loadProdRelatorio() {
           <td>${necessarioCel}</td>
         </tr>`;
         }).join('');
+      }
+
+      // Cards de produção de hoje, por operador — só quando o período
+      // selecionado inclui o dia de hoje (não faz sentido pra mês encerrado)
+      const hojeMes = new Date().toISOString().slice(0, 7);
+      if (mesIni <= hojeMes && hojeMes <= mesFim && hojeWrapEl && hojeCardsEl) {
+        try {
+          const hoje = await api('/relatorios/producao-hoje-por-operador');
+          const comProducao = (hoje.operadores || []).filter(o => o.lancou);
+          _prodRelHojeCache = comProducao;
+          if (comProducao.length) {
+            hojeWrapEl.style.display = '';
+            hojeCardsEl.innerHTML = comProducao.map(o => {
+              const cor = o.saldo >= 0 ? 'var(--success)' : 'var(--danger)';
+              const status = o.saldo >= 0 ? '🟢 Meta batida' : '🔴 Abaixo da meta';
+              return `
+              <div class="card" style="border-left:3px solid ${cor}">
+                <div class="card-label">${o.colaborador}</div>
+                <div class="card-value" style="font-size:20px">${fmtNum(o.producao)}</div>
+                <div class="card-sub">Meta: ${fmtNum(o.meta)}${o.aderencia !== null ? ' · ' + o.aderencia + '%' : ''}</div>
+                <div style="font-size:12px;color:${cor};margin-top:4px;font-weight:600">${status}</div>
+              </div>`;
+            }).join('');
+          }
+        } catch (e) { /* não interrompe o resto do relatório */ }
       }
 
     } else if (tipo === 'perdas-tipo') {
@@ -1905,11 +1936,30 @@ function exportarProdRelatorio(formato) {
   if (!table) return;
   const titulo = document.getElementById('prodrel-title')?.textContent?.replace(/^[^\wÀ-ú]+/, '').trim() || 'Relatorio de Producao';
   if (formato === 'pdf') {
+    let hojeHtml = '';
+    if (_prodRelHojeCache.length) {
+      hojeHtml = `
+        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#666;margin:16px 0 8px">Produção de hoje, por operador</div>
+        <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px">
+          ${_prodRelHojeCache.map(o => {
+            const bateu = o.saldo >= 0;
+            const cor = bateu ? '#10b981' : '#ef4444';
+            const status = bateu ? '🟢 Meta batida' : '🔴 Abaixo da meta';
+            return `<div style="border:1px solid #ddd;border-left:3px solid ${cor};border-radius:6px;padding:8px 12px;min-width:150px">
+              <div style="font-size:10px;color:#888;text-transform:uppercase">${o.colaborador}</div>
+              <div style="font-size:16px;font-weight:700">${fmtNum(o.producao)}</div>
+              <div style="font-size:10px;color:#888">Meta: ${fmtNum(o.meta)}${o.aderencia !== null ? ' · ' + o.aderencia + '%' : ''}</div>
+              <div style="font-size:10px;color:${cor};font-weight:700;margin-top:2px">${status}</div>
+            </div>`;
+          }).join('')}
+        </div>`;
+    }
     const win = window.open('', '_blank');
     win.document.write(`<html><head><title>${titulo} PRATIC</title>
       <style>@page{margin:0}body{font-family:Arial,sans-serif;margin:15mm 15mm 22mm 15mm;font-size:11px;counter-reset:page}table{width:100%;border-collapse:collapse}th{background:#333;color:#fff;padding:6px;text-align:left;font-size:10px}td{padding:6px;border-bottom:1px solid #ddd}.print-footer{position:fixed;bottom:8mm;left:15mm;right:15mm;border-top:1px solid #ddd;padding-top:6px;display:flex;justify-content:space-between;font-size:10px;color:#777;font-family:Arial,sans-serif;counter-increment:page}.page-number::after{content:counter(page)}</style>
       </head><body>
       ${_getEmpresaHeader(titulo)}
+      ${hojeHtml}
       ${table.outerHTML}
       ${_getPrintFooter()}
       </body></html>`);

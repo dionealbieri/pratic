@@ -284,6 +284,10 @@
           </div>
         </div>
         <div class="cards-grid" id="prodrel-cards" style="margin-bottom:20px"></div>
+        <div id="prodrel-hoje-wrap" style="display:none;margin-bottom:20px">
+          <div style="font-size:13px;font-weight:600;color:var(--muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px">Produção de hoje, por operador</div>
+          <div class="cards-grid" id="prodrel-hoje-cards"></div>
+        </div>
         <div class="table-wrap">
           <div class="table-head"><span class="table-head-title" id="prodrel-title">Matriz Operador × Categoria</span></div>
           <table id="prodrel-table">
@@ -2558,7 +2562,7 @@
   </div>
 </div>
 
-<script src="js/app.js?v=20260701-painel1"></script>
+<script src="js/app.js?v=20260701-cardshoje2"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');
