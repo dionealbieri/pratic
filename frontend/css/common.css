@@ -338,6 +338,9 @@ nav {
   gap: 16px;
   margin-bottom: 32px;
 }
+#prodrel-hoje-cards.cards-grid {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
 .card {
   background: var(--surface);
   border: 1px solid var(--border);

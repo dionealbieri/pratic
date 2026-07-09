@@ -12,7 +12,7 @@
     document.documentElement.setAttribute('data-theme', savedTheme);
   })();
 </script>
-<link rel="stylesheet" href="css/common.css?v=9">
+<link rel="stylesheet" href="css/common.css?v=10">
 <style>
   .nav-item[data-page="comunicacao"] { color:#25d366; }
   .nav-item[data-page="comunicacao"] .icon svg { display:inline-block; }
@@ -1222,10 +1222,14 @@
 
     <!-- MODAL DETALHE PRODUTO -->
     <div class="modal-overlay" id="modal-svd-detalhe">
-      <div class="modal" style="max-width:720px">
-        <div class="modal-title" id="modal-svd-title">Pedidos do Produto</div>
-        <div id="modal-svd-content"></div>
-        <div class="modal-footer">
+      <div class="modal" style="max-width:720px;width:95vw;max-height:90vh;display:flex;flex-direction:column;padding:0">
+        <div style="padding:28px 28px 0;flex-shrink:0">
+          <div class="modal-title" id="modal-svd-title" style="margin-bottom:16px">Pedidos do Produto</div>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:0 28px 20px;min-height:0">
+          <div id="modal-svd-content"></div>
+        </div>
+        <div style="padding:16px 28px;flex-shrink:0;border-top:1px solid var(--border);display:flex;justify-content:flex-end">
           <button class="btn btn-secondary" onclick="closeModal('modal-svd-detalhe')">Fechar</button>
         </div>
       </div>
@@ -2562,7 +2566,7 @@
   </div>
 </div>
 
-<script src="js/app.js?v=20260701-cardshoje2"></script>
+<script src="js/app.js?v=20260701-fixesv1"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');

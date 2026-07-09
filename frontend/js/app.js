@@ -1584,8 +1584,6 @@ async function loadProducao() {
   }
 }
 
-let _prodRelHojeCache = [];
-
 function switchProducaoPageTab(tab) {
   ['painel', 'lancamentos', 'relatorios', 'feriados'].forEach(t => {
     const pane = document.getElementById('prodpg-content-' + t);
@@ -1679,7 +1677,6 @@ async function loadProdRelatorio() {
   if (theadEl) theadEl.innerHTML = '';
   if (tbodyEl) tbodyEl.innerHTML = '<tr><td style="text-align:center;color:var(--muted);padding:24px">Carregando...</td></tr>';
   if (hojeWrapEl) hojeWrapEl.style.display = 'none';
-  _prodRelHojeCache = [];
 
   try {
     if (tipo === 'matriz') {
@@ -1791,7 +1788,6 @@ async function loadProdRelatorio() {
         try {
           const hoje = await api('/relatorios/producao-hoje-por-operador');
           const comProducao = (hoje.operadores || []).filter(o => o.lancou);
-          _prodRelHojeCache = comProducao;
           if (comProducao.length) {
             hojeWrapEl.style.display = '';
             hojeCardsEl.innerHTML = comProducao.map(o => {
@@ -1800,7 +1796,7 @@ async function loadProdRelatorio() {
               return `
               <div class="card" style="border-left:3px solid ${cor}">
                 <div class="card-label">${o.colaborador}</div>
-                <div class="card-value" style="font-size:20px">${fmtNum(o.producao)}</div>
+                <div class="card-value">${fmtNum(o.producao)}</div>
                 <div class="card-sub">Meta: ${fmtNum(o.meta)}${o.aderencia !== null ? ' · ' + o.aderencia + '%' : ''}</div>
                 <div style="font-size:12px;color:${cor};margin-top:4px;font-weight:600">${status}</div>
               </div>`;
@@ -1931,30 +1927,48 @@ function toggleOciosidadeDatas(idx) {
 }
 window.toggleOciosidadeDatas = toggleOciosidadeDatas;
 
-function exportarProdRelatorio(formato) {
+async function exportarProdRelatorio(formato) {
   const table = document.getElementById('prodrel-table');
   if (!table) return;
   const titulo = document.getElementById('prodrel-title')?.textContent?.replace(/^[^\wÀ-ú]+/, '').trim() || 'Relatorio de Producao';
   if (formato === 'pdf') {
+    const win = window.open('', '_blank');
+    win.document.write('<html><head><title>Gerando...</title></head><body style="font-family:Arial;padding:40px;color:#666">Gerando relatório...</body></html>');
+
+    // Busca os cards de produção de hoje na hora da exportação (não depende
+    // de cache de uma carga anterior, evita o relatório sair sem eles).
+    let cardsHoje = [];
+    const tipo = document.getElementById('prodrel-tipo')?.value;
+    const mesIni = document.getElementById('prodrel-mes-ini')?.value || currentMonth();
+    const mesFim = document.getElementById('prodrel-mes-fim')?.value || mesIni;
+    const hojeMes = new Date().toISOString().slice(0, 7);
+    if (tipo === 'meta' && mesIni <= hojeMes && hojeMes <= mesFim) {
+      try {
+        const hoje = await api('/relatorios/producao-hoje-por-operador');
+        cardsHoje = (hoje.operadores || []).filter(o => o.lancou);
+      } catch (e) { /* segue sem os cards se a busca falhar */ }
+    }
+
     let hojeHtml = '';
-    if (_prodRelHojeCache.length) {
+    if (cardsHoje.length) {
       hojeHtml = `
-        <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#666;margin:16px 0 8px">Produção de hoje, por operador</div>
-        <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px">
-          ${_prodRelHojeCache.map(o => {
+        <div style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#666;margin:18px 0 10px">Produção de hoje, por operador</div>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:20px">
+          ${cardsHoje.map(o => {
             const bateu = o.saldo >= 0;
             const cor = bateu ? '#10b981' : '#ef4444';
             const status = bateu ? '🟢 Meta batida' : '🔴 Abaixo da meta';
-            return `<div style="border:1px solid #ddd;border-left:3px solid ${cor};border-radius:6px;padding:8px 12px;min-width:150px">
-              <div style="font-size:10px;color:#888;text-transform:uppercase">${o.colaborador}</div>
-              <div style="font-size:16px;font-weight:700">${fmtNum(o.producao)}</div>
-              <div style="font-size:10px;color:#888">Meta: ${fmtNum(o.meta)}${o.aderencia !== null ? ' · ' + o.aderencia + '%' : ''}</div>
-              <div style="font-size:10px;color:${cor};font-weight:700;margin-top:2px">${status}</div>
+            return `<div style="border:1px solid #ddd;border-left:4px solid ${cor};border-radius:6px;padding:12px 16px;min-width:180px">
+              <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.5px">${o.colaborador}</div>
+              <div style="font-size:20px;font-weight:800;margin-top:2px">${fmtNum(o.producao)}</div>
+              <div style="font-size:11px;color:#888;margin-top:2px">Meta: ${fmtNum(o.meta)}${o.aderencia !== null ? ' · ' + o.aderencia + '%' : ''}</div>
+              <div style="font-size:11px;color:${cor};font-weight:700;margin-top:4px">${status}</div>
             </div>`;
           }).join('')}
         </div>`;
     }
-    const win = window.open('', '_blank');
+
+    win.document.open();
     win.document.write(`<html><head><title>${titulo} PRATIC</title>
       <style>@page{margin:0}body{font-family:Arial,sans-serif;margin:15mm 15mm 22mm 15mm;font-size:11px;counter-reset:page}table{width:100%;border-collapse:collapse}th{background:#333;color:#fff;padding:6px;text-align:left;font-size:10px}td{padding:6px;border-bottom:1px solid #ddd}.print-footer{position:fixed;bottom:8mm;left:15mm;right:15mm;border-top:1px solid #ddd;padding-top:6px;display:flex;justify-content:space-between;font-size:10px;color:#777;font-family:Arial,sans-serif;counter-increment:page}.page-number::after{content:counter(page)}</style>
       </head><body>
