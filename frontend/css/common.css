@@ -1368,6 +1368,16 @@ button:disabled.btn-loading {
   #page-saldo-demanda table thead th { top: 112px; }
 }
 
+/* MODAL "Pedidos do Produto" (Saldo vs Demanda): cabecalho fixo dentro do
+   proprio scroll do modal, nao da pagina — sao contextos de rolagem diferentes */
+#modal-svd-detalhe .table-wrap { overflow: clip; }
+#modal-svd-detalhe table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+
 /* FILA DE PRODUÇÃO: barra de controles unica e fixa ao rolar */
 #page-pedidos .fila-header {
   position: sticky;
