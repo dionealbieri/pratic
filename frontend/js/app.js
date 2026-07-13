@@ -5938,7 +5938,16 @@ async function importarPedidoArquivo() {
     
     // Preencher campos do modal-pedido
     document.getElementById('ped-id').value = '';
-    document.getElementById('ped-numero').value = data.dados_extraidos.numero_pedido || '';
+    const campoNumero = document.getElementById('ped-numero');
+    campoNumero.value = data.dados_extraidos.numero_pedido || '';
+    if (!campoNumero.value) {
+      campoNumero.style.borderColor = 'var(--danger)';
+      campoNumero.placeholder = 'Não identificado no arquivo — preencha aqui';
+      campoNumero.oninput = () => { campoNumero.style.borderColor = ''; };
+    } else {
+      campoNumero.style.borderColor = '';
+      campoNumero.placeholder = '';
+    }
     document.getElementById('ped-prazo').value = data.dados_extraidos.prazo_entrega || '';
     document.getElementById('ped-vendedor').value = data.dados_extraidos.vendedor || '';
     
@@ -6270,14 +6279,14 @@ async function salvarPedido() {
   });
 
   const body={numero_pedido:document.getElementById('ped-numero').value,cliente_id:+document.getElementById('ped-cliente').value,prazo_entrega:document.getElementById('ped-prazo').value,vendedor:document.getElementById('ped-vendedor').value,observacoes:document.getElementById('ped-obs').value,itens:pedidoItens.filter(i=>i.descricao.trim())};
-  if(!body.numero_pedido){showAlert('Informe o número','danger');return;}
-  if(!body.prazo_entrega){showAlert('Informe o prazo','danger');return;}
-  if(!body.itens.length){showAlert('Adicione ao menos um item','danger');return;}
+  if(!body.numero_pedido){showPopup('⚠️ Falta o número do pedido', 'O número do pedido não foi preenchido (comum quando a importação não conseguiu identificar automaticamente). Preencha o campo "Número do Pedido" antes de salvar.');return;}
+  if(!body.prazo_entrega){showPopup('⚠️ Falta o prazo de entrega', 'Preencha o campo "Prazo de Entrega" antes de salvar.');return;}
+  if(!body.itens.length){showPopup('⚠️ Nenhum item no pedido', 'Adicione ao menos um item antes de salvar.');return;}
   
   // Check if any product is unregistered
   const itemNaoCadastrado = body.itens.find(i => !i.produto_id);
   if (itemNaoCadastrado) {
-    showAlert(`O produto "${itemNaoCadastrado.descricao}" não está cadastrado no estoque!`, 'danger');
+    showPopup('⚠️ Produto não cadastrado', `O produto "${itemNaoCadastrado.descricao}" não está cadastrado no estoque. Cadastre-o antes de salvar, ou corrija a descrição pra bater com um produto existente.`);
     return;
   }
   try {

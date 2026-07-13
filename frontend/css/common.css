@@ -619,6 +619,22 @@ button:disabled.btn-loading {
 }
 
 /* ALERT */
+#alert-global {
+  position: fixed;
+  top: 84px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 500;           /* acima de .modal-overlay (200) — nunca fica escondido atrás de um modal aberto */
+  width: calc(100% - 32px);
+  max-width: 480px;
+  pointer-events: none;
+}
+#alert-global .alert {
+  pointer-events: auto;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
 .alert {
   padding: 12px 16px;
   border-radius: 8px;
