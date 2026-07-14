@@ -60,6 +60,7 @@ const PAGINAS_SISTEMA = [
   { key:'estoque',       label:'📦 Estoque'            },
   { key:'graficos',      label:'📈 Gráficos'           },
   { key:'relatorios',    label:'📋 Relatórios'         },
+  { key:'perdas-sobras', label:'⚠️ Perdas e Sobras'     },
   { key:'colaboradores', label:'👥 Colaboradores'      },
   { key:'maquinas',      label:'⚙️ Máquinas'           },
   { key:'epi',           label:'🦺 EPI'               },
@@ -148,6 +149,7 @@ const pageTitles = {
   configuracoes: 'Central de Bonificações',
   graficos: 'Análise Gráfica',
   relatorios: 'Relatórios',
+  'perdas-sobras': 'Perdas e Sobras Detalhado',
   estoque: 'Estoque',
   'saldo-demanda': 'Saldo vs Demanda',
   pedidos: 'Pedidos & Fila de Produção',
@@ -197,6 +199,7 @@ const PAGE_META_MAIN = {
   'saldo-demanda': { icon:'📊', label:'Saldo vs Demanda', section:'Operações' },
   graficos:      { icon:'📈', label:'Gráficos', section:'Análises' },
   relatorios:    { icon:'📋', label:'Relatórios', section:'Análises' },
+  'perdas-sobras': { icon:'⚠️', label:'Perdas e Sobras', section:'Análises' },
   configuracoes: { icon:'🏆', label:'Central de Bonificações', section:'Sistema' },
   backup:        { icon:'💾', label:'Backup', section:'Sistema' },
   permissoes:    { icon:'🔐', label:'Controle de Acesso', section:'Sistema' },
@@ -348,6 +351,7 @@ function showPage(name) {
     configuracoes: loadConfiguracoes,
     graficos: loadGraficos,
     relatorios: loadRelatorios,
+    'perdas-sobras': loadPerdasSobrasDetalhado,
     estoque: loadEstoque,
     'saldo-demanda': loadSaldoDemanda,
     pedidos: loadPedidos_init,
@@ -2150,7 +2154,11 @@ function atualizarSimplificadoData() {
   const qtd = +document.getElementById('prod-simples-qtd').value || 0;
   const perda = +document.getElementById('prod-simples-perda').value || 0;
   const sobra = +document.getElementById('prod-simples-sobra').value || 0;
-  const tipo = document.getElementById('prod-simples-tipo-perda').value || 'Quebra';
+  const tipoPerdaSel = document.getElementById('prod-simples-tipo-perda');
+  tipoPerdaSel.disabled = !(perda > 0);
+  tipoPerdaSel.style.opacity = (perda > 0) ? '' : '0.5';
+  tipoPerdaSel.style.cursor = (perda > 0) ? '' : 'not-allowed';
+  const tipo = tipoPerdaSel.value || 'Quebra';
 
   prodItens = [{
     produto_id: null,
@@ -2378,7 +2386,7 @@ function renderProdItens() {
         <div class="prod-field-col prod-field-perda" style="min-width:0">
           <label class="prod-field-label">Perda</label>
           <input type="number" value="${item.perda||''}" min="0" placeholder="0"
-                 oninput="prodItens[${idx}].perda=+this.value"
+                 oninput="prodItens[${idx}].perda=+this.value; atualizarEstadoTipoPerda(${idx})"
                  ${item.concluido ? 'disabled' : ''}
                  style="font-size:13px;text-align:center;padding:8px 4px;border-color:rgba(239,68,68,.35);width:100%;min-width:0">
         </div>
@@ -2391,7 +2399,7 @@ function renderProdItens() {
         </div>
         <div class="prod-field-col prod-field-tipoperda" style="min-width:0">
           <label class="prod-field-label">Tipo Perda</label>
-          <select onchange="prodItens[${idx}].tipo_perda=this.value" ${item.concluido ? 'disabled' : ''} style="font-size:12px;padding:8px 4px;width:100%;min-width:0">
+          <select id="select-tipoperda-${idx}" onchange="prodItens[${idx}].tipo_perda=this.value" ${(item.concluido || !(item.perda > 0)) ? 'disabled' : ''} style="font-size:12px;padding:8px 4px;width:100%;min-width:0;${(item.perda > 0) ? '' : 'opacity:0.5;cursor:not-allowed;'}">
             ${TIPOS_PERDA_MOD.map(t => `<option value="${t}" ${item.tipo_perda===t?'selected':''}>${t}</option>`).join('')}
           </select>
         </div>
@@ -2402,6 +2410,158 @@ function renderProdItens() {
     `;
   }).join('');
 }
+
+function atualizarEstadoTipoPerda(idx) {
+  // Habilita o select de Tipo Perda só quando há perda informada nesse item;
+  // sem perda, o campo fica desabilitado (evita motivo de perda sem perda real)
+  const sel = document.getElementById(`select-tipoperda-${idx}`);
+  if (!sel) return;
+  const temPerda = (prodItens[idx].perda || 0) > 0;
+  sel.disabled = !temPerda;
+  sel.style.opacity = temPerda ? '' : '0.5';
+  sel.style.cursor = temPerda ? '' : 'not-allowed';
+}
+window.atualizarEstadoTipoPerda = atualizarEstadoTipoPerda;
+
+// ─── PERDAS E SOBRAS DETALHADO (página + gráfico do dashboard) ─────────────
+
+async function _psdPopularFiltros(prefixo) {
+  const selProduto = document.getElementById(prefixo + '-produto');
+  const selColab = document.getElementById(prefixo + '-colaborador');
+  const selTipo = document.getElementById(prefixo + '-tipo');
+  if (selProduto && selProduto.options.length <= 1) {
+    try {
+      const prods = await api('/estoque/produtos');
+      selProduto.innerHTML = '<option value="">Todos os produtos</option>' +
+        (prods || []).map(p => `<option value="${p.id}">${p.codigo ? '[' + p.codigo + '] ' : ''}${p.nome}</option>`).join('');
+    } catch (e) {}
+  }
+  if (selColab && selColab.options.length <= 1) {
+    try {
+      const cols = await api('/colaboradores/');
+      selColab.innerHTML = '<option value="">Todos os operadores</option>' +
+        (cols || []).map(c => `<option value="${c.id}">${c.nome}</option>`).join('');
+    } catch (e) {}
+  }
+  if (selTipo && selTipo.options.length <= 1) {
+    selTipo.innerHTML = '<option value="">Todos os tipos</option>' +
+      TIPOS_PERDA_MOD.map(t => `<option value="${t}">${t}</option>`).join('');
+  }
+}
+
+function _psdDefaultDatas(iniId, fimId) {
+  const ini = document.getElementById(iniId);
+  const fim = document.getElementById(fimId);
+  if (fim && !fim.value) fim.value = new Date().toISOString().slice(0, 10);
+  if (ini && !ini.value) {
+    const d = new Date();
+    d.setDate(d.getDate() - 29);
+    ini.value = d.toISOString().slice(0, 10);
+  }
+}
+
+function _psdQueryString(prefixo, iniId, fimId) {
+  const params = new URLSearchParams();
+  const ini = document.getElementById(iniId)?.value;
+  const fim = document.getElementById(fimId)?.value;
+  const produto = document.getElementById(prefixo + '-produto')?.value;
+  const colaborador = document.getElementById(prefixo + '-colaborador')?.value;
+  const tipo = document.getElementById(prefixo + '-tipo')?.value;
+  if (ini) params.set('data_inicio', ini);
+  if (fim) params.set('data_fim', fim);
+  if (produto) params.set('produto_id', produto);
+  if (colaborador) params.set('colaborador_id', colaborador);
+  if (tipo) params.set('tipo_perda', tipo);
+  return params.toString();
+}
+
+async function loadPerdasSobrasDetalhado() {
+  await _psdPopularFiltros('psd');
+  _psdDefaultDatas('psd-data-ini', 'psd-data-fim');
+  const qs = _psdQueryString('psd', 'psd-data-ini', 'psd-data-fim');
+  const tbody = document.getElementById('psd-tbody');
+  const cardsEl = document.getElementById('psd-cards');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted)">Carregando...</td></tr>';
+  try {
+    const res = await api('/relatorios/perdas-sobras-detalhado?' + qs);
+    const ocorrencias = res.ocorrencias || [];
+    if (cardsEl) {
+      cardsEl.innerHTML = `
+        <div class="card"><div class="card-label">Total perdido</div><div style="font-family:var(--font-head);font-weight:800;font-size:20px;color:var(--danger)">${fmtNum(res.total_perda)}</div></div>
+        <div class="card"><div class="card-label">Total sobra</div><div style="font-family:var(--font-head);font-weight:800;font-size:20px;color:var(--success)">${fmtNum(res.total_sobra)}</div></div>
+        <div class="card"><div class="card-label">Ocorrências</div><div style="font-family:var(--font-head);font-weight:800;font-size:20px">${ocorrencias.length}</div></div>
+      `;
+    }
+    if (!tbody) return;
+    if (!ocorrencias.length) {
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted)">Nenhuma ocorrência no período/filtros selecionados</td></tr>';
+      return;
+    }
+    tbody.innerHTML = ocorrencias.map(o => `
+      <tr>
+        <td>${fmtDate(o.data)}</td>
+        <td>${o.produto_nome || '—'}</td>
+        <td>${o.colaborador_nome || '—'}</td>
+        <td>${o.maquina_nome || '—'}</td>
+        <td>${o.tipo_perda || '—'}</td>
+        <td style="color:${o.perda_quantidade > 0 ? 'var(--danger)' : 'inherit'}">${fmtNum(o.perda_quantidade)}</td>
+        <td style="color:${o.sobra_quantidade > 0 ? 'var(--success)' : 'inherit'}">${fmtNum(o.sobra_quantidade)}</td>
+        <td>${o.pedido_numero || '—'}</td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    if (tbody) tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--danger)">${e.message}</td></tr>`;
+  }
+}
+window.loadPerdasSobrasDetalhado = loadPerdasSobrasDetalhado;
+
+async function loadGraficoPerdasSobras() {
+  await _psdPopularFiltros('graf-ps');
+  _psdDefaultDatas('graf-ps-data-ini', 'graf-ps-data-fim');
+  ensureChartBox('chart-perdas-sobras-detalhado', 280);
+  const qs = _psdQueryString('graf-ps', 'graf-ps-data-ini', 'graf-ps-data-fim');
+  const kpiEl = document.getElementById('graf-ps-kpi');
+  try {
+    const [pontos, resumo] = await Promise.all([
+      api('/relatorios/perdas-sobras-grafico?' + qs),
+      api('/relatorios/perdas-sobras-detalhado?' + qs)
+    ]);
+    if (kpiEl) {
+      kpiEl.innerHTML = `
+        <div class="card"><div class="card-label">Total perdido no período</div><div style="font-family:var(--font-head);font-weight:800;font-size:18px;color:var(--danger)">${fmtNum(resumo.total_perda)}</div></div>
+        <div class="card"><div class="card-label">Total sobra no período</div><div style="font-family:var(--font-head);font-weight:800;font-size:18px;color:var(--success)">${fmtNum(resumo.total_sobra)}</div></div>
+      `;
+    }
+    if (!pontos.length) {
+      grafBoxMsg('chart-perdas-sobras-detalhado', 'Sem perdas ou sobras no período/filtros selecionados');
+      return;
+    }
+    destroyGrafChart('perdas-sobras-detalhado');
+    const colors = getChartThemeColors();
+    grafCharts['perdas-sobras-detalhado'] = new Chart(document.getElementById('chart-perdas-sobras-detalhado'), {
+      type: 'bar',
+      data: {
+        labels: pontos.map(p => fmtDate(p.data)),
+        datasets: [
+          { label: 'Perda', data: pontos.map(p => p.total_perda || 0), backgroundColor: colors.dangerColor, borderRadius: 4 },
+          { label: 'Sobra', data: pontos.map(p => p.total_sobra || 0), backgroundColor: colors.successColor, borderRadius: 4 }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: colors.textColor } } },
+        scales: {
+          x: { ticks: { color: colors.textColor }, grid: { color: colors.gridColor } },
+          y: { beginAtZero: true, ticks: { color: colors.textColor }, grid: { color: colors.gridColor } }
+        }
+      }
+    });
+  } catch (e) {
+    grafBoxMsg('chart-perdas-sobras-detalhado', e.message, true);
+  }
+}
+window.loadGraficoPerdasSobras = loadGraficoPerdasSobras;
+
 
 function addItemProducao() {
   prodItens.push({ produto_id: null, producao: 0, perda: 0, sobra: 0, tipo_perda: 'Quebra' });
@@ -5720,6 +5880,50 @@ async function verDetalhesPedido(id) {
   openModal('modal-ped-detalhe');
   const btnImprimir = document.getElementById('btn-imprimir-pedido-modal');
   if(btnImprimir) btnImprimir.onclick = () => { imprimirPedido(id); };
+  _carregarHistoricoProducaoPedido(id);
+}
+
+// Quem produziu e quando: lançamentos de produção vinculados a este pedido
+// (um pedido pode ser atendido em vários dias por operadores diferentes).
+async function _carregarHistoricoProducaoPedido(id) {
+  const container = document.getElementById('modal-ped-det-content');
+  if (!container) return;
+  const wrapId = 'ped-hist-producao-wrap';
+  let wrap = document.getElementById(wrapId);
+  if (!wrap) {
+    wrap = document.createElement('div');
+    wrap.id = wrapId;
+    wrap.className = 'table-wrap';
+    wrap.style.marginTop = '16px';
+    container.appendChild(wrap);
+  }
+  wrap.innerHTML = '<div class="table-head"><span class="table-head-title">Histórico de Produção</span></div><div style="padding:12px;color:var(--muted);font-size:13px">Carregando...</div>';
+  try {
+    const hist = await api('/pedidos/' + id + '/historico-producao');
+    const lancamentos = hist.lancamentos || [];
+    if (!lancamentos.length) {
+      wrap.innerHTML = '<div class="table-head"><span class="table-head-title">Histórico de Produção</span></div><div style="padding:12px;color:var(--muted);font-size:13px">Nenhum lançamento de produção vinculado a este pedido ainda.</div>';
+      return;
+    }
+    wrap.innerHTML = `
+      <div class="table-head"><span class="table-head-title">Histórico de Produção</span></div>
+      <table>
+        <thead><tr><th>Data</th><th>Operador</th><th>Máquina</th><th>Qtd Produzida</th><th>Perda</th><th>Sobra</th></tr></thead>
+        <tbody>${lancamentos.map(l => `
+          <tr>
+            <td>${fmtDate(l.data)}</td>
+            <td>${l.colaborador_nome}</td>
+            <td>${l.maquina_nome}</td>
+            <td>${fmtNum(l.producao)}</td>
+            <td style="color:${l.perda_quantidade > 0 ? 'var(--danger)' : 'inherit'}">${fmtNum(l.perda_quantidade)}</td>
+            <td style="color:${l.sobra_quantidade > 0 ? 'var(--success)' : 'inherit'}">${fmtNum(l.sobra_quantidade)}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    `;
+  } catch (e) {
+    wrap.innerHTML = `<div class="table-head"><span class="table-head-title">Histórico de Produção</span></div><div style="padding:12px;color:var(--danger);font-size:13px">${e.message}</div>`;
+  }
 }
 
 async function deletarPedido(id) {
@@ -7088,7 +7292,8 @@ async function loadGraficos(options = {}) {
   ensureChartBox('chart-pedidos-status', 280);
   ensureChartBox('chart-prazo', 280);
   ensureChartBox('chart-estoque-cat', 280);
-  await Promise.all([loadGraficoAnual(options), loadGraficoComparativo(options)]);
+  ensureChartBox('chart-perdas-sobras-detalhado', 280);
+  await Promise.all([loadGraficoAnual(options), loadGraficoComparativo(options), loadGraficoPerdasSobras()]);
 
   const colors = getChartThemeColors();
   const gc = colors.gridColor;

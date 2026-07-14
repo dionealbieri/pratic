@@ -11,6 +11,7 @@ class ProducaoItemIn(BaseModel):
     quantidade: float = 0
     perda_quantidade: Optional[float] = 0
     sobra_quantidade: Optional[float] = 0
+    tipo_perda: Optional[str] = None
 
 class ProducaoIn(BaseModel):
     colaborador_id: int
@@ -40,17 +41,20 @@ def _salvar_itens_detalhe(cur, prod_id: int, p: "ProducaoIn"):
         for item in p.itens:
             if (item.quantidade or 0) <= 0 and (item.perda_quantidade or 0) <= 0 and (item.sobra_quantidade or 0) <= 0:
                 continue
+            # tipo_perda só faz sentido quando há perda de fato; sem perda, fica NULL
+            tipo_perda_item = (item.tipo_perda or p.perda_tipo) if (item.perda_quantidade or 0) > 0 else None
             cur.execute("""INSERT INTO producao_diaria_itens
-                          (producao_diaria_id, produto_estoque_id, quantidade, perda_quantidade, sobra_quantidade)
-                          VALUES (?, ?, ?, ?, ?)""",
+                          (producao_diaria_id, produto_estoque_id, quantidade, perda_quantidade, sobra_quantidade, tipo_perda)
+                          VALUES (?, ?, ?, ?, ?, ?)""",
                        (prod_id, item.produto_estoque_id, item.quantidade or 0,
-                        item.perda_quantidade or 0, item.sobra_quantidade or 0))
+                        item.perda_quantidade or 0, item.sobra_quantidade or 0, tipo_perda_item))
     else:
+        tipo_perda_header = p.perda_tipo if (p.perda_quantidade or 0) > 0 else None
         cur.execute("""INSERT INTO producao_diaria_itens
-                      (producao_diaria_id, produto_estoque_id, quantidade, perda_quantidade, sobra_quantidade)
-                      VALUES (?, ?, ?, ?, ?)""",
+                      (producao_diaria_id, produto_estoque_id, quantidade, perda_quantidade, sobra_quantidade, tipo_perda)
+                      VALUES (?, ?, ?, ?, ?, ?)""",
                    (prod_id, p.produto_estoque_id, p.producao,
-                    p.perda_quantidade or 0, p.sobra_quantidade or 0))
+                    p.perda_quantidade or 0, p.sobra_quantidade or 0, tipo_perda_header))
 
 @router.get("/")
 def listar(mes: Optional[str] = None, colaborador_id: Optional[int] = None):

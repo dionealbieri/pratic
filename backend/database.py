@@ -518,6 +518,12 @@ def init_db():
             FOREIGN KEY (produto_estoque_id) REFERENCES estoque_produtos(id)
         )
     """)
+    # tipo_perda por item: permite saber qual foi o motivo da perda de CADA
+    # produto num lançamento multi-produto (antes só existia em
+    # estoque_movimentacoes, sem ligação direta com o item/produto do dia).
+    cols_pdi = [row[1] for row in conn.execute("PRAGMA table_info(producao_diaria_itens)").fetchall()]
+    if "tipo_perda" not in cols_pdi:
+        conn.execute("ALTER TABLE producao_diaria_itens ADD COLUMN tipo_perda TEXT")
     # Migração única: lançamentos antigos de produto único (já têm produto vinculado
     # no cabeçalho) ganham a linha de detalhe correspondente, se ainda não existir.
     # Lançamentos multi-produto antigos não têm como recuperar o detalhe por

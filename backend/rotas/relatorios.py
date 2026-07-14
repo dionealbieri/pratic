@@ -557,6 +557,71 @@ def perdas_por_tipo(mes_ini: Optional[str] = None, mes_fim: Optional[str] = None
         resultado.append(d)
     return resultado
 
+def _filtros_perdas_sobras(data_inicio: Optional[str], data_fim: Optional[str],
+                            produto_id: Optional[int], colaborador_id: Optional[int],
+                            tipo_perda: Optional[str]):
+    where = ["(i.perda_quantidade > 0 OR i.sobra_quantidade > 0)"]
+    params = []
+    if data_inicio:
+        where.append("p.data >= ?"); params.append(data_inicio)
+    if data_fim:
+        where.append("p.data <= ?"); params.append(data_fim)
+    if produto_id:
+        where.append("i.produto_estoque_id = ?"); params.append(produto_id)
+    if colaborador_id:
+        where.append("p.colaborador_id = ?"); params.append(colaborador_id)
+    if tipo_perda:
+        where.append("i.tipo_perda = ?"); params.append(tipo_perda)
+    return where, params
+
+@router.get("/perdas-sobras-detalhado")
+def perdas_sobras_detalhado(data_inicio: Optional[str] = None, data_fim: Optional[str] = None,
+                             produto_id: Optional[int] = None, colaborador_id: Optional[int] = None,
+                             tipo_perda: Optional[str] = None):
+    """Cada ocorrência de perda/sobra com produto, data e operador — pra
+    rastrear qual produto perdeu/sobrou, quando e com quem, em vez de só
+    ver o total agregado por tipo."""
+    conn = get_conn()
+    where, params = _filtros_perdas_sobras(data_inicio, data_fim, produto_id, colaborador_id, tipo_perda)
+    rows = conn.execute(f"""
+        SELECT p.data, c.nome as colaborador_nome, m.nome as maquina_nome,
+               ep.nome as produto_nome, i.tipo_perda,
+               i.perda_quantidade, i.sobra_quantidade, p.pedido_numero
+        FROM producao_diaria_itens i
+        JOIN producao_diaria p ON p.id = i.producao_diaria_id
+        JOIN colaboradores c ON c.id = p.colaborador_id
+        JOIN maquinas m ON m.id = p.maquina_id
+        LEFT JOIN estoque_produtos ep ON ep.id = i.produto_estoque_id
+        WHERE {" AND ".join(where)}
+        ORDER BY p.data DESC, p.id DESC
+    """, params).fetchall()
+    conn.close()
+    ocorrencias = [dict(r) for r in rows]
+    total_perda = sum((r["perda_quantidade"] or 0) for r in ocorrencias)
+    total_sobra = sum((r["sobra_quantidade"] or 0) for r in ocorrencias)
+    return {"ocorrencias": ocorrencias, "total_perda": total_perda, "total_sobra": total_sobra}
+
+@router.get("/perdas-sobras-grafico")
+def perdas_sobras_grafico(data_inicio: Optional[str] = None, data_fim: Optional[str] = None,
+                           produto_id: Optional[int] = None, colaborador_id: Optional[int] = None,
+                           tipo_perda: Optional[str] = None):
+    """Perda x sobra agregado por dia, já com os mesmos filtros da tela
+    detalhada — alimenta o gráfico combinado do dashboard."""
+    conn = get_conn()
+    where, params = _filtros_perdas_sobras(data_inicio, data_fim, produto_id, colaborador_id, tipo_perda)
+    rows = conn.execute(f"""
+        SELECT p.data,
+               SUM(i.perda_quantidade) as total_perda,
+               SUM(i.sobra_quantidade) as total_sobra
+        FROM producao_diaria_itens i
+        JOIN producao_diaria p ON p.id = i.producao_diaria_id
+        WHERE {" AND ".join(where)}
+        GROUP BY p.data
+        ORDER BY p.data ASC
+    """, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
 @router.get("/produtividade-maquina")
 def produtividade_maquina(mes_ini: Optional[str] = None, mes_fim: Optional[str] = None):
     """Desempenho por máquina: total produzido, perdas, sobras, quantos dias

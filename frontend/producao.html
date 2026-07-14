@@ -726,7 +726,11 @@ function atualizarSimplificadoData() {
   const qtd = +document.getElementById('prod-simples-qtd').value || 0;
   const perda = +document.getElementById('prod-simples-perda').value || 0;
   const sobra = +document.getElementById('prod-simples-sobra').value || 0;
-  const tipo = document.getElementById('prod-simples-tipo-perda').value || 'Quebra';
+  const tipoPerdaSel = document.getElementById('prod-simples-tipo-perda');
+  tipoPerdaSel.disabled = !(perda > 0);
+  tipoPerdaSel.style.opacity = (perda > 0) ? '' : '0.5';
+  tipoPerdaSel.style.cursor = (perda > 0) ? '' : 'not-allowed';
+  const tipo = tipoPerdaSel.value || 'Quebra';
   
   prodItens = [{
     produto_id: null,
@@ -759,7 +763,7 @@ function renderProdItens() {
       <div class="prod-field-col prod-field-perda">
         <label class="prod-field-label">Perda</label>
         <input type="number" value="${item.perda||''}" min="0" placeholder="0"
-               oninput="prodItens[${idx}].perda=+this.value"
+               oninput="prodItens[${idx}].perda=+this.value;atualizarEstadoTipoPerda(${idx})"
                style="font-size:13px;text-align:center;padding:8px 4px;border-color:rgba(239,68,68,.35);width:100%;min-width:0">
       </div>
       <div class="prod-field-col prod-field-sobra">
@@ -770,7 +774,7 @@ function renderProdItens() {
       </div>
       <div class="prod-field-col prod-field-tipoperda">
         <label class="prod-field-label">Tipo Perda</label>
-        <select onchange="prodItens[${idx}].tipo_perda=this.value" style="font-size:12px;padding:8px 4px;width:100%;min-width:0">
+        <select id="select-tipoperda-${idx}" onchange="prodItens[${idx}].tipo_perda=this.value" ${(item.perda>0)?'':'disabled'} style="font-size:12px;padding:8px 4px;width:100%;min-width:0;${(item.perda>0)?'':'opacity:0.5;cursor:not-allowed;'}">
           ${TIPOS_PERDA_MOD.map(t=>`<option value="${t}" ${item.tipo_perda===t?'selected':''}>${t}</option>`).join('')}
         </select>
       </div>
@@ -778,6 +782,15 @@ function renderProdItens() {
         <button class="btn btn-sm btn-danger" onclick="prodItens.splice(${idx},1);renderProdItens()" ${prodItens.length===1?'disabled':''} style="padding:6px 8px;width:100%">✕</button>
       </div>
     </div>`).join('');
+}
+
+function atualizarEstadoTipoPerda(idx) {
+  const sel = document.getElementById(`select-tipoperda-${idx}`);
+  if (!sel) return;
+  const temPerda = (prodItens[idx].perda || 0) > 0;
+  sel.disabled = !temPerda;
+  sel.style.opacity = temPerda ? '' : '0.5';
+  sel.style.cursor = temPerda ? '' : 'not-allowed';
 }
 
 function addItemProducao() {

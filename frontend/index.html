@@ -1408,6 +1408,27 @@
           </div>
         </div>
 
+        <!-- LINHA 5: Perdas e Sobras Detalhado -->
+        <div class="card" style="padding:20px;margin-bottom:20px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:8px">
+            <div>
+              <div style="font-family:var(--font-head);font-weight:700">⚠️ Perdas e Sobras — Detalhado</div>
+              <div style="font-size:12px;color:var(--muted);margin-top:2px">Perda x sobra por dia, com filtro de produto e tipo</div>
+            </div>
+            <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+              <input type="date" id="graf-ps-data-ini" style="min-width:140px">
+              <span style="color:var(--muted)">até</span>
+              <input type="date" id="graf-ps-data-fim" style="min-width:140px">
+              <select id="graf-ps-produto" style="min-width:160px"><option value="">Todos os produtos</option></select>
+              <select id="graf-ps-tipo" style="min-width:150px"><option value="">Todos os tipos</option></select>
+              <button class="btn btn-secondary" onclick="loadGraficoPerdasSobras()">Filtrar</button>
+              <button class="btn btn-secondary" onclick="showPage('perdas-sobras')">Ver detalhado ↗</button>
+            </div>
+          </div>
+          <div id="graf-ps-kpi" style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px"></div>
+          <canvas id="chart-perdas-sobras-detalhado" height="90"></canvas>
+        </div>
+
       </div>
     </div>
 
@@ -1578,6 +1599,37 @@
             <tbody id="rel-ana-tbody"></tbody>
           </table>
         </div>
+      </div>
+    </div>
+
+    <!-- PERDAS E SOBRAS DETALHADO -->
+    <div class="page" id="page-perdas-sobras">
+      <div class="barra-fixa flex items-center justify-between mb-4" style="flex-wrap:wrap;gap:10px">
+        <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+          <label style="color:var(--muted);font-size:13px">Período:</label>
+          <input type="date" id="psd-data-ini" style="min-width:150px">
+          <span style="color:var(--muted)">até</span>
+          <input type="date" id="psd-data-fim" style="min-width:150px">
+          <select id="psd-produto" style="min-width:180px"><option value="">Todos os produtos</option></select>
+          <select id="psd-colaborador" style="min-width:160px"><option value="">Todos os operadores</option></select>
+          <select id="psd-tipo" style="min-width:160px"><option value="">Todos os tipos</option></select>
+          <button class="btn btn-secondary" onclick="loadPerdasSobrasDetalhado()">Filtrar</button>
+        </div>
+      </div>
+
+      <div class="cards-grid" id="psd-cards" style="margin-bottom:20px"></div>
+
+      <div class="table-wrap">
+        <div class="table-head"><span class="table-head-title">Ocorrências</span></div>
+        <table>
+          <thead>
+            <tr>
+              <th>Data</th><th>Produto</th><th>Operador</th><th>Máquina</th>
+              <th>Tipo</th><th>Perda</th><th>Sobra</th><th>Pedido</th>
+            </tr>
+          </thead>
+          <tbody id="psd-tbody"></tbody>
+        </table>
       </div>
     </div>
 

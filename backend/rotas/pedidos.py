@@ -1412,6 +1412,30 @@ def buscar_pedido(id: int):
     result["parcelas"] = [dict(pa) for pa in parcelas]
     return result
 
+@router.get("/{id}/historico-producao")
+def historico_producao_pedido(id: int):
+    """Lançamentos de produção vinculados a este pedido (pelo número), com
+    operador, máquina e data — pra saber quem produziu e quando, já que um
+    pedido pode ser atendido em vários dias/operadores diferentes."""
+    conn = get_conn()
+    pedido = conn.execute("SELECT numero_pedido FROM pedidos WHERE id=?", (id,)).fetchone()
+    if not pedido:
+        conn.close()
+        raise HTTPException(404, "Pedido não encontrado")
+    lancamentos = conn.execute("""
+        SELECT p.id, p.data, p.producao, p.perda_quantidade, p.sobra_quantidade,
+               c.nome as colaborador_nome, m.nome as maquina_nome
+        FROM producao_diaria p
+        JOIN colaboradores c ON c.id = p.colaborador_id
+        JOIN maquinas m ON m.id = p.maquina_id
+        WHERE p.pedido_numero = ?
+        ORDER BY p.data ASC, p.id ASC
+    """, (pedido["numero_pedido"],)).fetchall()
+    conn.close()
+    resultado = [dict(l) for l in lancamentos]
+    total_produzido = sum((l["producao"] or 0) for l in resultado)
+    return {"numero_pedido": pedido["numero_pedido"], "lancamentos": resultado, "total_produzido": total_produzido}
+
 @router.post("/")
 def criar_pedido(p: PedidoIn):
     conn = get_conn()
