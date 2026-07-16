@@ -9358,12 +9358,13 @@ function renderConsumoMedioTree() {
 
   const elAtualizacao = document.getElementById('cm-ultima-atualizacao');
   if (elAtualizacao) {
-    const menorHistorico = dados.reduce((min, r) => {
-      if (r.dias_historico == null) return min;
-      return min === null ? r.dias_historico : Math.min(min, r.dias_historico);
+    const piorCaso = dados.reduce((pior, r) => {
+      if (r.dias_historico == null) return pior;
+      if (!pior || r.dias_historico < pior.dias_historico) return r;
+      return pior;
     }, null);
-    const avisoHistorico = (menorHistorico !== null && menorHistorico < cmMesesAtual * 30)
-      ? ` · ⚠ histórico real disponível: ${menorHistorico} dia(s) (do produto mais recente do filtro atual) — médias calculadas com base no histórico real, não na janela cheia`
+    const avisoHistorico = (piorCaso && piorCaso.dias_historico < cmMesesAtual * 30)
+      ? ` · ⚠ o produto com menos histórico no filtro atual é ${piorCaso.nome} (${piorCaso.codigo}), com só ${piorCaso.dias_historico} dia(s) de consumo registrado — outros produtos podem ter o mesmo aviso (veja o * ao lado da cobertura de cada um)`
       : '';
     elAtualizacao.innerHTML = cmUltimaAtualizacaoTexto +
       (avisoHistorico ? `<span style="color:var(--warn)">${avisoHistorico}</span>` : '');
