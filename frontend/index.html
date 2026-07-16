@@ -12,7 +12,7 @@
     document.documentElement.setAttribute('data-theme', savedTheme);
   })();
 </script>
-<link rel="stylesheet" href="css/common.css?v=12">
+<link rel="stylesheet" href="css/common.css?v=14">
 <style>
   .nav-item[data-page="comunicacao"] { color:#25d366; }
   .nav-item[data-page="comunicacao"] .icon svg { display:inline-block; }
@@ -59,6 +59,9 @@
     </a>
     <a class="nav-item" onclick="showPage('saldo-demanda')" style="cursor:pointer">
       <span class="icon">📊</span> Saldo vs Demanda <span id="nav-svd-badge" style="display:none;background:var(--danger);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">!</span>
+    </a>
+    <a class="nav-item" onclick="showPage('consumo-medio')" style="cursor:pointer">
+      <span class="icon">📉</span> Consumo Médio
     </a>
     <a class="nav-item" onclick="showPage('epi')" style="cursor:pointer">
       <span class="icon">🦺</span> EPI <span id="nav-epi-badge" style="display:none;background:var(--danger);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">!</span>
@@ -1207,6 +1210,7 @@
               <th>Saldo Atual</th>
               <th>Pedidos Abertos</th>
               <th>Em Produção</th>
+              <th>Aguardando Separação</th>
               <th>Total Demanda</th>
               <th>Saldo Projetado</th>
               <th>Cobertura</th>
@@ -1216,6 +1220,47 @@
             </tr>
           </thead>
           <tbody id="svd-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- CONSUMO MÉDIO -->
+    <div class="page" id="page-consumo-medio">
+      <div class="barra-fixa flex items-center justify-between mb-4" style="flex-wrap:wrap;gap:10px">
+        <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+          <select id="cm-filtro-cat" onchange="loadConsumoMedio()" style="min-width:180px">
+            <option value="">Todas as categorias</option>
+          </select>
+          <select id="cm-filtro-marca" onchange="renderConsumoMedioTree()" style="min-width:160px">
+            <option value="">Todas as marcas</option>
+          </select>
+          <select id="cm-janela" onchange="loadConsumoMedio()" style="min-width:160px">
+            <option value="3">Últimos 3 meses</option>
+            <option value="6" selected>Últimos 6 meses</option>
+            <option value="12">Últimos 12 meses</option>
+          </select>
+          <button class="btn btn-secondary" onclick="loadConsumoMedio()">↻ Atualizar</button>
+        </div>
+      </div>
+
+      <div id="cm-ultima-atualizacao" style="font-size:12px;color:var(--muted);margin-bottom:12px"></div>
+
+      <div class="table-wrap">
+        <div class="table-head">
+          <span class="table-head-title">Consumo Médio por Categoria / Marca / Produto</span>
+        </div>
+        <table id="cm-table">
+          <thead>
+            <tr>
+              <th>Categoria / Marca / Produto</th>
+              <th>Saldo Atual</th>
+              <th>Consumo no Período</th>
+              <th>Média Mensal</th>
+              <th>Média Quinzenal</th>
+              <th>Cobertura</th>
+            </tr>
+          </thead>
+          <tbody id="cm-tbody"></tbody>
         </table>
       </div>
     </div>
@@ -1260,10 +1305,14 @@
 
     <!-- MODAL LISTA DE COMPRAS -->
     <div class="modal-overlay" id="modal-lista-compras">
-      <div class="modal" style="max-width:620px">
-        <div class="modal-title">🛒 Lista de Compras</div>
-        <div id="modal-lista-compras-content"></div>
-        <div class="modal-footer">
+      <div class="modal" style="max-width:720px;width:95vw;max-height:90vh;display:flex;flex-direction:column;padding:0">
+        <div style="padding:28px 28px 0;flex-shrink:0">
+          <div class="modal-title">🛒 Lista de Compras</div>
+        </div>
+        <div style="flex:1;overflow-y:auto;padding:0 28px 20px;min-height:0">
+          <div id="modal-lista-compras-content"></div>
+        </div>
+        <div class="modal-footer" style="padding:16px 28px;margin-top:0;flex-shrink:0;border-top:1px solid var(--border)">
           <button class="btn btn-secondary" onclick="closeModal('modal-lista-compras')">Fechar</button>
           <button class="btn btn-secondary" onclick="exportarListaCompras('excel')">⬇ Excel</button>
           <button class="btn btn-primary" onclick="exportarListaCompras('pdf')">⬇ PDF</button>
@@ -2618,7 +2667,7 @@
   </div>
 </div>
 
-<script src="js/app.js?v=20260701-alertfix1"></script>
+<script src="js/app.js?v=20260716-consumomedio4"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');

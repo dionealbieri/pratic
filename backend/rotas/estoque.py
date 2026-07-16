@@ -506,15 +506,20 @@ def saldo_vs_demanda(categoria_id: Optional[int] = None):
     resultado = []
     for p in produtos:
         pid = p["id"]
-        # Demanda: pedidos abertos e em produção
+        # Demanda: qualquer item ainda pendente (quantidade > qtd_produzida) de pedido
+        # que não esteja finalizado. Não usamos apenas status IN ('aberto','em_producao')
+        # porque _recalc_status_pedido avança o pedido para 'produzido' com base só nos
+        # itens de produção — itens de revenda (tampas etc.) ainda pendentes de separação
+        # ficariam de fora da demanda mesmo o pedido "devendo" fisicamente esse item.
         demanda = conn.execute("""
             SELECT 
-                COALESCE(SUM(CASE WHEN ped.status IN ('aberto') THEN pi.quantidade - pi.qtd_produzida ELSE 0 END), 0) as qtd_aberto,
+                COALESCE(SUM(CASE WHEN ped.status = 'aberto' THEN pi.quantidade - pi.qtd_produzida ELSE 0 END), 0) as qtd_aberto,
                 COALESCE(SUM(CASE WHEN ped.status = 'em_producao' THEN pi.quantidade - pi.qtd_produzida ELSE 0 END), 0) as qtd_em_producao,
-                COALESCE(SUM(CASE WHEN ped.status IN ('aberto','em_producao') THEN pi.quantidade - pi.qtd_produzida ELSE 0 END), 0) as total_demanda
+                COALESCE(SUM(CASE WHEN ped.status IN ('produzido','enviado') THEN pi.quantidade - pi.qtd_produzida ELSE 0 END), 0) as qtd_aguardando_separacao,
+                COALESCE(SUM(pi.quantidade - pi.qtd_produzida), 0) as total_demanda
             FROM pedidos_itens pi
             JOIN pedidos ped ON pi.pedido_id = ped.id
-            WHERE pi.produto_id = ? AND ped.status IN ('aberto','em_producao')
+            WHERE pi.produto_id = ? AND ped.status != 'entregue'
               AND pi.quantidade > pi.qtd_produzida
         """, (pid,)).fetchone()
 
@@ -525,7 +530,7 @@ def saldo_vs_demanda(categoria_id: Optional[int] = None):
                 CAST(MIN(julianday(ped.prazo_entrega) - julianday('now')) AS INTEGER) as dias_restantes
             FROM pedidos_itens pi
             JOIN pedidos ped ON pi.pedido_id = ped.id
-            WHERE pi.produto_id = ? AND ped.status IN ('aberto','em_producao')
+            WHERE pi.produto_id = ? AND ped.status != 'entregue'
               AND pi.quantidade > pi.qtd_produzida
         """, (pid,)).fetchone()
 
@@ -556,12 +561,98 @@ def saldo_vs_demanda(categoria_id: Optional[int] = None):
             "saldo_atual": saldo,
             "qtd_aberto": demanda["qtd_aberto"] or 0,
             "qtd_em_producao": demanda["qtd_em_producao"] or 0,
+            "qtd_aguardando_separacao": demanda["qtd_aguardando_separacao"] or 0,
             "total_demanda": total_demanda,
             "saldo_projetado": saldo_projetado,
             "cobertura": cobertura,
             "situacao": situacao,
             "prazo_urgente": prazo_urgente["prazo_mais_urgente"],
             "dias_urgente": int(prazo_urgente["dias_restantes"]) if prazo_urgente["dias_restantes"] is not None else None,
+        })
+
+    conn.close()
+    return resultado
+
+@router.get("/consumo-medio")
+def consumo_medio(meses: int = 6, categoria_id: Optional[int] = None):
+    """Consumo médio por produto com base no histórico de saídas e perdas do
+    estoque (produção diária, separação de pedido, perdas). Usado para estimar
+    ruptura futura por ritmo de consumo, complementar ao saldo x demanda
+    (que olha só pedidos já registrados)."""
+    if meses <= 0:
+        meses = 6
+    conn = get_conn()
+
+    query = """
+        SELECT 
+            ep.id, ep.codigo, ep.nome, ep.marca, ep.unidade,
+            ep.estoque_minimo, ec.nome as categoria_nome, ec.tipo as categoria_tipo,
+            ep.categoria_id,
+            COALESCE(es.quantidade, 0) as saldo_atual
+        FROM estoque_produtos ep
+        LEFT JOIN estoque_categorias ec ON ep.categoria_id = ec.id
+        LEFT JOIN estoque_saldo es ON es.produto_id = ep.id
+        WHERE ep.ativo = 1
+    """
+    params = []
+    if categoria_id:
+        query += " AND ep.categoria_id = ?"
+        params.append(categoria_id)
+    query += " ORDER BY ec.nome, ep.marca, ep.nome"
+    produtos = conn.execute(query, params).fetchall()
+
+    resultado = []
+    for p in produtos:
+        pid = p["id"]
+        # Consumo no período pedido, e a data do primeiro movimento dentro dele —
+        # usamos essa data (não a janela nominal em meses) pra calcular a média,
+        # porque se o histórico real disponível for menor que a janela (ex.: produto
+        # cadastrado há 6 semanas mas o usuário escolheu "últimos 12 meses"), dividir
+        # pelos 12 meses cheios dilui a média pra bem menos do que o consumo real.
+        linha = conn.execute("""
+            SELECT COALESCE(SUM(quantidade), 0) as total, MIN(data) as primeira_data
+            FROM estoque_movimentacoes
+            WHERE produto_id = ? AND tipo IN ('saida','perda')
+              AND data >= date('now', ? || ' months')
+        """, (pid, f"-{meses}")).fetchone()
+
+        consumo_periodo = linha["total"] or 0
+        dias_reais = None
+        if linha["primeira_data"]:
+            dias_row = conn.execute(
+                "SELECT CAST(julianday('now') - julianday(?) AS INTEGER) as dias",
+                (linha["primeira_data"],)
+            ).fetchone()
+            dias_reais = max(dias_row["dias"] or 0, 1)
+        dias_janela = min(dias_reais, meses * 30) if dias_reais else meses * 30
+
+        media_diaria = consumo_periodo / dias_janela if dias_janela > 0 else 0
+        media_mensal = media_diaria * 30
+        media_quinzenal = media_diaria * 15
+        media_anual = media_diaria * 365
+
+        saldo = p["saldo_atual"] or 0
+        cobertura_dias = int(saldo / media_diaria) if media_diaria > 0 else None
+        historico_curto = dias_reais is not None and dias_reais < (meses * 30)
+
+        resultado.append({
+            "id": pid,
+            "codigo": p["codigo"],
+            "nome": p["nome"],
+            "marca": p["marca"],
+            "unidade": p["unidade"],
+            "categoria": p["categoria_nome"] or "—",
+            "categoria_id": p["categoria_id"],
+            "categoria_tipo": p["categoria_tipo"] or "producao",
+            "saldo_atual": saldo,
+            "consumo_periodo": round(consumo_periodo, 2),
+            "media_mensal": round(media_mensal, 2),
+            "media_quinzenal": round(media_quinzenal, 2),
+            "media_anual": round(media_anual, 2),
+            "cobertura_dias": cobertura_dias,
+            "meses_janela": meses,
+            "dias_historico": dias_reais,
+            "historico_curto": historico_curto,
         })
 
     conn.close()
@@ -580,7 +671,7 @@ def detalhe_produto_pedidos(produto_id: int):
         FROM pedidos_itens pi
         JOIN pedidos ped ON pi.pedido_id = ped.id
         LEFT JOIN pedidos_clientes pc ON ped.cliente_id = pc.id
-        WHERE pi.produto_id = ? AND ped.status IN ('aberto','em_producao')
+        WHERE pi.produto_id = ? AND ped.status != 'entregue'
           AND pi.quantidade > pi.qtd_produzida
         ORDER BY ped.prazo_entrega ASC
     """, (produto_id,)).fetchall()

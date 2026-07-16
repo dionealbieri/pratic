@@ -375,7 +375,9 @@ nav {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 12px;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
 }
 .table-head {
   padding: 16px 24px;
@@ -599,6 +601,8 @@ button:disabled.btn-loading {
   padding: 28px;
   width: 100%;
   max-width: 500px;
+  max-height: 90vh;
+  overflow-y: auto;
   transform: translateY(20px);
   transition: transform .2s, background 0.3s;
 }
@@ -1392,6 +1396,35 @@ button:disabled.btn-loading {
   top: 0;
   z-index: 5;
   box-shadow: inset 0 -1px 0 var(--border);
+}
+
+/* CONSUMO MEDIO: cabecalho da tabela fixo ao rolar (mesmo padrao do Saldo vs Demanda) */
+#page-consumo-medio .table-wrap { overflow: clip; }
+#page-consumo-medio table thead th {
+  position: sticky;
+  top: 130px;            /* 70px da topbar + altura da .barra-fixa de filtros */
+  z-index: 5;
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+@media (max-width: 800px) {
+  #page-consumo-medio table thead th { top: 112px; }
+}
+
+/* ESTOQUE (produtos) e RELATORIOS > ESTOQUE: cabecalho da tabela fixo ao rolar.
+   Aqui empilham DUAS barras fixas acima da tabela (abas .barra-fixa + linha de
+   filtros/botoes), por isso o offset e maior que nas demais paginas. */
+#page-estoque .table-wrap,
+#rel-content-estoque .table-wrap { overflow: clip; }
+#page-estoque table thead th,
+#rel-content-estoque table thead th {
+  position: sticky;
+  top: 190px;            /* 70px topbar + ~60px abas + ~60px filtros/botoes */
+  z-index: 5;
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+@media (max-width: 800px) {
+  #page-estoque table thead th,
+  #rel-content-estoque table thead th { top: 172px; }
 }
 
 /* FILA DE PRODUÇÃO: barra de controles unica e fixa ao rolar */

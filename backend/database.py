@@ -604,10 +604,10 @@ def init_db():
         ("empresa_cidade", "", "Cidade da empresa"),
         ("empresa_uf", "", "UF da empresa"),
         ("empresa_logo", "", "Logo da empresa em base64"),
-        ("perm_gestor", "dashboard,producao,premiacao,colaboradores,maquinas,pedidos,estoque,epi,saldo-demanda,graficos,relatorios,configuracoes,backup,perm-usuarios,permissoes,empresa,mobile,estoque_mobile", "Permissões do perfil Gestor"),
+        ("perm_gestor", "dashboard,producao,premiacao,colaboradores,maquinas,pedidos,estoque,epi,saldo-demanda,consumo-medio,graficos,relatorios,configuracoes,backup,perm-usuarios,permissoes,empresa,mobile,estoque_mobile", "Permissões do perfil Gestor"),
         ("perm_producao", "dashboard,producao,premiacao,colaboradores,maquinas,epi,relatorios", "Permissões do perfil Produção"),
         ("perm_comercial", "dashboard,pedidos,relatorios", "Permissões do perfil Comercial"),
-        ("perm_estoque", "dashboard,estoque,relatorios,estoque_mobile", "Permissões do perfil Estoque"),
+        ("perm_estoque", "dashboard,estoque,consumo-medio,relatorios,estoque_mobile", "Permissões do perfil Estoque"),
         ("chat_p2p_permitido", "0", "Permitir chat 1:1 privado entre colaboradores"),
     ]
     for chave, valor, descricao in default_configs:
@@ -615,6 +615,25 @@ def init_db():
             "INSERT OR IGNORE INTO configuracoes (chave, valor, descricao) VALUES (?, ?, ?)",
             (chave, valor, descricao)
         )
+
+    # Migração: adiciona novas páginas às permissões de perfis já existentes no banco.
+    # INSERT OR IGNORE acima só cria a linha se ela ainda não existir — em bancos que já
+    # tinham perm_gestor/perm_estoque salvos, uma página nova (ex.: consumo-medio) nunca
+    # entraria na string sem isso, e sumiria do menu mesmo para o gestor.
+    _paginas_novas_por_perfil = {
+        "perm_gestor": ["consumo-medio"],
+        "perm_estoque": ["consumo-medio"],
+    }
+    for _chave, _paginas in _paginas_novas_por_perfil.items():
+        _row = conn.execute("SELECT valor FROM configuracoes WHERE chave = ?", (_chave,)).fetchone()
+        if _row:
+            _atuais = [p.strip() for p in (_row["valor"] or "").split(",") if p.strip()]
+            _faltando = [p for p in _paginas if p not in _atuais]
+            if _faltando:
+                conn.execute(
+                    "UPDATE configuracoes SET valor = ? WHERE chave = ?",
+                    (",".join(_atuais + _faltando), _chave)
+                )
 
     # Tabela de permissões por usuário (separada por causa do UNIQUE constraint)
     conn.execute("""

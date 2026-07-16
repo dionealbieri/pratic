@@ -65,6 +65,7 @@ const PAGINAS_SISTEMA = [
   { key:'maquinas',      label:'⚙️ Máquinas'           },
   { key:'epi',           label:'🦺 EPI'               },
   { key:'saldo-demanda', label:'📊 Saldo vs Demanda'   },
+  { key:'consumo-medio', label:'📉 Consumo Médio'      },
   { key:'configuracoes', label:'🔧 Configurações'      },
   { key:'backup',        label:'💾 Backup'             },
   { key:'permissoes',    label:'🔐 Controle de Acesso' },
@@ -152,6 +153,7 @@ const pageTitles = {
   'perdas-sobras': 'Perdas e Sobras Detalhado',
   estoque: 'Estoque',
   'saldo-demanda': 'Saldo vs Demanda',
+  'consumo-medio': 'Consumo Médio',
   pedidos: 'Pedidos & Fila de Produção',
   backup: 'Backup & Restauração',
   epi: 'Controle de EPI',
@@ -197,6 +199,7 @@ const PAGE_META_MAIN = {
   epi:           { icon:'🦺', label:'EPI', section:'Operações' },
   comunicacao:   { icon:'<svg viewBox="0 0 24 24" width="17" height="17" style="vertical-align:-3px"><path fill="#25d366" d="M12 2C6.5 2 2 6 2 11c0 1.9.7 3.7 1.9 5.1L3 22l6-1.5c.9.3 1.9.5 3 .5 5.5 0 10-4 10-9S17.5 2 12 2z"/></svg>', label:'Comunicação', section:'Operações' },
   'saldo-demanda': { icon:'📊', label:'Saldo vs Demanda', section:'Operações' },
+  'consumo-medio': { icon:'📉', label:'Consumo Médio', section:'Operações' },
   graficos:      { icon:'📈', label:'Gráficos', section:'Análises' },
   relatorios:    { icon:'📋', label:'Relatórios', section:'Análises' },
   'perdas-sobras': { icon:'⚠️', label:'Perdas e Sobras', section:'Análises' },
@@ -354,6 +357,7 @@ function showPage(name) {
     'perdas-sobras': loadPerdasSobrasDetalhado,
     estoque: loadEstoque,
     'saldo-demanda': loadSaldoDemanda,
+    'consumo-medio': loadConsumoMedio,
     pedidos: loadPedidos_init,
     backup: () => {},
     epi: loadEPI,
@@ -9148,7 +9152,7 @@ function renderSVDTabela(dados) {
   const tbody = document.getElementById('svd-tbody');
   if (!tbody) return;
   if (!dados.length) {
-    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:32px">Nenhum produto encontrado</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;color:var(--muted);padding:32px">Nenhum produto encontrado</td></tr>';
     return;
   }
   tbody.innerHTML = dados.map(r => {
@@ -9166,6 +9170,7 @@ function renderSVDTabela(dados) {
       <td style="font-weight:700">${fmtNum(r.saldo_atual)} <span style="color:var(--muted);font-weight:400;font-size:11px">${r.unidade}</span></td>
       <td style="color:var(--accent2)">${r.qtd_aberto > 0 ? fmtNum(r.qtd_aberto) : '—'}</td>
       <td style="color:var(--warn)">${r.qtd_em_producao > 0 ? fmtNum(r.qtd_em_producao) : '—'}</td>
+      <td style="color:#3b82f6" title="Pedido já produzido, mas item ainda não separado/entregue">${r.qtd_aguardando_separacao > 0 ? fmtNum(r.qtd_aguardando_separacao) : '—'}</td>
       <td style="font-weight:600">${r.total_demanda > 0 ? fmtNum(r.total_demanda) : '—'}</td>
       <td style="font-weight:700;color:${projCor}">${r.saldo_projetado < 0 ? '−' : ''}${fmtNum(Math.abs(r.saldo_projetado))}</td>
       <td style="min-width:100px">
@@ -9210,8 +9215,8 @@ async function verDetalhesSVD(prodId, nome) {
 
   try {
     const rows = await api(`/estoque/saldo-vs-demanda/${prodId}/pedidos`);
-    const STATUS_PILL = { aberto:'pill-info', em_producao:'pill-warn' };
-    const STATUS_LABEL = { aberto:'📋 Aberto', em_producao:'🏭 Em produção' };
+    const STATUS_PILL = { aberto:'pill-info', em_producao:'pill-warn', produzido:'pill-warn', enviado:'pill-warn' };
+    const STATUS_LABEL = { aberto:'📋 Aberto', em_producao:'🏭 Em produção', produzido:'📦 Aguardando separação', enviado:'🚚 Enviado' };
 
     document.getElementById('modal-svd-content').innerHTML = rows.length ? `
       <div class="table-wrap">
@@ -9271,6 +9276,176 @@ function gerarListaCompras() {
       </table>
     </div>`;
   openModal('modal-lista-compras');
+}
+
+// ─── CONSUMO MÉDIO ────────────────────────────────────────────────────────
+let cmDados = [];
+let cmExpandido = new Set(); // chaves de categoria/marca abertas
+let cmSvdPorProduto = {};    // id produto -> {situacao, saldo_projetado} vindo do Saldo vs Demanda
+let cmMesesAtual = 6;
+let cmUltimaAtualizacaoTexto = '';
+
+async function loadConsumoMedio() {
+  try {
+    const cats = await api('/estoque/categorias');
+    const sel = document.getElementById('cm-filtro-cat');
+    if (sel && sel.options.length <= 1) {
+      cats.forEach(c => {
+        const o = document.createElement('option');
+        o.value = c.id; o.textContent = c.nome;
+        sel.appendChild(o);
+      });
+    }
+  } catch(e) {}
+
+  const catId = document.getElementById('cm-filtro-cat')?.value || '';
+  const meses = document.getElementById('cm-janela')?.value || '6';
+  cmMesesAtual = Number(meses);
+  let url = `/estoque/consumo-medio?meses=${meses}`;
+  if (catId) url += '&categoria_id=' + catId;
+
+  try {
+    cmDados = await api(url);
+
+    // Cruza com Saldo vs Demanda: um produto pode ter cobertura folgada pelo
+    // ritmo histórico de consumo e, ainda assim, já estar com déficit HOJE
+    // por causa de pedidos firmes em aberto. São duas perguntas diferentes
+    // ("quando o saldo deve zerar no ritmo atual" x "quanto já está prometido
+    // e não coberto agora"), então sinalizamos as duas juntas.
+    try {
+      const svd = await api('/estoque/saldo-vs-demanda');
+      cmSvdPorProduto = {};
+      svd.forEach(r => { cmSvdPorProduto[r.id] = r; });
+    } catch(e) { cmSvdPorProduto = {}; }
+
+    const marcaSel = document.getElementById('cm-filtro-marca');
+    if (marcaSel) {
+      const atual = marcaSel.value;
+      marcaSel.innerHTML = '<option value="">Todas as marcas</option>';
+      const marcas = [...new Set(cmDados.map(r => r.marca).filter(Boolean))].sort();
+      marcas.forEach(m => {
+        const o = document.createElement('option');
+        o.value = m; o.textContent = m;
+        marcaSel.appendChild(o);
+      });
+      if (marcas.includes(atual)) marcaSel.value = atual;
+    }
+
+    cmUltimaAtualizacaoTexto = `🕐 Janela: últimos ${meses} meses · Atualizado em: ` + new Date().toLocaleString('pt-BR');
+    renderConsumoMedioTree();
+  } catch(e) { showAlert('Erro ao carregar Consumo Médio: ' + e.message, 'danger'); }
+}
+
+function _cmCoberturaBadge(dias) {
+  if (dias === null || dias === undefined) return '<span style="color:var(--muted)">—</span>';
+  if (dias < 30) return `<span class="pill pill-danger">${fmtNum(dias)}d</span>`;
+  if (dias < 90) return `<span class="pill pill-warn">${fmtNum(dias)}d</span>`;
+  return `<span class="pill pill-success">${fmtNum(dias)}d</span>`;
+}
+
+function toggleCmGrupo(key) {
+  if (cmExpandido.has(key)) cmExpandido.delete(key);
+  else cmExpandido.add(key);
+  renderConsumoMedioTree();
+}
+
+function renderConsumoMedioTree() {
+  const tbody = document.getElementById('cm-tbody');
+  if (!tbody) return;
+
+  const marcaFiltro = document.getElementById('cm-filtro-marca')?.value || '';
+  const dados = marcaFiltro ? cmDados.filter(r => r.marca === marcaFiltro) : cmDados;
+
+  const elAtualizacao = document.getElementById('cm-ultima-atualizacao');
+  if (elAtualizacao) {
+    const menorHistorico = dados.reduce((min, r) => {
+      if (r.dias_historico == null) return min;
+      return min === null ? r.dias_historico : Math.min(min, r.dias_historico);
+    }, null);
+    const avisoHistorico = (menorHistorico !== null && menorHistorico < cmMesesAtual * 30)
+      ? ` · ⚠ histórico real disponível: ${menorHistorico} dia(s) (do produto mais recente do filtro atual) — médias calculadas com base no histórico real, não na janela cheia`
+      : '';
+    elAtualizacao.innerHTML = cmUltimaAtualizacaoTexto +
+      (avisoHistorico ? `<span style="color:var(--warn)">${avisoHistorico}</span>` : '');
+  }
+
+  if (!dados.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:32px">Nenhum produto encontrado</td></tr>';
+    return;
+  }
+
+  // Agrupar: categoria -> marca -> produtos
+  const arvore = new Map();
+  dados.forEach(r => {
+    const cat = r.categoria || '—';
+    if (!arvore.has(cat)) arvore.set(cat, new Map());
+    const marcas = arvore.get(cat);
+    const marca = r.marca || '—';
+    if (!marcas.has(marca)) marcas.set(marca, []);
+    marcas.get(marca).push(r);
+  });
+
+  let html = '';
+  for (const [cat, marcas] of arvore) {
+    const catKey = 'cat:' + cat;
+    const catAberta = cmExpandido.has(catKey);
+    const catProdutos = [...marcas.values()].flat();
+    const catConsumo = catProdutos.reduce((s,p) => s + (p.consumo_periodo||0), 0);
+    const catSaldo = catProdutos.reduce((s,p) => s + (p.saldo_atual||0), 0);
+    const catMediaMensal = catProdutos.reduce((s,p) => s + (p.media_mensal||0), 0);
+    const catMediaQuinzenal = catProdutos.reduce((s,p) => s + (p.media_quinzenal||0), 0);
+    const catCobertura = catMediaMensal > 0 ? Math.round(catSaldo / (catMediaMensal/30)) : null;
+
+    html += `<tr style="cursor:pointer;background:var(--surface1)" onclick="toggleCmGrupo('${catKey.replace(/'/g,"\\'")}')">
+      <td style="font-weight:700">${catAberta?'▾':'▸'} ${cat}</td>
+      <td style="font-weight:700">${fmtNum(catSaldo)}</td>
+      <td style="font-weight:700">${catConsumo>0?fmtNum(catConsumo):'—'}</td>
+      <td style="font-weight:700">${catMediaMensal>0?fmtNum(Math.round(catMediaMensal)):'—'}</td>
+      <td style="font-weight:700">${catMediaQuinzenal>0?fmtNum(Math.round(catMediaQuinzenal)):'—'}</td>
+      <td>${_cmCoberturaBadge(catCobertura)}</td>
+    </tr>`;
+
+    if (!catAberta) continue;
+
+    for (const [marca, produtos] of marcas) {
+      const marcaKey = 'marca:' + cat + '|' + marca;
+      const marcaAberta = cmExpandido.has(marcaKey);
+      const marcaConsumo = produtos.reduce((s,p) => s + (p.consumo_periodo||0), 0);
+      const marcaSaldo = produtos.reduce((s,p) => s + (p.saldo_atual||0), 0);
+      const marcaMediaMensal = produtos.reduce((s,p) => s + (p.media_mensal||0), 0);
+      const marcaMediaQuinzenal = produtos.reduce((s,p) => s + (p.media_quinzenal||0), 0);
+      const marcaCobertura = marcaMediaMensal > 0 ? Math.round(marcaSaldo / (marcaMediaMensal/30)) : null;
+
+      html += `<tr style="cursor:pointer" onclick="toggleCmGrupo('${marcaKey.replace(/'/g,"\\'")}')">
+        <td style="padding-left:28px;font-weight:600;color:var(--muted)">${marcaAberta?'▾':'▸'} ${marca}</td>
+        <td style="font-weight:600">${fmtNum(marcaSaldo)}</td>
+        <td style="font-weight:600">${marcaConsumo>0?fmtNum(marcaConsumo):'—'}</td>
+        <td style="font-weight:600">${marcaMediaMensal>0?fmtNum(Math.round(marcaMediaMensal)):'—'}</td>
+        <td style="font-weight:600">${marcaMediaQuinzenal>0?fmtNum(Math.round(marcaMediaQuinzenal)):'—'}</td>
+        <td>${_cmCoberturaBadge(marcaCobertura)}</td>
+      </tr>`;
+
+      if (!marcaAberta) continue;
+
+      produtos.forEach(p => {
+        const svd = cmSvdPorProduto[p.id];
+        const jaCritico = svd && svd.saldo_projetado < 0;
+        html += `<tr>
+          <td style="padding-left:44px;font-size:13px">${p.nome}${p.codigo?` <span style="color:var(--muted);font-size:11px">${p.codigo}</span>`:''}</td>
+          <td>${fmtNum(p.saldo_atual)} <span style="color:var(--muted);font-size:11px">${p.unidade||''}</span></td>
+          <td>${p.consumo_periodo>0?fmtNum(p.consumo_periodo):'—'}</td>
+          <td>${p.media_mensal>0?fmtNum(Math.round(p.media_mensal)):'—'}</td>
+          <td>${p.media_quinzenal>0?fmtNum(Math.round(p.media_quinzenal)):'—'}</td>
+          <td>
+            ${_cmCoberturaBadge(p.cobertura_dias)}${p.historico_curto ? `<span style="color:var(--warn);font-size:11px;margin-left:4px" title="Calculado com base em apenas ${p.dias_historico} dia(s) de histórico real, não na janela cheia selecionada">*</span>` : ''}
+            ${jaCritico ? `<div style="margin-top:4px"><span class="pill pill-danger" style="font-size:10px" title="Pedidos em aberto já superam o saldo atual (déficit de ${fmtNum(Math.abs(svd.saldo_projetado))} ${p.unidade||''})">⚠ déficit em pedidos</span></div>` : ''}
+          </td>
+        </tr>`;
+      });
+    }
+  }
+
+  tbody.innerHTML = html;
 }
 
 function exportarListaCompras(formato) {
@@ -9478,6 +9653,7 @@ const MODULOS_CONFIG = {
   estoque:        { label:'📦 Estoque',            acoes:['ver','criar','editar','deletar','movimentar'] },
   epi:            { label:'🦺 EPI',               acoes:['ver','criar','editar','deletar'] },
   'saldo-demanda':{ label:'📊 Saldo vs Demanda',  acoes:['ver'] },
+  'consumo-medio':{ label:'📉 Consumo Médio',     acoes:['ver'] },
   graficos:       { label:'📈 Gráficos',          acoes:['ver'] },
   relatorios:     { label:'📋 Relatórios',        acoes:['ver','exportar'] },
   configuracoes:  { label:'🔧 Configurações',     acoes:['ver','editar'] },

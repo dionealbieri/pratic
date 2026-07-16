@@ -519,7 +519,7 @@ def _alertas_estoque_para_pedidos(cur, pedido_ids):
         dem = cur.execute("""
             SELECT COALESCE(SUM(pi.quantidade - pi.qtd_produzida), 0) as total
             FROM pedidos_itens pi JOIN pedidos ped ON pi.pedido_id = ped.id
-            WHERE pi.produto_id = ? AND ped.status IN ('aberto','em_producao')
+            WHERE pi.produto_id = ? AND ped.status != 'entregue'
               AND pi.quantidade > pi.qtd_produzida""", (prod_id,)).fetchone()
         total_demanda = dem["total"] or 0
         saldo = prod["saldo"] or 0

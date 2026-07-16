@@ -113,10 +113,10 @@ def get_me(current_user = Depends(get_current_user)):
         else:
             # Fallback padrão caso não exista a chave no banco
             defaults = {
-                "gestor":   "dashboard,producao,premiacao,colaboradores,maquinas,pedidos,estoque,epi,comunicacao,graficos,relatorios,configuracoes,backup,permissoes,empresa,mobile,estoque_mobile",
+                "gestor":   "dashboard,producao,premiacao,colaboradores,maquinas,pedidos,estoque,epi,saldo-demanda,consumo-medio,comunicacao,graficos,relatorios,configuracoes,backup,permissoes,empresa,mobile,estoque_mobile",
                 "producao": "dashboard,producao,premiacao,colaboradores,maquinas,epi,relatorios",
                 "comercial":"dashboard,pedidos,relatorios",
-                "estoque":  "dashboard,estoque,relatorios,estoque_mobile"
+                "estoque":  "dashboard,estoque,consumo-medio,relatorios,estoque_mobile"
             }
             permissions = defaults.get(role, "")
 
