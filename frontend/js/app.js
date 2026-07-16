@@ -1056,14 +1056,16 @@ async function loadDashboard(options = {}) {
   }
 
   try {
-    const useCache = options.useCache === true;
+    const incluirProdEnv = document.getElementById('dash-ped-incluir-prod-env')?.checked || false;
+    const useCache = options.useCache === true && _cacheDashboardIncluirProdEnv === incluirProdEnv;
     let data;
     if (useCache && _cacheDashboardData && _cacheDashboardMes === mes) {
       data = _cacheDashboardData;
     } else {
-      data = await api('/premiacao/dashboard/' + mes);
+      data = await api('/premiacao/dashboard/' + mes + '?incluir_produzidos_enviados=' + incluirProdEnv);
       _cacheDashboardData = data;
       _cacheDashboardMes = mes;
+      _cacheDashboardIncluirProdEnv = incluirProdEnv;
     }
 
     const totalProd = data.total_producao_geral || 0;
@@ -6845,6 +6847,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 // Caches globais para evitar requisições repetidas ao alternar temas
 let _cacheDashboardData = null;
 let _cacheDashboardMes = null;
+let _cacheDashboardIncluirProdEnv = false;
 
 let _cacheGrafPeriodo = null;
 let _cacheGrafData = null;

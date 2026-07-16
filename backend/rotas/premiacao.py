@@ -116,7 +116,7 @@ def remover_auxiliar(id: int):
     return {"mensagem": "Premiação removida"}
 
 @router.get("/dashboard/{mes}")
-def dashboard(mes: str):
+def dashboard(mes: str, incluir_produzidos_enviados: bool = False):
     conn = get_conn()
     _mr = conn.execute("SELECT valor FROM configuracoes WHERE chave='meta_padrao'").fetchone()
     meta_global = float(_mr[0]) if _mr and _mr[0] not in (None, '') else 8000
@@ -204,17 +204,39 @@ def dashboard(mes: str):
     aderencia_meta_percentual = round((dias_meta_batidas / total_dias_meta * 100), 1) if total_dias_meta > 0 else 0.0
     
     # 4. Pedidos Pendentes e Atrasados
-    pedidos_pendentes = conn.execute("SELECT COUNT(*) FROM pedidos WHERE status != 'entregue'").fetchone()[0]
-    pedidos_atrasados = conn.execute("SELECT COUNT(*) FROM pedidos WHERE status != 'entregue' AND prazo_entrega < ?", (hoje,)).fetchone()[0]
-    
+    # Por padrão (incluir_produzidos_enviados=False), um pedido já produzido ou
+    # enviado só continua aparecendo como crítico se ainda tiver item de revenda
+    # (tampa etc.) pendente de separação — ou seja, se ainda falta algo de fato.
+    # 'enviado' na prática nunca tem pendência de revenda (o despacho já bloqueia
+    # isso), mas a regra cobre o caso mesmo assim por segurança.
+    filtro_produzido_enviado = "" if incluir_produzidos_enviados else """
+        AND (
+            p.status NOT IN ('produzido','enviado')
+            OR EXISTS (
+                SELECT 1 FROM pedidos_itens pi
+                JOIN estoque_produtos ep ON pi.produto_id = ep.id
+                JOIN estoque_categorias ec ON ep.categoria_id = ec.id
+                WHERE pi.pedido_id = p.id AND ec.tipo = 'revenda'
+                  AND pi.quantidade > pi.qtd_produzida
+            )
+        )
+    """
+    pedidos_pendentes = conn.execute(f"""
+        SELECT COUNT(*) FROM pedidos p WHERE p.status != 'entregue' {filtro_produzido_enviado}
+    """).fetchone()[0]
+    pedidos_atrasados = conn.execute(f"""
+        SELECT COUNT(*) FROM pedidos p WHERE p.status != 'entregue' AND p.prazo_entrega < ? {filtro_produzido_enviado}
+    """, (hoje,)).fetchone()[0]
+
     # 5. Lista de Pedidos Críticos (Atrasados ou vencendo nos próximos 3 dias, não entregues)
-    pedidos_criticos_rows = conn.execute("""
+    pedidos_criticos_rows = conn.execute(f"""
         SELECT p.numero_pedido, c.razao_social as cliente_nome, p.prazo_entrega, p.status,
                CAST(julianday(p.prazo_entrega) - julianday(?) AS INTEGER) as dias_restantes
         FROM pedidos p
         JOIN pedidos_clientes c ON p.cliente_id = c.id
         WHERE p.status != 'entregue'
           AND (p.prazo_entrega < ? OR julianday(p.prazo_entrega) - julianday(?) <= 3)
+          {filtro_produzido_enviado}
         ORDER BY p.prazo_entrega ASC
         LIMIT 5
     """, (hoje, hoje, hoje)).fetchall()
