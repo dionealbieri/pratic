@@ -604,7 +604,7 @@ def init_db():
         ("empresa_cidade", "", "Cidade da empresa"),
         ("empresa_uf", "", "UF da empresa"),
         ("empresa_logo", "", "Logo da empresa em base64"),
-        ("perm_gestor", "dashboard,producao,premiacao,colaboradores,maquinas,pedidos,estoque,epi,saldo-demanda,consumo-medio,graficos,relatorios,configuracoes,backup,perm-usuarios,permissoes,empresa,mobile,estoque_mobile", "Permissões do perfil Gestor"),
+        ("perm_gestor", "dashboard,producao,premiacao,colaboradores,maquinas,pedidos,estoque,epi,saldo-demanda,consumo-medio,gerencial,graficos,relatorios,configuracoes,backup,perm-usuarios,permissoes,empresa,mobile,estoque_mobile", "Permissões do perfil Gestor"),
         ("perm_producao", "dashboard,producao,premiacao,colaboradores,maquinas,epi,relatorios", "Permissões do perfil Produção"),
         ("perm_comercial", "dashboard,pedidos,relatorios", "Permissões do perfil Comercial"),
         ("perm_estoque", "dashboard,estoque,consumo-medio,relatorios,estoque_mobile", "Permissões do perfil Estoque"),
@@ -621,7 +621,7 @@ def init_db():
     # tinham perm_gestor/perm_estoque salvos, uma página nova (ex.: consumo-medio) nunca
     # entraria na string sem isso, e sumiria do menu mesmo para o gestor.
     _paginas_novas_por_perfil = {
-        "perm_gestor": ["consumo-medio"],
+        "perm_gestor": ["consumo-medio", "gerencial"],
         "perm_estoque": ["consumo-medio"],
     }
     for _chave, _paginas in _paginas_novas_por_perfil.items():

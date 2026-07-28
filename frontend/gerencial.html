@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Painel Gerencial — PRATIC</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/common.css?v=14">
+<style>
+  body { padding: 32px; max-width: 1100px; margin: 0 auto; }
+  h1 { font-family: var(--font-head); font-weight: 800; font-size: 28px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin: 0 0 24px; }
+  .topbar-g { display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 16px; margin-bottom: 28px; }
+  .actions { display: flex; gap: 10px; }
+  button.primary { background: var(--accent); color: #241a00; border: none; font-weight: 700; cursor: pointer; }
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 24px; }
+  .card-g { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px 20px; }
+  .kpi-label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+  .kpi-value { font-family: var(--font-head); font-weight: 700; font-size: 26px; margin-bottom: 6px; }
+  .delta { font-size: 12px; font-weight: 500; }
+  .delta.good { color: var(--success); }
+  .delta.bad { color: var(--danger); }
+  .delta.neutral { color: var(--muted); }
+  .grid-2 { display: grid; grid-template-columns: 1.4fr 1fr; gap: 14px; margin-bottom: 14px; }
+  .card-title { font-size: 13px; color: var(--muted); margin-bottom: 16px; font-weight: 500; }
+  .rank-row { display: flex; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+  .rank-row:last-child { border-bottom: none; }
+  .rank-row b { font-weight: 700; }
+  .op-block { padding: 12px 0; border-bottom: 1px solid var(--border); }
+  .op-block:last-child { border-bottom: none; }
+  .op-header { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 6px; }
+  .op-cats { display: flex; gap: 8px; flex-wrap: wrap; }
+  .cat-pill { font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 700; }
+  .diverge-row { display: grid; grid-template-columns: 190px 34px 1fr 34px; align-items: center; gap: 8px; padding: 7px 0; font-size: 13px; }
+  .diverge-value-left { text-align: right; font-weight: 700; color: var(--danger); }
+  .diverge-value-right { text-align: left; font-weight: 700; color: var(--warn); }
+  .diverge-track { position: relative; height: 16px; }
+  .diverge-center { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--border); }
+  .diverge-bar-left { position: absolute; right: 50%; top: 0; height: 16px; min-width: 2px; background: var(--danger); border-radius: 3px 0 0 3px; }
+  .diverge-bar-right { position: absolute; left: 50%; top: 0; height: 16px; min-width: 2px; background: var(--warn); border-radius: 0 3px 3px 0; }
+  .note-g { color: var(--muted); font-size: 12px; margin-top: 24px; border-top: 1px dashed var(--border); padding-top: 14px; }
+  .loading-g { color: var(--muted); font-size: 13px; padding: 24px; text-align: center; }
+</style>
+</head>
+<body>
+
+  <div class="topbar-g">
+    <div>
+      <h1>Painel gerencial</h1>
+      <p class="sub" id="g-sub">Carregando…</p>
+    </div>
+    <div class="actions">
+      <select id="g-mes" onchange="carregarGerencial()"></select>
+      <button class="primary" onclick="window.print()">⬇ Exportar PDF</button>
+    </div>
+  </div>
+
+  <div id="g-conteudo">
+    <p class="loading-g">Carregando dados…</p>
+  </div>
+
+<script>
+const API = window.location.origin + '/api';
+
+async function api(path) {
+  const r = await fetch(API + path, { cache: 'no-store', credentials: 'same-origin' });
+  if (r.status === 401) {
+    window.location.href = '/login?redirect=' + encodeURIComponent(window.location.pathname);
+    return new Promise(() => {});
+  }
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.detail || 'Erro na requisição');
+  return data;
+}
+
+function fmtNum(n) { return Math.round(Number(n) || 0).toLocaleString('pt-BR'); }
+
+function popularSeletorMes() {
+  const sel = document.getElementById('g-mes');
+  if (sel.options.length) return;
+  const hoje = new Date();
+  const nomes = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(hoje.getFullYear(), hoje.getMonth() - i, 1);
+    const valor = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    const o = document.createElement('option');
+    o.value = valor;
+    o.textContent = nomes[d.getMonth()] + ' ' + d.getFullYear();
+    sel.appendChild(o);
+  }
+}
+
+function deltaHtml(atual, anterior, inverso) {
+  atual = Number(atual) || 0; anterior = Number(anterior) || 0;
+  if (anterior === 0) {
+    if (atual === 0) return '<span class="delta neutral">sem alteração</span>';
+    return `<span class="delta neutral">mês anterior foi zero</span>`;
+  }
+  const diffPct = ((atual - anterior) / anterior * 100);
+  const bom = inverso ? diffPct <= 0 : diffPct >= 0;
+  const seta = diffPct >= 0 ? '▲' : '▼';
+  return `<span class="delta ${bom ? 'good' : 'bad'}">${seta} ${Math.abs(diffPct).toFixed(0)}% vs mês anterior</span>`;
+}
+
+const CORES_CATEGORIA = ['#3b82f6', '#f0b429', '#10b981', '#ef4444', '#a855f7', '#14b8a6', '#6b7280'];
+
+async function carregarGerencial() {
+  const mes = document.getElementById('g-mes').value;
+  document.getElementById('g-conteudo').innerHTML = '<p class="loading-g">Carregando dados…</p>';
+  try {
+    const d = await api('/gerencial/resumo?mes=' + mes);
+    renderGerencial(d);
+  } catch (e) {
+    document.getElementById('g-conteudo').innerHTML = `<p class="loading-g">Erro ao carregar: ${e.message}</p>`;
+  }
+}
+
+function renderGerencial(d) {
+  const k = d.kpis;
+  document.getElementById('g-sub').textContent = `Comparado ao mês anterior (${d.mes_anterior})`;
+
+  let html = '';
+
+  html += `<div class="kpis">
+    <div class="card-g">
+      <div class="kpi-label">Produzido no mês</div>
+      <div class="kpi-value">${fmtNum(k.produzido_mes)}</div>
+      ${deltaHtml(k.produzido_mes, k.produzido_mes_anterior, false)}
+    </div>
+    <div class="card-g">
+      <div class="kpi-label">Perdas</div>
+      <div class="kpi-value">${k.perdas_pct}%</div>
+      ${deltaHtml(k.perdas_pct, k.perdas_pct_mes_anterior, true)}
+    </div>
+    <div class="card-g">
+      <div class="kpi-label">Pedidos despachados</div>
+      <div class="kpi-value">${fmtNum(k.pedidos_despachados)}</div>
+      ${deltaHtml(k.pedidos_despachados, k.pedidos_despachados_mes_anterior, false)}
+    </div>
+    <div class="card-g">
+      <div class="kpi-label">Produto mais produzido</div>
+      <div class="kpi-value" style="font-size:16px">${k.produto_mais_produzido ? k.produto_mais_produzido.nome : '—'}</div>
+      <div class="delta neutral">${k.produto_mais_produzido ? fmtNum(k.produto_mais_produzido.total) + ' unidades' : ''}</div>
+    </div>
+  </div>`;
+
+  // Produção por produto + produção por operador
+  html += `<div class="grid-2">
+    <div class="card-g">
+      <div class="card-title">Quantidade produzida por produto</div>
+      ${d.producao_por_produto.length ? d.producao_por_produto.map(p =>
+        `<div class="rank-row"><span>${p.nome}</span><b>${fmtNum(p.total)}</b></div>`
+      ).join('') : '<p style="color:var(--muted);font-size:13px">Sem produção no período.</p>'}
+    </div>
+    <div class="card-g">
+      <div class="card-title">Produção por operador · por categoria</div>
+      ${d.producao_por_operador.length ? d.producao_por_operador.map(op => `
+        <div class="op-block">
+          <div class="op-header"><b>${op.colaborador}</b><b>${fmtNum(op.total)}</b></div>
+          <div class="op-cats">
+            ${op.categorias.map((c, i) => `<span class="cat-pill" style="background:${CORES_CATEGORIA[i % CORES_CATEGORIA.length]}26;color:${CORES_CATEGORIA[i % CORES_CATEGORIA.length]}">${c.categoria}: ${fmtNum(c.total)}</span>`).join('')}
+          </div>
+        </div>
+      `).join('') : '<p style="color:var(--muted);font-size:13px">Nenhum operador ativo neste mês.</p>'}
+    </div>
+  </div>`;
+
+  // Evolução (mensal/anual)
+  html += `<div class="card-g" style="margin-top:0">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px">
+      <div class="card-title" style="margin-bottom:0">Produção total · só operadores ativos no mês selecionado</div>
+      <div style="display:flex;gap:4px">
+        <button class="primary" id="btn-mensal" onclick="mostrarEvolucao('mensal')" style="padding:6px 12px;font-size:12px">Mensal</button>
+        <button id="btn-anual" onclick="mostrarEvolucao('anual')" style="padding:6px 12px;font-size:12px">Anual</button>
+      </div>
+    </div>
+    <div id="chart-mensal">${svgEvolucaoMensal(d.evolucao_mensal)}</div>
+    <div id="chart-anual" style="display:none">${svgEvolucaoAnual(d.evolucao_anual)}</div>
+  </div>`;
+
+  // Perdas x sobras
+  html += `<div class="card-g" style="margin-top:14px">
+    <div class="card-title">Comparativo perda x sobra por produto</div>
+    ${diverganteHtml(d.perdas_sobras_por_produto)}
+  </div>`;
+
+  html += `<p class="note-g">Dados ao vivo do sistema · mês de referência: ${d.mes}.</p>`;
+
+  document.getElementById('g-conteudo').innerHTML = html;
+}
+
+function svgEvolucaoMensal(dados) {
+  if (!dados || !dados.length) return '<p style="color:var(--muted);font-size:13px">Sem histórico suficiente.</p>';
+  const nomesMes = {'01':'Jan','02':'Fev','03':'Mar','04':'Abr','05':'Mai','06':'Jun','07':'Jul','08':'Ago','09':'Set','10':'Out','11':'Nov','12':'Dez'};
+  const producoes = dados.map(x => x.producao);
+  const metas = dados.map(x => x.meta);
+  const n = dados.length;
+  const larguraUtil = 528, xIni = 10, larguraBarra = Math.min(60, larguraUtil / n - 10);
+  const passo = larguraUtil / n;
+  const baseY = 140, topoY = 20;
+  // escala: usa o maior valor entre producao e meta, exceto outliers de meta muito acima
+  // (mais que 2x o maior valor de producao) — esses ficam anotados fora da escala
+  const maxProd = Math.max(...producoes, 1);
+  const metasDentroEscala = metas.filter(m => m <= maxProd * 1.8);
+  const maxEscala = Math.max(maxProd, ...(metasDentroEscala.length ? metasDentroEscala : [maxProd]));
+  const escala = (baseY - topoY) / maxEscala;
+
+  let bars = '', labels = '', metaPts = [], metaForaTexto = '';
+  dados.forEach((item, i) => {
+    const x = xIni + i * passo + (passo - larguraBarra) / 2;
+    const h = Math.max(item.producao * escala, 1);
+    const y = baseY - h;
+    bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${larguraBarra}" height="${h.toFixed(1)}" fill="#3b82f6" rx="3"/>`;
+    labels += `<text x="${(x + larguraBarra/2).toFixed(1)}" y="${(y-6).toFixed(1)}" font-size="11" fill="var(--text)" font-weight="700" text-anchor="middle">${fmtNum(item.producao)}</text>`;
+    const cx = x + larguraBarra / 2;
+    if (item.meta <= maxEscala) {
+      const my = baseY - item.meta * escala;
+      metaPts.push(`${cx.toFixed(1)},${my.toFixed(1)}`);
+    } else {
+      metaForaTexto += `<text x="${cx.toFixed(1)}" y="12" font-size="10" fill="#e8eaf0" text-anchor="middle">meta: ${fmtNum(item.meta)}</text>`;
+      metaPts.push(`${cx.toFixed(1)},${topoY}`);
+    }
+  });
+
+  let mesLabels = '';
+  dados.forEach((item, i) => {
+    const cx = xIni + i * passo + (passo - larguraBarra) / 2 + larguraBarra / 2;
+    const [ano, m] = item.mes.split('-');
+    mesLabels += `<text x="${cx.toFixed(1)}" y="155" font-size="11" fill="#6b7280" text-anchor="middle">${nomesMes[m] || m}</text>`;
+  });
+
+  const linhaMeta = metaPts.length > 1
+    ? `<polyline points="${metaPts.join(' ')}" fill="none" stroke="#e8eaf0" stroke-width="1.5" stroke-dasharray="4,3"/>` +
+      metaPts.map(p => `<circle cx="${p.split(',')[0]}" cy="${p.split(',')[1]}" r="3" fill="#e8eaf0"/>`).join('')
+    : '';
+
+  return `
+    <svg viewBox="0 0 548 165" width="100%" height="165">
+      ${bars}${labels}${linhaMeta}${metaForaTexto}${mesLabels}
+    </svg>
+    <div style="display:flex;gap:16px;margin-top:4px;font-size:12px;color:var(--muted)">
+      <span><span style="display:inline-block;width:14px;height:3px;background:#3b82f6;margin-right:6px;vertical-align:middle"></span>Produzido</span>
+      <span><span style="display:inline-block;width:14px;height:0;border-top:1.5px dashed #e8eaf0;margin-right:6px;vertical-align:middle"></span>Meta</span>
+    </div>`;
+}
+
+function svgEvolucaoAnual(dados) {
+  if (!dados || !dados.length) return '<p style="color:var(--muted);font-size:13px">Sem histórico suficiente.</p>';
+  const n = dados.length;
+  const larguraUtil = 528, xIni = 10;
+  const gap = 20;
+  const larguraBarra = (larguraUtil - gap * (n - 1)) / n;
+  const baseY = 140, topoY = 20;
+  const maxVal = Math.max(...dados.map(x => x.total), 1);
+  const escala = (baseY - topoY) / maxVal;
+  const cores = ['#3b82f6', '#f0b429', '#10b981', '#a855f7', '#ef4444', '#14b8a6'];
+
+  let bars = '', labels = '';
+  dados.forEach((item, i) => {
+    const x = xIni + i * (larguraBarra + gap);
+    const h = Math.max(item.total * escala, 1);
+    const y = baseY - h;
+    bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${larguraBarra.toFixed(1)}" height="${h.toFixed(1)}" fill="${cores[i % cores.length]}" rx="3"/>`;
+    labels += `<text x="${(x + larguraBarra/2).toFixed(1)}" y="${(y-6).toFixed(1)}" font-size="11" fill="var(--text)" font-weight="700" text-anchor="middle">${fmtNum(item.total)}</text>`;
+    labels += `<text x="${(x + larguraBarra/2).toFixed(1)}" y="155" font-size="11" fill="#6b7280" text-anchor="middle">${item.colaborador}</text>`;
+  });
+
+  return `<svg viewBox="0 0 548 165" width="100%" height="165">${bars}${labels}</svg>`;
+}
+
+function diverganteHtml(dados) {
+  if (!dados || !dados.length) return '<p style="color:var(--muted);font-size:13px">Sem perdas ou sobras registradas no período.</p>';
+  const maxAbs = Math.max(...dados.map(p => Math.max(p.perda || 0, p.sobra || 0)), 1);
+  let rows = '';
+  dados.forEach(p => {
+    const perda = p.perda || 0, sobra = p.sobra || 0;
+    if (perda > 0) {
+      const pct = Math.max(perda / maxAbs * 50, 1.2).toFixed(2);
+      rows += `<div class="diverge-row">
+        <div>${p.nome}</div>
+        <div class="diverge-value-left">${fmtNum(perda)}</div>
+        <div class="diverge-track"><div class="diverge-center"></div><div class="diverge-bar-left" style="width:${pct}%"></div></div>
+        <div class="diverge-value-right"></div>
+      </div>`;
+    } else {
+      const pct = Math.max(sobra / maxAbs * 50, 1.2).toFixed(2);
+      rows += `<div class="diverge-row">
+        <div>${p.nome}</div>
+        <div class="diverge-value-left"></div>
+        <div class="diverge-track"><div class="diverge-center"></div><div class="diverge-bar-right" style="width:${pct}%"></div></div>
+        <div class="diverge-value-right">${fmtNum(sobra)}</div>
+      </div>`;
+    }
+  });
+  return rows + `<div style="display:flex;gap:16px;margin-top:12px;font-size:12px;color:var(--muted)">
+    <span><span style="display:inline-block;width:9px;height:9px;background:var(--danger);border-radius:2px;margin-right:5px"></span>Perda</span>
+    <span><span style="display:inline-block;width:9px;height:9px;background:var(--warn);border-radius:2px;margin-right:5px"></span>Sobra</span>
+  </div>`;
+}
+
+function mostrarEvolucao(tipo) {
+  document.getElementById('chart-mensal').style.display = tipo === 'mensal' ? 'block' : 'none';
+  document.getElementById('chart-anual').style.display = tipo === 'anual' ? 'block' : 'none';
+  document.getElementById('btn-mensal').className = tipo === 'mensal' ? 'primary' : '';
+  document.getElementById('btn-anual').className = tipo === 'anual' ? 'primary' : '';
+}
+
+popularSeletorMes();
+carregarGerencial();
+</script>
+
+</body>
+</html>

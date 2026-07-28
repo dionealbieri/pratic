@@ -1388,8 +1388,72 @@ button:disabled.btn-loading {
   #page-saldo-demanda table thead th { top: 112px; }
 }
 
-/* MODAL "Pedidos do Produto" (Saldo vs Demanda): cabecalho fixo dentro do
-   proprio scroll do modal, nao da pagina — sao contextos de rolagem diferentes */
+/* PAINEL GERENCIAL */
+.ger-grid-2 { display: grid; grid-template-columns: 1.4fr 1fr; gap: 14px; }
+@media (max-width: 900px) { .ger-grid-2 { grid-template-columns: 1fr; } }
+.ger-rank-row { display: flex; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.ger-rank-row:last-child { border-bottom: none; }
+.ger-op-block { padding: 12px 0; border-bottom: 1px solid var(--border); }
+.ger-op-block:last-child { border-bottom: none; }
+.ger-op-header { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 6px; }
+.ger-op-cats { display: flex; gap: 8px; flex-wrap: wrap; }
+.ger-cat-pill { font-size: 11px; padding: 3px 10px; border-radius: 20px; font-weight: 700; }
+.ger-diverge-row { display: grid; grid-template-columns: 190px 34px 1fr 34px; align-items: center; gap: 8px; padding: 7px 0; font-size: 13px; }
+.ger-diverge-value-left { text-align: right; font-weight: 700; color: var(--danger); }
+.ger-diverge-value-right { text-align: left; font-weight: 700; color: var(--warn); }
+.ger-diverge-track { position: relative; height: 16px; }
+.ger-diverge-center { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--border); }
+.ger-diverge-bar-left { position: absolute; right: 50%; top: 0; height: 16px; min-width: 2px; background: var(--danger); border-radius: 3px 0 0 3px; }
+.ger-diverge-bar-right { position: absolute; left: 50%; top: 0; height: 16px; min-width: 2px; background: var(--warn); border-radius: 0 3px 3px 0; }
+
+@media print {
+  @page { margin: 15mm 15mm 22mm 15mm; }
+  body { background: #fff !important; }
+  .sidebar, .topbar, .barra-fixa, .nav-item { display: none !important; }
+  #page-gerencial { display: block !important; background: #fff !important; color: #111 !important; }
+  .page:not(#page-gerencial) { display: none !important; }
+
+  /* Cabecalho e rodape (mesmo padrao visual dos demais relatorios do sistema) */
+  #ger-print-header { display: block !important; }
+  #ger-print-footer { display: block !important; counter-reset: page; }
+  .print-footer {
+    position: fixed; bottom: 8mm; left: 0; right: 0;
+    border-top: 1px solid #ddd; padding-top: 6px;
+    display: flex; justify-content: space-between;
+    font-size: 10px; color: #777; font-family: Arial, sans-serif;
+  }
+  .print-footer .page-number::after { counter-increment: page; content: counter(page); }
+
+  /* Fundo/texto dos cards e tabelas em tom claro, coerente com o cabecalho/rodape */
+  #page-gerencial .card,
+  #page-gerencial .table-wrap {
+    background: #fafafa !important;
+    border-color: #ddd !important;
+    color: #111 !important;
+  }
+  #page-gerencial .card-label,
+  #page-gerencial .card-sub,
+  #page-gerencial .table-head-title,
+  #page-gerencial .ger-rank-row,
+  #page-gerencial .ger-op-cats span {
+    color: #444 !important;
+  }
+
+  /* Evita que um bloco comece numa pagina e continue na seguinte */
+  #page-gerencial .card,
+  #page-gerencial .ger-op-block,
+  #page-gerencial .ger-rank-row,
+  #page-gerencial .ger-diverge-row,
+  #page-gerencial svg {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  /* Evita que o titulo de uma secao fique sozinho no fim da pagina, separado do conteudo */
+  #page-gerencial .table-head-title {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+}
 #modal-svd-detalhe .table-wrap { overflow: clip; }
 #modal-svd-detalhe table thead th {
   position: sticky;

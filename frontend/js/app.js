@@ -66,6 +66,7 @@ const PAGINAS_SISTEMA = [
   { key:'epi',           label:'🦺 EPI'               },
   { key:'saldo-demanda', label:'📊 Saldo vs Demanda'   },
   { key:'consumo-medio', label:'📉 Consumo Médio'      },
+  { key:'gerencial',     label:'📈 Painel Gerencial'    },
   { key:'configuracoes', label:'🔧 Configurações'      },
   { key:'backup',        label:'💾 Backup'             },
   { key:'permissoes',    label:'🔐 Controle de Acesso' },
@@ -154,6 +155,7 @@ const pageTitles = {
   estoque: 'Estoque',
   'saldo-demanda': 'Saldo vs Demanda',
   'consumo-medio': 'Consumo Médio',
+  'gerencial': 'Painel Gerencial',
   pedidos: 'Pedidos & Fila de Produção',
   backup: 'Backup & Restauração',
   epi: 'Controle de EPI',
@@ -200,6 +202,7 @@ const PAGE_META_MAIN = {
   comunicacao:   { icon:'<svg viewBox="0 0 24 24" width="17" height="17" style="vertical-align:-3px"><path fill="#25d366" d="M12 2C6.5 2 2 6 2 11c0 1.9.7 3.7 1.9 5.1L3 22l6-1.5c.9.3 1.9.5 3 .5 5.5 0 10-4 10-9S17.5 2 12 2z"/></svg>', label:'Comunicação', section:'Operações' },
   'saldo-demanda': { icon:'📊', label:'Saldo vs Demanda', section:'Operações' },
   'consumo-medio': { icon:'📉', label:'Consumo Médio', section:'Operações' },
+  'gerencial': { icon:'📈', label:'Painel Gerencial', section:'Análises' },
   graficos:      { icon:'📈', label:'Gráficos', section:'Análises' },
   relatorios:    { icon:'📋', label:'Relatórios', section:'Análises' },
   'perdas-sobras': { icon:'⚠️', label:'Perdas e Sobras', section:'Análises' },
@@ -358,6 +361,7 @@ function showPage(name) {
     estoque: loadEstoque,
     'saldo-demanda': loadSaldoDemanda,
     'consumo-medio': loadConsumoMedio,
+    'gerencial': loadGerencial,
     pedidos: loadPedidos_init,
     backup: () => {},
     epi: loadEPI,
@@ -9452,6 +9456,202 @@ function renderConsumoMedioTree() {
   tbody.innerHTML = html;
 }
 
+// ─── PAINEL GERENCIAL ──────────────────────────────────────────────────────
+const CORES_CATEGORIA_GER = ['#3b82f6', '#f0b429', '#10b981', '#ef4444', '#a855f7', '#14b8a6', '#6b7280'];
+
+async function loadGerencial() {
+  const mesEl = document.getElementById('ger-mes');
+  if (!mesEl.value) mesEl.value = currentMonth();
+  const mes = mesEl.value;
+
+  document.getElementById('ger-kpi-cards').innerHTML = `
+    <div class="card"><div class="skeleton skeleton-title"></div><div class="skeleton skeleton-value"></div></div>
+    <div class="card"><div class="skeleton skeleton-title"></div><div class="skeleton skeleton-value"></div></div>
+    <div class="card"><div class="skeleton skeleton-title"></div><div class="skeleton skeleton-value"></div></div>
+    <div class="card"><div class="skeleton skeleton-title"></div><div class="skeleton skeleton-value"></div></div>`;
+
+  try {
+    const d = await api('/gerencial/resumo?mes=' + mes);
+    renderGerencial(d);
+  } catch (e) {
+    showAlert('Erro ao carregar Painel Gerencial: ' + e.message, 'danger');
+  }
+}
+
+function _gerDelta(atual, anterior, inverso) {
+  atual = Number(atual) || 0; anterior = Number(anterior) || 0;
+  if (anterior === 0) {
+    if (atual === 0) return '<span class="card-sub">sem alteração</span>';
+    return `<span class="card-sub">mês anterior foi zero</span>`;
+  }
+  const diffPct = ((atual - anterior) / anterior * 100);
+  const bom = inverso ? diffPct <= 0 : diffPct >= 0;
+  const seta = diffPct >= 0 ? '▲' : '▼';
+  return `<span class="card-sub" style="color:${bom ? 'var(--success)' : 'var(--danger)'}">${seta} ${Math.abs(diffPct).toFixed(0)}% vs mês anterior</span>`;
+}
+
+function renderGerencial(d) {
+  const k = d.kpis;
+  document.getElementById('ger-sub').textContent = `Comparado ao mês anterior (${d.mes_anterior})`;
+  document.getElementById('ger-print-header').innerHTML = _getEmpresaHeader('Painel Gerencial — ' + mesLabel(d.mes));
+  document.getElementById('ger-print-footer').innerHTML = _getPrintFooter();
+
+  document.getElementById('ger-kpi-cards').innerHTML = `
+    <div class="card">
+      <div class="card-label">Produzido no mês</div>
+      <div class="card-value">${fmtNum(k.produzido_mes)}</div>
+      ${_gerDelta(k.produzido_mes, k.produzido_mes_anterior, false)}
+    </div>
+    <div class="card">
+      <div class="card-label">Perdas</div>
+      <div class="card-value">${k.perdas_pct}%</div>
+      ${_gerDelta(k.perdas_pct, k.perdas_pct_mes_anterior, true)}
+    </div>
+    <div class="card">
+      <div class="card-label">Pedidos despachados</div>
+      <div class="card-value">${fmtNum(k.pedidos_despachados)}</div>
+      ${_gerDelta(k.pedidos_despachados, k.pedidos_despachados_mes_anterior, false)}
+    </div>
+    <div class="card">
+      <div class="card-label">Produto mais produzido</div>
+      <div class="card-value" style="font-size:16px">${k.produto_mais_produzido ? k.produto_mais_produzido.nome : '—'}</div>
+      <div class="card-sub">${k.produto_mais_produzido ? fmtNum(k.produto_mais_produzido.total) + ' unidades' : ''}</div>
+    </div>`;
+
+  const elProdutos = document.getElementById('ger-produtos');
+  elProdutos.innerHTML = d.producao_por_produto.length ? d.producao_por_produto.map(p =>
+    `<div class="ger-rank-row"><span>${p.nome}</span><b>${fmtNum(p.total)}</b></div>`
+  ).join('') : '<p style="color:var(--muted);font-size:13px">Sem produção no período.</p>';
+
+  const elOperadores = document.getElementById('ger-operadores');
+  elOperadores.innerHTML = d.producao_por_operador.length ? d.producao_por_operador.map(op => `
+    <div class="ger-op-block">
+      <div class="ger-op-header"><b>${op.colaborador}</b><b>${fmtNum(op.total)}</b></div>
+      <div class="ger-op-cats">
+        ${op.categorias.map((c, i) => `<span class="ger-cat-pill" style="background:${CORES_CATEGORIA_GER[i % CORES_CATEGORIA_GER.length]}26;color:${CORES_CATEGORIA_GER[i % CORES_CATEGORIA_GER.length]}">${c.categoria}: ${fmtNum(c.total)}</span>`).join('')}
+      </div>
+    </div>
+  `).join('') : '<p style="color:var(--muted);font-size:13px">Nenhum operador ativo neste mês.</p>';
+
+  document.getElementById('ger-chart-mensal').innerHTML = _gerSvgEvolucaoMensal(d.evolucao_mensal);
+  document.getElementById('ger-chart-anual').innerHTML = _gerSvgEvolucaoAnual(d.evolucao_anual);
+
+  document.getElementById('ger-perdas-sobras').innerHTML = _gerDivergenteHtml(d.perdas_sobras_por_produto);
+  const totais = d.perdas_sobras_totais || {perda:0, sobra:0};
+  document.getElementById('ger-perdas-sobras-total').innerHTML =
+    `<span style="color:var(--danger);font-weight:700">Perda total: ${fmtNum(totais.perda)}</span>` +
+    `<span style="margin:0 8px">·</span>` +
+    `<span style="color:var(--warn);font-weight:700">Sobra total: ${fmtNum(totais.sobra)}</span>`;
+}
+
+function _gerSvgEvolucaoMensal(dados) {
+  if (!dados || !dados.length) return '<p style="color:var(--muted);font-size:13px">Sem histórico suficiente.</p>';
+  const nomesMes = {'01':'Jan','02':'Fev','03':'Mar','04':'Abr','05':'Mai','06':'Jun','07':'Jul','08':'Ago','09':'Set','10':'Out','11':'Nov','12':'Dez'};
+  const producoes = dados.map(x => x.producao);
+  const metas = dados.map(x => x.meta);
+  const n = dados.length;
+  const larguraUtil = 528, xIni = 10;
+  const passo = larguraUtil / n;
+  const larguraBarra = Math.min(60, passo - 10);
+  const baseY = 140, topoY = 20;
+  const maxProd = Math.max(...producoes, 1);
+  const metasDentroEscala = metas.filter(m => m <= maxProd * 1.8);
+  const maxEscala = Math.max(maxProd, ...(metasDentroEscala.length ? metasDentroEscala : [maxProd]));
+  const escala = (baseY - topoY) / maxEscala;
+
+  let bars = '', labels = '', metaPts = [], metaForaTexto = '', mesLabels = '';
+  dados.forEach((item, i) => {
+    const x = xIni + i * passo + (passo - larguraBarra) / 2;
+    const cx = x + larguraBarra / 2;
+    const h = Math.max(item.producao * escala, 1);
+    const y = baseY - h;
+    bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${larguraBarra.toFixed(1)}" height="${h.toFixed(1)}" fill="#3b82f6" rx="3"/>`;
+    labels += `<text x="${cx.toFixed(1)}" y="${(y-6).toFixed(1)}" font-size="11" fill="var(--text)" font-weight="700" text-anchor="middle">${fmtNum(item.producao)}</text>`;
+    if (item.meta <= maxEscala) {
+      metaPts.push(`${cx.toFixed(1)},${(baseY - item.meta * escala).toFixed(1)}`);
+    } else {
+      metaForaTexto += `<text x="${cx.toFixed(1)}" y="12" font-size="10" fill="#e8eaf0" text-anchor="middle">meta: ${fmtNum(item.meta)}</text>`;
+      metaPts.push(`${cx.toFixed(1)},${topoY}`);
+    }
+    const [ano, m] = item.mes.split('-');
+    mesLabels += `<text x="${cx.toFixed(1)}" y="155" font-size="11" fill="#6b7280" text-anchor="middle">${nomesMes[m] || m}</text>`;
+  });
+
+  const linhaMeta = metaPts.length > 1
+    ? `<polyline points="${metaPts.join(' ')}" fill="none" stroke="#e8eaf0" stroke-width="1.5" stroke-dasharray="4,3"/>` +
+      metaPts.map(p => `<circle cx="${p.split(',')[0]}" cy="${p.split(',')[1]}" r="3" fill="#e8eaf0"/>`).join('')
+    : '';
+
+  return `
+    <svg viewBox="0 0 548 165" width="100%" height="165">
+      ${bars}${labels}${linhaMeta}${metaForaTexto}${mesLabels}
+    </svg>
+    <div style="display:flex;gap:16px;margin-top:4px;font-size:12px;color:var(--muted)">
+      <span><span style="display:inline-block;width:14px;height:3px;background:#3b82f6;margin-right:6px;vertical-align:middle"></span>Produzido</span>
+      <span><span style="display:inline-block;width:14px;height:0;border-top:1.5px dashed #e8eaf0;margin-right:6px;vertical-align:middle"></span>Meta</span>
+    </div>`;
+}
+
+function _gerSvgEvolucaoAnual(dados) {
+  if (!dados || !dados.length) return '<p style="color:var(--muted);font-size:13px">Sem histórico suficiente.</p>';
+  const n = dados.length;
+  const larguraUtil = 528, xIni = 10, gap = 20;
+  const larguraBarra = (larguraUtil - gap * (n - 1)) / n;
+  const baseY = 140, topoY = 20;
+  const maxVal = Math.max(...dados.map(x => x.total), 1);
+  const escala = (baseY - topoY) / maxVal;
+  const cores = CORES_CATEGORIA_GER;
+
+  let bars = '', labels = '';
+  dados.forEach((item, i) => {
+    const x = xIni + i * (larguraBarra + gap);
+    const h = Math.max(item.total * escala, 1);
+    const y = baseY - h;
+    bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${larguraBarra.toFixed(1)}" height="${h.toFixed(1)}" fill="${cores[i % cores.length]}" rx="3"/>`;
+    labels += `<text x="${(x + larguraBarra/2).toFixed(1)}" y="${(y-6).toFixed(1)}" font-size="11" fill="var(--text)" font-weight="700" text-anchor="middle">${fmtNum(item.total)}</text>`;
+    labels += `<text x="${(x + larguraBarra/2).toFixed(1)}" y="155" font-size="11" fill="#6b7280" text-anchor="middle">${item.colaborador}</text>`;
+  });
+
+  return `<svg viewBox="0 0 548 165" width="100%" height="165">${bars}${labels}</svg>`;
+}
+
+function _gerDivergenteHtml(dados) {
+  if (!dados || !dados.length) return '<p style="color:var(--muted);font-size:13px">Sem perdas ou sobras registradas no período.</p>';
+  const maxAbs = Math.max(...dados.map(p => Math.max(p.perda || 0, p.sobra || 0)), 1);
+  let rows = '';
+  dados.forEach(p => {
+    const perda = p.perda || 0, sobra = p.sobra || 0;
+    if (perda > 0) {
+      const pct = Math.max(perda / maxAbs * 50, 1.2).toFixed(2);
+      rows += `<div class="ger-diverge-row">
+        <div>${p.nome}</div>
+        <div class="ger-diverge-value-left">${fmtNum(perda)}</div>
+        <div class="ger-diverge-track"><div class="ger-diverge-center"></div><div class="ger-diverge-bar-left" style="width:${pct}%"></div></div>
+        <div class="ger-diverge-value-right"></div>
+      </div>`;
+    } else {
+      const pct = Math.max(sobra / maxAbs * 50, 1.2).toFixed(2);
+      rows += `<div class="ger-diverge-row">
+        <div>${p.nome}</div>
+        <div class="ger-diverge-value-left"></div>
+        <div class="ger-diverge-track"><div class="ger-diverge-center"></div><div class="ger-diverge-bar-right" style="width:${pct}%"></div></div>
+        <div class="ger-diverge-value-right">${fmtNum(sobra)}</div>
+      </div>`;
+    }
+  });
+  return rows + `<div style="display:flex;gap:16px;margin-top:12px;font-size:12px;color:var(--muted)">
+    <span><span style="display:inline-block;width:9px;height:9px;background:var(--danger);border-radius:2px;margin-right:5px"></span>Perda</span>
+    <span><span style="display:inline-block;width:9px;height:9px;background:var(--warn);border-radius:2px;margin-right:5px"></span>Sobra</span>
+  </div>`;
+}
+
+function mostrarEvolucaoGerencial(tipo) {
+  document.getElementById('ger-chart-mensal').style.display = tipo === 'mensal' ? 'block' : 'none';
+  document.getElementById('ger-chart-anual').style.display = tipo === 'anual' ? 'block' : 'none';
+  document.getElementById('ger-btn-mensal').className = 'btn btn-sm ' + (tipo === 'mensal' ? 'btn-primary' : 'btn-secondary');
+  document.getElementById('ger-btn-anual').className = 'btn btn-sm ' + (tipo === 'anual' ? 'btn-primary' : 'btn-secondary');
+}
+
 function exportarListaCompras(formato) {
   const table = document.getElementById('lista-compras-table');
   if (!table) return;
@@ -9658,6 +9858,7 @@ const MODULOS_CONFIG = {
   epi:            { label:'🦺 EPI',               acoes:['ver','criar','editar','deletar'] },
   'saldo-demanda':{ label:'📊 Saldo vs Demanda',  acoes:['ver'] },
   'consumo-medio':{ label:'📉 Consumo Médio',     acoes:['ver'] },
+  'gerencial':{ label:'📈 Painel Gerencial',       acoes:['ver'] },
   graficos:       { label:'📈 Gráficos',          acoes:['ver'] },
   relatorios:     { label:'📋 Relatórios',        acoes:['ver','exportar'] },
   configuracoes:  { label:'🔧 Configurações',     acoes:['ver','editar'] },

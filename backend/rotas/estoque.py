@@ -173,7 +173,7 @@ def listar_produtos(categoria_id: Optional[int] = None):
     result = []
     for r in rows:
         d = dict(r)
-        d["alerta"] = d["quantidade_atual"] <= d["estoque_minimo"]
+        d["alerta"] = d["estoque_minimo"] > 0 and d["quantidade_atual"] <= d["estoque_minimo"]
         result.append(d)
     return result
 
@@ -260,7 +260,7 @@ def obter_produto(id: int):
     if not row:
         raise HTTPException(404, "Produto não encontrado")
     d = dict(row)
-    d["alerta"] = d["quantidade_atual"] <= d["estoque_minimo"]
+    d["alerta"] = d["estoque_minimo"] > 0 and d["quantidade_atual"] <= d["estoque_minimo"]
     return d
 
 @router.put("/produtos/{id}")
@@ -425,6 +425,7 @@ def listar_alertas():
         LEFT JOIN estoque_categorias cat ON p.categoria_id = cat.id
         LEFT JOIN estoque_saldo e ON e.produto_id = p.id
         WHERE p.ativo = 1
+          AND p.estoque_minimo > 0
           AND COALESCE(e.quantidade, 0) <= p.estoque_minimo
         ORDER BY (COALESCE(e.quantidade, 0) - p.estoque_minimo) ASC
     """).fetchall()
@@ -440,7 +441,7 @@ def resumo_estoque():
     alertas = conn.execute("""
         SELECT COUNT(*) FROM estoque_produtos p
         LEFT JOIN estoque_saldo e ON e.produto_id = p.id
-        WHERE p.ativo=1 AND COALESCE(e.quantidade,0) <= p.estoque_minimo
+        WHERE p.ativo=1 AND p.estoque_minimo > 0 AND COALESCE(e.quantidade,0) <= p.estoque_minimo
     """).fetchone()[0]
     movs_hoje = conn.execute("""
         SELECT COUNT(*) FROM estoque_movimentacoes WHERE date(data) = date('now')

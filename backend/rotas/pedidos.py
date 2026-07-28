@@ -1197,20 +1197,39 @@ def resync_status_pedidos():
 @router.get("/alertas/resumo")
 def alertas_pedidos():
     conn = get_conn()
-    vencidos = conn.execute("""
-        SELECT COUNT(*) FROM pedidos
-        WHERE status NOT IN ('entregue')
-        AND julianday(prazo_entrega) < julianday('now')
+    # Mesma regra do card "Pedidos Críticos" do Dashboard: um pedido já
+    # produzido ou enviado só conta como vencido/urgente se ainda tiver
+    # item de revenda (tampa etc.) pendente de separação. Sem isso, esse
+    # badge (menu lateral) e o banner da Fila de Produção ficavam contando
+    # pedidos que na prática não têm mais nada pendente.
+    filtro_produzido_enviado = """
+        AND (
+            p.status NOT IN ('produzido','enviado')
+            OR EXISTS (
+                SELECT 1 FROM pedidos_itens pi
+                JOIN estoque_produtos ep ON pi.produto_id = ep.id
+                JOIN estoque_categorias ec ON ep.categoria_id = ec.id
+                WHERE pi.pedido_id = p.id AND ec.tipo = 'revenda'
+                  AND pi.quantidade > pi.qtd_produzida
+            )
+        )
+    """
+    vencidos = conn.execute(f"""
+        SELECT COUNT(*) FROM pedidos p
+        WHERE p.status NOT IN ('entregue')
+        AND julianday(p.prazo_entrega) < julianday('now')
+        {filtro_produzido_enviado}
     """).fetchone()[0]
-    urgentes = conn.execute("""
-        SELECT COUNT(*) FROM pedidos
-        WHERE status NOT IN ('entregue')
-        AND julianday(prazo_entrega) - julianday('now') BETWEEN 0 AND 3
+    urgentes = conn.execute(f"""
+        SELECT COUNT(*) FROM pedidos p
+        WHERE p.status NOT IN ('entregue')
+        AND julianday(p.prazo_entrega) - julianday('now') BETWEEN 0 AND 3
+        {filtro_produzido_enviado}
     """).fetchone()[0]
     em_aberto = conn.execute("""
         SELECT COUNT(*) FROM pedidos WHERE status = 'aberto'
     """).fetchone()[0]
-    rows = conn.execute("""
+    rows = conn.execute(f"""
         SELECT p.numero_pedido, c.razao_social as cliente,
                p.prazo_entrega, p.status,
                CAST(julianday(p.prazo_entrega) - julianday('now') AS INTEGER) as dias_restantes
@@ -1218,6 +1237,7 @@ def alertas_pedidos():
         JOIN pedidos_clientes c ON p.cliente_id = c.id
         WHERE p.status NOT IN ('entregue')
         AND julianday(p.prazo_entrega) - julianday('now') <= 3
+        {filtro_produzido_enviado}
         ORDER BY p.prazo_entrega ASC
         LIMIT 5
     """).fetchall()
@@ -1500,7 +1520,18 @@ def atualizar_pedido(id: int, p: PedidoIn):
     progresso_itens = {}
     for row in cur.execute("SELECT descricao, status, qtd_produzida FROM pedidos_itens WHERE pedido_id=?", (id,)).fetchall():
         progresso_itens[row["descricao"].upper()] = (row["status"], row["qtd_produzida"])
-        
+
+    # Como os itens serão apagados e recriados do zero (ids novos), qualquer
+    # programação de separação (producao_programada) que apontava pra eles
+    # ficaria orfã e o DELETE abaixo falharia com FOREIGN KEY constraint
+    # failed (producao_programada.pedido_item_id -> pedidos_itens.id, sem
+    # CASCADE). Removemos essas programações antes — quem estava reprogramado
+    # precisa reprogramar a separação depois de editar o pedido.
+    cur.execute("""
+        DELETE FROM producao_programada
+        WHERE pedido_item_id IN (SELECT id FROM pedidos_itens WHERE pedido_id=?)
+    """, (id,))
+
     cur.execute("DELETE FROM pedidos_itens WHERE pedido_id=?", (id,))
     for item in p.itens:
         status = "aberto"
@@ -1878,7 +1909,8 @@ def deletar_item(id: int, current_user = Depends(get_current_user)):
                     VALUES (?, ?)
                 """, (produto_id, saldo_posterior))
 
-        # 4. Deletar o item
+        # 4. Deletar programação de separação vinculada (se houver) e o item
+        cur.execute("DELETE FROM producao_programada WHERE pedido_item_id=?", (id,))
         cur.execute("DELETE FROM pedidos_itens WHERE id=?", (id,))
         
         # 5. Recalcular o status do pedido
@@ -1891,5 +1923,3 @@ def deletar_item(id: int, current_user = Depends(get_current_user)):
 
 
 # ─── ALERTAS ─────────────────────────────────────────────────────────────────
-
-

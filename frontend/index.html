@@ -12,7 +12,7 @@
     document.documentElement.setAttribute('data-theme', savedTheme);
   })();
 </script>
-<link rel="stylesheet" href="css/common.css?v=14">
+<link rel="stylesheet" href="css/common.css?v=17">
 <style>
   .nav-item[data-page="comunicacao"] { color:#25d366; }
   .nav-item[data-page="comunicacao"] .icon svg { display:inline-block; }
@@ -62,6 +62,9 @@
     </a>
     <a class="nav-item" onclick="showPage('consumo-medio')" style="cursor:pointer">
       <span class="icon">📉</span> Consumo Médio
+    </a>
+    <a class="nav-item" onclick="showPage('gerencial')" style="cursor:pointer">
+      <span class="icon">📈</span> Painel Gerencial
     </a>
     <a class="nav-item" onclick="showPage('epi')" style="cursor:pointer">
       <span class="icon">🦺</span> EPI <span id="nav-epi-badge" style="display:none;background:var(--danger);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">!</span>
@@ -1269,6 +1272,56 @@
           <tbody id="cm-tbody"></tbody>
         </table>
       </div>
+    </div>
+
+    <!-- PAINEL GERENCIAL -->
+    <div class="page" id="page-gerencial">
+      <div id="ger-print-header" style="display:none"></div>
+
+      <div class="barra-fixa flex items-center justify-between mb-4" style="flex-wrap:wrap;gap:10px">
+        <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+          <input type="month" id="ger-mes" onchange="loadGerencial()">
+          <button class="btn btn-secondary" onclick="loadGerencial()">↻ Atualizar</button>
+        </div>
+        <button class="btn btn-secondary" onclick="window.print()">⬇ Exportar PDF</button>
+      </div>
+
+      <p id="ger-sub" style="font-size:12px;color:var(--muted);margin-bottom:16px"></p>
+
+      <div class="cards-grid" id="ger-kpi-cards"></div>
+
+      <div class="ger-grid-2">
+        <div class="table-wrap" style="padding:20px">
+          <div class="table-head-title" style="margin-bottom:16px">Quantidade produzida por produto</div>
+          <div id="ger-produtos"></div>
+        </div>
+        <div class="table-wrap" style="padding:20px">
+          <div class="table-head-title" style="margin-bottom:16px">Produção por operador · por categoria</div>
+          <div id="ger-operadores"></div>
+        </div>
+      </div>
+
+      <div class="table-wrap" style="padding:20px;margin-top:14px">
+        <div class="flex items-center justify-between mb-4" style="flex-wrap:wrap;gap:8px">
+          <div class="table-head-title" style="margin-bottom:0">Produção total · só operadores ativos no mês selecionado</div>
+          <div class="flex gap-2">
+            <button class="btn btn-primary btn-sm" id="ger-btn-mensal" onclick="mostrarEvolucaoGerencial('mensal')">Mensal</button>
+            <button class="btn btn-secondary btn-sm" id="ger-btn-anual" onclick="mostrarEvolucaoGerencial('anual')">Anual</button>
+          </div>
+        </div>
+        <div id="ger-chart-mensal"></div>
+        <div id="ger-chart-anual" style="display:none"></div>
+      </div>
+
+      <div class="table-wrap" style="padding:20px;margin-top:14px">
+        <div class="flex items-center justify-between mb-4" style="flex-wrap:wrap;gap:8px">
+          <div class="table-head-title" style="margin-bottom:0">Comparativo perda x sobra por produto</div>
+          <div id="ger-perdas-sobras-total" style="font-size:12px;color:var(--muted)"></div>
+        </div>
+        <div id="ger-perdas-sobras"></div>
+      </div>
+
+      <div id="ger-print-footer" style="display:none"></div>
     </div>
 
     <!-- MODAL DETALHE PRODUTO -->
@@ -2673,7 +2726,7 @@
   </div>
 </div>
 
-<script src="js/app.js?v=20260716-pedcriticos1"></script>
+<script src="js/app.js?v=20260722-gerencial4"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');
