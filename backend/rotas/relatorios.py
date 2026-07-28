@@ -195,7 +195,7 @@ def ranking_historico(mes_ini: Optional[str] = None, mes_fim: Optional[str] = No
         JOIN colaboradores c ON pd.colaborador_id = c.id
         WHERE {where_sql}
         GROUP BY c.id
-        ORDER BY media_geral DESC
+        ORDER BY total_geral DESC
     """, params).fetchall()
     conn.close()
     result = []
@@ -262,7 +262,7 @@ def resumo_periodo(mes_ini: Optional[str] = None, mes_fim: Optional[str] = None)
         WHERE {where_sql_pd}
         GROUP BY c.id
         HAVING total_producao > 0
-        ORDER BY media_diaria DESC
+        ORDER BY total_producao DESC
         LIMIT 1
     """, params_pd).fetchone()
 

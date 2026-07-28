@@ -3542,7 +3542,7 @@ async function loadRelAnaliticos() {
       
       if (cardsEl) cardsEl.innerHTML = `
         <div class="card" style="border-left:3px solid var(--success)"><div class="card-label">Melhor Operador</div><div class="card-value success" style="font-size:18px">${melhorOp}</div></div>
-        <div class="card" style="border-left:3px solid var(--accent)"><div class="card-label">Melhor Média Geral</div><div class="card-value info">${fmtNum(Math.round(melhorMed))} pçs/dia</div></div>
+        <div class="card" style="border-left:3px solid var(--accent)"><div class="card-label">Média Diária do Operador</div><div class="card-value info">${fmtNum(Math.round(melhorMed))} pçs/dia</div></div>
         <div class="card" style="border-left:3px solid var(--accent2)"><div class="card-label">Total Geral Produzido</div><div class="card-value info">${fmtNum(totalGeral)}</div></div>
       `;
       
@@ -7338,7 +7338,8 @@ async function loadGraficos(options = {}) {
     const lancamentosPeriodo = resumoPeriodo.total_lancamentos || evolucao.reduce((s,r)=>s+(r.dias_trabalhados||0),0);
     const mediaGeral = Math.round(resumoPeriodo.media_diaria_geral || (diasPeriodo ? totalPeriodo / diasPeriodo : 0));
     const melhorOp = resumoPeriodo.melhor_operador?.colaborador || ranking[0]?.colaborador || '—';
-    const melhorMedia = resumoPeriodo.melhor_operador?.media_diaria || ranking[0]?.media_geral || 0;
+    const melhorTotal = resumoPeriodo.melhor_operador?.total_producao || 0;
+    const melhorDias = resumoPeriodo.melhor_operador?.dias_trabalhados || 0;
     const totalPerda = resumoPeriodo.total_perdas || evolucao.reduce((s,r)=>s+(r.total_perdas||0),0);
     const totalSobra = resumoPeriodo.total_sobras || evolucao.reduce((s,r)=>s+(r.total_sobras||0),0);
     const saldoExcedente = resumoPeriodo.saldo_excedente || evolucao.reduce((s,r)=>s+((r.excedente_total ?? ((r.excedente_positivo||0)+(r.excedente_negativo||0)))||0),0);
@@ -7347,7 +7348,7 @@ async function loadGraficos(options = {}) {
     if(cardsEl) cardsEl.innerHTML = `
       <div class="card" style="border-left:3px solid var(--accent)"><div class="card-label">Total Produzido</div><div class="card-value accent">${fmtNum(totalPeriodo)}</div><div style="font-size:11px;color:var(--muted)">${mesLabel(mesIni)} até ${mesLabel(mesFim)}</div></div>
       <div class="card" style="border-left:3px solid var(--accent2)"><div class="card-label">Média Diária Geral</div><div class="card-value info">${fmtNum(mediaGeral)}</div><div style="font-size:11px;color:var(--muted)">${fmtNum(diasPeriodo)} dias registrados | ${fmtNum(lancamentosPeriodo)} lançamentos</div></div>
-      <div class="card" style="border-left:3px solid var(--success)"><div class="card-label">Melhor Operador</div><div class="card-value success" style="font-size:18px">${melhorOp}</div><div style="font-size:11px;color:var(--muted)">${fmtNum(Math.round(melhorMedia||0))} pçs/dia</div></div>
+      <div class="card" style="border-left:3px solid var(--success)"><div class="card-label">Melhor Operador</div><div class="card-value success" style="font-size:18px">${melhorOp}</div><div style="font-size:11px;color:var(--muted)">${fmtNum(Math.round(melhorTotal||0))} peças · ${fmtNum(melhorDias)} dias trabalhados</div></div>
       <div class="card" style="border-left:3px solid var(--danger)"><div class="card-label">Índice de Perda</div><div class="card-value danger">${idxPerda}%</div><div style="font-size:11px;color:var(--muted)">${fmtNum(totalPerda)} perdas | ${fmtNum(totalSobra)} sobras</div></div>
       <div class="card" style="border-left:3px solid ${saldoExcedente>=0?'var(--success)':'var(--danger)'}"><div class="card-label">Saldo vs Meta</div><div class="card-value ${saldoExcedente>=0?'success':'danger'}">${saldoExcedente>=0?'+':''}${fmtNum(Math.round(saldoExcedente))}</div><div style="font-size:11px;color:var(--muted)">excedente acumulado</div></div>
     `;
