@@ -153,11 +153,15 @@ def limpar_dados(tipo: str):
     conn = get_conn()
     try:
         if tipo == 'producao':
+            conn.execute("DELETE FROM producao_diaria_itens")
             conn.execute("DELETE FROM producao_diaria")
+            conn.execute("DELETE FROM producao_pintura")
             conn.execute("DELETE FROM premiacao_operador")
             conn.execute("DELETE FROM premiacao_auxiliar")
-            msg = "Produção diária e premiações removidas"
+            msg = "Produção diária, pintura e premiações removidas"
         elif tipo == 'pedidos':
+            conn.execute("DELETE FROM producao_programada")
+            conn.execute("DELETE FROM pedidos_parcelas")
             conn.execute("DELETE FROM pedidos_itens")
             conn.execute("DELETE FROM pedidos")
             msg = "Pedidos e itens removidos"
@@ -167,9 +171,13 @@ def limpar_dados(tipo: str):
             conn.execute("UPDATE estoque_saldo SET quantidade = 0")
             msg = "Movimentações de estoque removidas e saldos zerados"
         elif tipo == 'tudo':
+            conn.execute("DELETE FROM producao_diaria_itens")
             conn.execute("DELETE FROM producao_diaria")
+            conn.execute("DELETE FROM producao_pintura")
             conn.execute("DELETE FROM premiacao_operador")
             conn.execute("DELETE FROM premiacao_auxiliar")
+            conn.execute("DELETE FROM producao_programada")
+            conn.execute("DELETE FROM pedidos_parcelas")
             conn.execute("DELETE FROM pedidos_itens")
             conn.execute("DELETE FROM pedidos")
             conn.execute("DELETE FROM estoque_movimentacoes")

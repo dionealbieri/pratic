@@ -56,6 +56,7 @@ const PAGINAS_SISTEMA = [
   { key:'producao',      label:'🏭 Produção Diária'   },
   { key:'producao_simplificada', label:'⚡ Lançamento Simplificado' },
   { key:'premiacao',     label:'🏆 Premiação'          },
+  { key:'pintura',       label:'🎨 Pintura'             },
   { key:'pedidos',       label:'🧾 Pedidos'            },
   { key:'estoque',       label:'📦 Estoque'            },
   { key:'graficos',      label:'📈 Gráficos'           },
@@ -146,6 +147,7 @@ const pageTitles = {
   dashboard: 'Dashboard',
   producao: 'Produção Diária',
   premiacao: 'Premiação',
+  pintura: 'Pintura',
   colaboradores: 'Colaboradores',
   maquinas: 'Máquinas',
   configuracoes: 'Central de Bonificações',
@@ -165,6 +167,7 @@ const pageTitles = {
 };
 
 let META_GLOBAL = 8000;
+let EXIGIR_PEDIDO_PRODUCAO = false;
 function abreviarRazaoCliente(razao) {
   if (!razao) return '';
   var sufixos = ['LTDA','EIRELI','EPP','ME','MEI','SA','LTDA.','S/A','S.A.'];
@@ -182,11 +185,31 @@ function nomeFantasiaCurto(c) {
   var f = (c && c.nome_fantasia) ? String(c.nome_fantasia).trim() : '';
   return f || abreviarRazaoCliente(c ? c.razao_social : '');
 }
+function aplicarExigirPedidoProducaoNoForm() {
+  const sel = document.getElementById('prod-pedido');
+  const tag = document.getElementById('prod-pedido-opcional-tag');
+  if (!sel || !tag) return;
+  const semPedidoOpt = sel.querySelector('option[value=""]');
+  if (EXIGIR_PEDIDO_PRODUCAO) {
+    if (semPedidoOpt) { semPedidoOpt.disabled = true; semPedidoOpt.textContent = '— Selecione um pedido (obrigatório) —'; }
+    tag.textContent = '(obrigatório)';
+    tag.style.color = 'var(--danger)';
+  } else {
+    if (semPedidoOpt) { semPedidoOpt.disabled = false; semPedidoOpt.textContent = '— Sem pedido vinculado —'; }
+    tag.textContent = '(opcional)';
+    tag.style.color = 'var(--muted)';
+  }
+}
+
 async function carregarMetaGlobal() {
   try {
     const configs = await api('/configuracoes/');
     const m = (configs || []).find(c => c.chave === 'meta_padrao');
     if (m && m.valor != null && m.valor !== '' && !isNaN(+m.valor)) META_GLOBAL = +m.valor;
+    const ep = (configs || []).find(c => c.chave === 'exigir_pedido_producao_perfis');
+    const perfisExigidos = ep ? ep.valor.split(',').map(x => x.trim()).filter(Boolean) : [];
+    const meuPerfil = window.usuarioLogado && window.usuarioLogado.role;
+    EXIGIR_PEDIDO_PRODUCAO = perfisExigidos.includes(meuPerfil);
   } catch (e) {}
 }
 
@@ -194,6 +217,7 @@ const PAGE_META_MAIN = {
   dashboard:     { icon:'📊', label:'Dashboard', section:'Visão Geral' },
   producao:      { icon:'🏭', label:'Produção Diária', section:'Lançamentos' },
   premiacao:     { icon:'🏆', label:'Premiação', section:'Lançamentos' },
+  pintura:       { icon:'🎨', label:'Pintura', section:'Lançamentos' },
   colaboradores: { icon:'👥', label:'Colaboradores', section:'Cadastros' },
   maquinas:      { icon:'⚙️', label:'Máquinas', section:'Cadastros' },
   pedidos:       { icon:'🧾', label:'Pedidos', section:'Operações' },
@@ -352,6 +376,7 @@ function showPage(name) {
     dashboard: loadDashboard,
     producao: initProducaoPage,
     premiacao: loadPremiacao,
+    pintura: abrirPintura,
     colaboradores: loadColaboradores,
     maquinas: loadMaquinas,
     configuracoes: loadConfiguracoes,
@@ -2113,6 +2138,7 @@ async function openModalProducao() {
   if (aviso) aviso.textContent = '';
   document.getElementById('prod-pedido').innerHTML = '<option value="">— Sem pedido vinculado —</option>' +
     pedidos.filter(p => p.status !== 'entregue').map(p => `<option value="${p.id}">${p.numero_pedido} — ${p.cliente_nome}</option>`).join('');
+  aplicarExigirPedidoProducaoNoForm();
   document.getElementById('modal-prod-title').textContent = 'Registrar Produção';
   document.getElementById('prod-save-btn').textContent = 'Salvar';
 
@@ -2708,6 +2734,11 @@ async function salvarProducao() {
   const base = itens.length ? itens : prodItens;
   const total = prodItens.reduce((s, i) => s + (i.producao || 0), 0);
   const pedido = document.getElementById('prod-pedido-manual').value.trim();
+  if (EXIGIR_PEDIDO_PRODUCAO && !pedido) {
+    highlightField('prod-pedido', true, 'Número do pedido é obrigatório (configuração ativada)');
+    showAlert('Número do pedido é obrigatório para lançar produção — ative a seleção de um pedido antes de salvar.', 'danger');
+    return;
+  }
 
   const linhas = base.map(i => {
     const prod = prodEstoqueCache.find(p => p.id === i.produto_id);
@@ -4044,13 +4075,38 @@ async function loadPermissoes() {
       perm_estoque:'dashboard,estoque,relatorios'
     };
   }
+
+  let perfisExigemPedido = [];
+  try {
+    const configs = await api('/configuracoes/');
+    const ep = (configs || []).find(c => c.chave === 'exigir_pedido_producao_perfis');
+    perfisExigemPedido = ep ? ep.valor.split(',').map(x => x.trim()).filter(Boolean) : [];
+  } catch (e) {}
+
   const tbody = document.getElementById('perm-tbody');
   if (!tbody) return;
   
   let html = '';
+
+  // Regras de lançamento — mesmo padrão visual das páginas, mas controla uma
+  // regra de negócio (obrigar número do pedido), não acesso a página.
+  html += `<tr><td colspan="5" class="perm-group-header">⚙️ Regras de Lançamento</td></tr>`;
+  html += (() => {
+    const cols = PERFIS.map(perf => {
+      const checked = perfisExigemPedido.includes(perf.key);
+      return `
+        <td style="text-align:center; vertical-align:middle; padding:8px 0;">
+          <label class="switch-container">
+            <input type="checkbox" id="regra_exigir_pedido_${perf.key}" ${checked?'checked':''}>
+            <span class="switch-slider"></span>
+          </label>
+        </td>`;
+    }).join('');
+    return `<tr><td style="font-weight:500; vertical-align:middle; padding-left:16px;" title="Bloqueia o lançamento &quot;Manual&quot; (sem pedido vinculado) na Produção Diária para o perfil marcado">🔒 Exigir nº do pedido em Produção Diária</td>${cols}</tr>`;
+  })();
   
   // Section 1: Painel Principal
-  html += `<tr><td colspan="5" class="perm-group-header">🖥️ Módulos do Painel Principal (Gestor)</td></tr>`;
+  html += `<tr><td colspan="5" class="perm-group-header" style="border-top:1px solid var(--border)">🖥️ Módulos do Painel Principal (Gestor)</td></tr>`;
   html += PAGINAS_SISTEMA.map(pg => {
     const cols = PERFIS.map(perf => {
       const chave = 'perm_' + perf.key;
@@ -6184,8 +6240,10 @@ async function importarPedidoArquivo() {
     await carregarProdutosEstoque();
     renderItensPedido();
     document.getElementById('modal-ped-title').textContent = 'Confirmar Pedido Importado';
+    document.getElementById('ped-precisa-pintura').checked = false;
+    document.getElementById('ped-precisa-pintura').dataset.original = '0';
     openModal('modal-pedido');
-    
+
     showAlert('Arquivo de pedido analisado com sucesso! Revise os dados e clique em Salvar.');
   } catch (e) {
     showAlert(e.message || 'Erro ao importar arquivo', 'danger');
@@ -6239,6 +6297,8 @@ async function openModalPedido() {
   document.getElementById('ped-prazo').value='';
   document.getElementById('ped-vendedor').value='';
   document.getElementById('ped-obs').value='';
+  document.getElementById('ped-precisa-pintura').checked = false;
+  document.getElementById('ped-precisa-pintura').dataset.original = '0';
   const clientes=await api('/pedidos/clientes');
   document.getElementById('ped-cliente').innerHTML=clientes.map(c=>`<option value="${c.id}">${c.razao_social}${c.nome_fantasia?' — '+c.nome_fantasia:''}</option>`).join('');
   await carregarProdutosEstoque();
@@ -6452,6 +6512,8 @@ async function editPedido(id) {
   
   document.getElementById('ped-vendedor').value = p.vendedor || '';
   document.getElementById('ped-obs').value = p.observacoes || '';
+  document.getElementById('ped-precisa-pintura').checked = !!p.precisa_pintura;
+  document.getElementById('ped-precisa-pintura').dataset.original = p.precisa_pintura ? '1' : '0';
   
   pedidoItens = p.itens.map(i => ({
     descricao: i.descricao,
@@ -6492,7 +6554,11 @@ async function salvarPedido() {
     }
   });
 
-  const body={numero_pedido:document.getElementById('ped-numero').value,cliente_id:+document.getElementById('ped-cliente').value,prazo_entrega:document.getElementById('ped-prazo').value,vendedor:document.getElementById('ped-vendedor').value,observacoes:document.getElementById('ped-obs').value,itens:pedidoItens.filter(i=>i.descricao.trim())};
+  const precisaPinturaEl = document.getElementById('ped-precisa-pintura');
+  const precisaPinturaAgora = precisaPinturaEl.checked;
+  const precisaPinturaOriginal = precisaPinturaEl.dataset.original === '1';
+
+  const body={numero_pedido:document.getElementById('ped-numero').value,cliente_id:+document.getElementById('ped-cliente').value,prazo_entrega:document.getElementById('ped-prazo').value,vendedor:document.getElementById('ped-vendedor').value,observacoes:document.getElementById('ped-obs').value,itens:pedidoItens.filter(i=>i.descricao.trim()),precisa_pintura:precisaPinturaAgora};
   if(!body.numero_pedido){showPopup('⚠️ Falta o número do pedido', 'O número do pedido não foi preenchido (comum quando a importação não conseguiu identificar automaticamente). Preencha o campo "Número do Pedido" antes de salvar.');return;}
   if(!body.prazo_entrega){showPopup('⚠️ Falta o prazo de entrega', 'Preencha o campo "Prazo de Entrega" antes de salvar.');return;}
   if(!body.itens.length){showPopup('⚠️ Nenhum item no pedido', 'Adicione ao menos um item antes de salvar.');return;}
@@ -6521,6 +6587,16 @@ async function salvarPedido() {
     loadFila();
     loadPedidos();
     checkAlertasPedidos();
+
+    if (precisaPinturaAgora && !precisaPinturaOriginal) {
+      const produtoIds = [...new Set(body.itens.map(i => i.produto_id).filter(Boolean))];
+      window._pinturaPrefill = {
+        pedido_numero: body.numero_pedido,
+        produto_id: produtoIds.length === 1 ? produtoIds[0] : null,
+        produto_ids: produtoIds
+      };
+      showPage('pintura');
+    }
   } catch(e){ showPopup('⚠️ Não foi possível salvar', `<div style="color:#ff6b6b">${e.message}</div>`); }
 }
 
@@ -6747,12 +6823,19 @@ async function salvarPermissoes() {
     }).map(pg => pg.key);
     body[chave] = paginas.join(',');
   });
+
+  const perfisExigemPedido = PERFIS.filter(perf => {
+    const el = document.getElementById(`regra_exigir_pedido_${perf.key}`);
+    return el && el.checked;
+  }).map(perf => perf.key);
+
   try {
     const r = await fetch(API + '/configuracoes/permissoes/salvar', {
       method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
     });
     const d = await r.json();
     if(!r.ok) throw new Error(d.detail||'Erro');
+    await api('/configuracoes/exigir_pedido_producao_perfis', 'PUT', { valor: perfisExigemPedido.join(',') });
     if (btn) { btn.innerHTML = '✅ Salvo!'; btn.style.background = 'var(--success)'; }
     setTimeout(() => {
       if (btn) { btn.disabled = false; btn.innerHTML = textoOriginal; btn.style.background = ''; }
@@ -7809,6 +7892,7 @@ function exportarGraficoPDF() {
 
 // ─── CORREÇÃO ESTOQUE — abas, tabelas e modais compatíveis com index.html ───
 let estoqueTabAtual = 'produtos';
+let _movInicializado = false;
 
 function _setVal(id, val) { const el = document.getElementById(id); if (el) el.value = val ?? ''; }
 function _getVal(id) { return document.getElementById(id)?.value || ''; }
@@ -7867,7 +7951,10 @@ function switchEstoqueTab(tab) {
   });
   if (estoqueTabAtual === 'produtos') loadProdutos();
   if (estoqueTabAtual === 'separacao') loadSeparacaoProducao();
-  if (estoqueTabAtual === 'movimentacoes') loadMovimentacoes();
+  if (estoqueTabAtual === 'movimentacoes') {
+    if (!_movInicializado) { _movInicializado = true; setFiltroPeriodoMovimentacoes('mes'); }
+    else loadMovimentacoes();
+  }
   if (estoqueTabAtual === 'perdas') loadPerdas();
   if (estoqueTabAtual === 'categorias') loadCategoriasEstoque();
 }
@@ -8165,14 +8252,52 @@ async function salvarMovimentacao() {
   } catch(e) { showAlert(e.message, 'danger'); }
 }
 
+async function onMudaCategoriaMov() {
+  const categoriaId = _getVal('est-filtro-mov-categoria');
+  const selProd = document.getElementById('est-filtro-mov-produto');
+  _setVal('est-filtro-mov-produto', '');
+  selProd.innerHTML = '<option value="">Todos os produtos</option>';
+  if (categoriaId) {
+    try {
+      const produtos = await api('/estoque/produtos?categoria_id=' + encodeURIComponent(categoriaId));
+      produtos
+        .slice()
+        .sort((a, b) => a.nome.localeCompare(b.nome))
+        .forEach(p => {
+          const o = document.createElement('option');
+          o.value = p.id; o.textContent = `${p.codigo ? p.codigo + ' — ' : ''}${p.nome}`;
+          selProd.appendChild(o);
+        });
+    } catch (e) {}
+  }
+  loadMovimentacoes();
+}
+
 async function loadMovimentacoes() {
   const tipo = _getVal('est-filtro-tipo');
+  const categoriaId = _getVal('est-filtro-mov-categoria');
+  const produtoId = _getVal('est-filtro-mov-produto');
   const dataInicio = _getVal('est-filtro-data-ini');
   const dataFim = _getVal('est-filtro-data-fim');
-  
+
+  const selCat = document.getElementById('est-filtro-mov-categoria');
+  if (selCat && selCat.options.length <= 1) {
+    try {
+      const cats = await api('/estoque/categorias');
+      cats.forEach(c => {
+        const o = document.createElement('option');
+        o.value = c.id; o.textContent = c.nome;
+        selCat.appendChild(o);
+      });
+      selCat.value = categoriaId || '';
+    } catch (e) {}
+  }
+
   let url = '/estoque/movimentacoes';
   const params = [];
   if (tipo) params.push('tipo=' + encodeURIComponent(tipo));
+  if (categoriaId) params.push('categoria_id=' + encodeURIComponent(categoriaId));
+  if (produtoId) params.push('produto_id=' + encodeURIComponent(produtoId));
   if (dataInicio) params.push('data_inicio=' + encodeURIComponent(dataInicio));
   if (dataFim) params.push('data_fim=' + encodeURIComponent(dataFim));
   
@@ -8205,6 +8330,13 @@ async function loadMovimentacoes() {
     </tr>`).join('');
 }
 
+function onMudaPeriodoMov() {
+  const periodo = _getVal('est-filtro-mov-periodo');
+  const wrap = document.getElementById('est-filtro-mov-datas-wrap');
+  if (wrap) wrap.style.display = (periodo === 'personalizado') ? 'flex' : 'none';
+  setFiltroPeriodoMovimentacoes(periodo);
+}
+
 function setFiltroPeriodoMovimentacoes(periodo) {
   const hoje = new Date();
   const formatLocal = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -8226,8 +8358,27 @@ function setFiltroPeriodoMovimentacoes(periodo) {
     const m = hoje.getMonth();
     ini = formatLocal(new Date(y, m, 1));
     fim = formatLocal(hoje);
+  } else if (periodo === 'personalizado') {
+    // Mantém as datas já preenchidas nos campos De/Até, se houver
+    ini = _getVal('est-filtro-data-ini');
+    fim = _getVal('est-filtro-data-fim');
   }
   
+  if (periodo === 'limpar') {
+    _setVal('est-filtro-tipo', '');
+    _setVal('est-filtro-mov-categoria', '');
+    _setVal('est-filtro-mov-produto', '');
+    _setVal('est-filtro-mov-periodo', 'mes');
+    const wrap = document.getElementById('est-filtro-mov-datas-wrap');
+    if (wrap) wrap.style.display = 'none';
+    const selProd = document.getElementById('est-filtro-mov-produto');
+    if (selProd) selProd.innerHTML = '<option value="">Todos os produtos</option>';
+    const y = hoje.getFullYear();
+    const m = hoje.getMonth();
+    ini = formatLocal(new Date(y, m, 1));
+    fim = formatLocal(hoje);
+  }
+
   _setVal('est-filtro-data-ini', ini);
   _setVal('est-filtro-data-fim', fim);
   loadMovimentacoes();
@@ -9653,6 +9804,374 @@ function mostrarEvolucaoGerencial(tipo) {
   document.getElementById('ger-btn-anual').className = 'btn btn-sm ' + (tipo === 'anual' ? 'btn-primary' : 'btn-secondary');
 }
 
+// ─── PINTURA ───────────────────────────────────────────────────────────────
+let pintCoresAtual = 1;
+let pintProdutosCache = [];
+
+async function abrirPintura() {
+  const [cols, produtos] = await Promise.all([
+    api('/colaboradores/?tipo=operador,auxiliar'),
+    api('/estoque/produtos').catch(() => [])
+  ]);
+
+  const operadores = cols.filter(c => (c.tipo || '').toLowerCase() === 'operador');
+  const auxiliares = cols.filter(c => (c.tipo || '').toLowerCase() === 'auxiliar');
+  document.getElementById('pint-colaborador').innerHTML =
+    '<option value="">Selecione...</option>' +
+    (operadores.length ? `<optgroup label="Operadores">${operadores.map(c => `<option value="${c.id}">${c.nome}</option>`).join('')}</optgroup>` : '') +
+    (auxiliares.length ? `<optgroup label="Auxiliares">${auxiliares.map(c => `<option value="${c.id}">${c.nome}</option>`).join('')}</optgroup>` : '');
+
+  pintProdutosCache = (produtos || []).filter(p => p.categoria_tipo !== 'revenda');
+
+  document.getElementById('pint-data').value = new Date().toISOString().split('T')[0];
+  document.getElementById('pint-pedido').value = '';
+  document.getElementById('pint-quantidade').value = '';
+  document.getElementById('pint-perda').value = '';
+  document.getElementById('pint-sobra').value = '';
+  _setVal('pint-edit-id', '');
+  document.getElementById('pint-form-title').textContent = 'Novo lançamento de pintura';
+  document.getElementById('pint-salvar-btn').textContent = 'Salvar Lançamento';
+  document.getElementById('pint-cancelar-edicao').style.display = 'none';
+  selecionarCoresPintura(1);
+  atualizarEstadoTipoPerdaPintura();
+
+  // Pré-preenchimento vindo do formulário de Pedido (checkbox "precisa de pintura"):
+  // limita o dropdown de produto só aos itens desse pedido, em vez do catálogo inteiro.
+  const prefill = window._pinturaPrefill;
+  window._pinturaPrefill = null;
+  if (prefill && prefill.produto_ids && prefill.produto_ids.length) {
+    renderProdutoPintura(pintProdutosCache.filter(p => prefill.produto_ids.includes(p.id)), true);
+  } else {
+    renderProdutoPintura(pintProdutosCache, false);
+  }
+
+  if (prefill) {
+    document.getElementById('pint-pedido').value = prefill.pedido_numero || '';
+    if (prefill.produto_id) {
+      document.getElementById('pint-produto').value = prefill.produto_id;
+    }
+  }
+
+  const mesEl = document.getElementById('pint-filtro-mes');
+  if (mesEl && !mesEl.value) mesEl.value = currentMonth();
+
+  await loadPintura();
+}
+
+function renderProdutoPintura(lista, filtrado) {
+  const sel = document.getElementById('pint-produto');
+  sel.innerHTML = '<option value="">Selecione...</option>' +
+    lista.map(p => `<option value="${p.id}">${p.codigo ? p.codigo + ' — ' : ''}${p.nome}</option>`).join('');
+  const linkEl = document.getElementById('pint-produto-ver-todos');
+  if (linkEl) linkEl.style.display = filtrado ? 'inline' : 'none';
+}
+
+function verTodosProdutosPintura() {
+  renderProdutoPintura(pintProdutosCache, false);
+}
+
+function selecionarCoresPintura(n) {
+  pintCoresAtual = n;
+  document.querySelectorAll('.pint-cor-btn').forEach(btn => {
+    const ativo = Number(btn.dataset.cores) === n;
+    btn.className = 'btn pint-cor-btn ' + (ativo ? 'btn-primary' : 'btn-secondary');
+  });
+}
+
+function atualizarEstadoTipoPerdaPintura() {
+  const perda = Number(_getVal('pint-perda')) || 0;
+  const sel = document.getElementById('pint-perda-tipo');
+  sel.disabled = !(perda > 0);
+  sel.style.opacity = (perda > 0) ? '' : '.5';
+}
+
+async function salvarPintura() {
+  const editId = _getVal('pint-edit-id');
+  const colaboradorId = _getVal('pint-colaborador');
+  const data = _getVal('pint-data');
+  if (!colaboradorId) { showAlert('Selecione o colaborador', 'danger'); return; }
+  if (!data) { showAlert('Informe a data', 'danger'); return; }
+
+  const quantidade = Number(_getVal('pint-quantidade')) || 0;
+  const perda = Number(_getVal('pint-perda')) || 0;
+  const sobra = Number(_getVal('pint-sobra')) || 0;
+  if (quantidade <= 0 && perda <= 0 && sobra <= 0) {
+    showAlert('Informe ao menos a quantidade pintada, perda ou sobra', 'danger');
+    return;
+  }
+
+  const body = {
+    colaborador_id: Number(colaboradorId),
+    data,
+    pedido_numero: _getVal('pint-pedido') || null,
+    produto_estoque_id: _getVal('pint-produto') ? Number(_getVal('pint-produto')) : null,
+    quantidade_cores: pintCoresAtual,
+    quantidade_pintada: quantidade,
+    perda_quantidade: perda,
+    perda_tipo: perda > 0 ? _getVal('pint-perda-tipo') : null,
+    sobra_quantidade: sobra
+  };
+
+  try {
+    if (editId) {
+      await api('/pintura/' + editId, 'PUT', body);
+      showAlert('Lançamento de pintura atualizado!');
+    } else {
+      await api('/pintura/', 'POST', body);
+      showAlert('Lançamento de pintura salvo!');
+    }
+    cancelarEdicaoPintura();
+    await loadPintura();
+  } catch (e) {
+    showAlert('Erro ao salvar: ' + e.message, 'danger');
+  }
+}
+
+function editarPintura(id) {
+  const l = (pintLancamentosCache || []).find(x => x.id === id);
+  if (!l) { showAlert('Lançamento não encontrado nesta lista.', 'danger'); return; }
+
+  _setVal('pint-edit-id', l.id);
+  document.getElementById('pint-colaborador').value = l.colaborador_id;
+  document.getElementById('pint-data').value = l.data;
+  document.getElementById('pint-pedido').value = l.pedido_numero || '';
+  renderProdutoPintura(pintProdutosCache, false);
+  document.getElementById('pint-produto').value = l.produto_estoque_id || '';
+  selecionarCoresPintura(l.quantidade_cores || 1);
+  document.getElementById('pint-quantidade').value = l.quantidade_pintada || '';
+  document.getElementById('pint-perda').value = l.perda_quantidade || '';
+  document.getElementById('pint-sobra').value = l.sobra_quantidade || '';
+  if (l.perda_tipo) document.getElementById('pint-perda-tipo').value = l.perda_tipo;
+  atualizarEstadoTipoPerdaPintura();
+
+  document.getElementById('pint-form-title').textContent = 'Editando lançamento de pintura';
+  document.getElementById('pint-salvar-btn').textContent = 'Atualizar Lançamento';
+  document.getElementById('pint-cancelar-edicao').style.display = 'inline-block';
+  document.getElementById('page-pintura').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function cancelarEdicaoPintura() {
+  _setVal('pint-edit-id', '');
+  document.getElementById('pint-pedido').value = '';
+  document.getElementById('pint-quantidade').value = '';
+  document.getElementById('pint-perda').value = '';
+  document.getElementById('pint-sobra').value = '';
+  document.getElementById('pint-perda-tipo').value = 'Quebra';
+  document.getElementById('pint-data').value = new Date().toISOString().split('T')[0];
+  renderProdutoPintura(pintProdutosCache, false);
+  selecionarCoresPintura(1);
+  atualizarEstadoTipoPerdaPintura();
+  document.getElementById('pint-form-title').textContent = 'Novo lançamento de pintura';
+  document.getElementById('pint-salvar-btn').textContent = 'Salvar Lançamento';
+  document.getElementById('pint-cancelar-edicao').style.display = 'none';
+}
+
+let pintLancamentosCache = [];
+
+async function loadPintura() {
+  const mes = _getVal('pint-filtro-mes') || currentMonth();
+  const tbody = document.getElementById('pint-tbody');
+  if (!tbody) return;
+  try {
+    const lancamentos = await api('/pintura/?mes=' + encodeURIComponent(mes));
+    pintLancamentosCache = lancamentos;
+    if (!lancamentos.length) {
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:24px">Nenhum lançamento neste mês</td></tr>';
+      return;
+    }
+    const coresLabel = { 1: '1 cor', 2: '2 cores', 3: '3 cores' };
+    tbody.innerHTML = lancamentos.map(l => `
+      <tr>
+        <td>${fmtDate(l.data)}</td>
+        <td>${l.colaborador_nome}</td>
+        <td>${l.pedido_numero || '—'}</td>
+        <td>${l.produto_nome ? (l.produto_codigo ? l.produto_codigo + ' — ' : '') + l.produto_nome : '—'}</td>
+        <td>${coresLabel[l.quantidade_cores] || l.quantidade_cores}</td>
+        <td>${fmtNum(l.quantidade_pintada)}</td>
+        <td>${l.perda_quantidade > 0 ? `<span class="pill pill-danger">${fmtNum(l.perda_quantidade)}</span>` : '—'}</td>
+        <td>${l.sobra_quantidade > 0 ? `<span class="pill pill-warn">${fmtNum(l.sobra_quantidade)}</span>` : '—'}</td>
+        <td>
+          <button class="btn btn-sm btn-secondary" onclick="editarPintura(${l.id})" title="Editar">✎</button>
+          <button class="btn btn-sm btn-danger" onclick="deletarPintura(${l.id})" title="Excluir">✕</button>
+        </td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--danger);padding:24px">Erro ao carregar: ${e.message}</td></tr>`;
+  }
+}
+
+async function deletarPintura(id) {
+  if (!confirm('Remover este lançamento de pintura?')) return;
+  try {
+    await api('/pintura/' + id, 'DELETE');
+    showAlert('Lançamento removido.');
+    await loadPintura();
+  } catch (e) {
+    showAlert('Erro ao remover: ' + e.message, 'danger');
+  }
+}
+
+async function deletarPintura(id) {
+  if (!confirm('Remover este lançamento de pintura?')) return;
+  try {
+    await api('/pintura/' + id, 'DELETE');
+    showAlert('Lançamento removido.');
+    await loadPintura();
+  } catch (e) {
+    showAlert('Erro ao remover: ' + e.message, 'danger');
+  }
+}
+
+// ─── PINTURA · ABA GERENCIAL ────────────────────────────────────────────
+function switchPinturaTab(tab) {
+  document.getElementById('pint-tab-lancamentos').style.display = tab === 'lancamentos' ? 'block' : 'none';
+  document.getElementById('pint-tab-gerencial').style.display = tab === 'gerencial' ? 'block' : 'none';
+  document.getElementById('pint-tab-btn-lancamentos').style.cssText = tab === 'lancamentos' ? 'border-color:var(--accent);color:var(--accent)' : '';
+  document.getElementById('pint-tab-btn-gerencial').style.cssText = tab === 'gerencial' ? 'border-color:var(--accent);color:var(--accent)' : '';
+  if (tab === 'gerencial') {
+    const mesEl = document.getElementById('pint-ger-mes');
+    if (mesEl && !mesEl.value) mesEl.value = currentMonth();
+    loadPinturaGerencial();
+  }
+}
+
+async function loadPinturaGerencial() {
+  const mes = _getVal('pint-ger-mes') || currentMonth();
+  let d;
+  try {
+    d = await api('/pintura/gerencial-resumo?mes=' + encodeURIComponent(mes));
+  } catch (e) {
+    showAlert('Erro ao carregar dados gerenciais: ' + e.message, 'danger');
+    return;
+  }
+
+  document.getElementById('pint-ger-sub').textContent = `Mês de referência: ${mesLabel(mes)}`;
+
+  const totalPintado = d.produtividade_por_colaborador.reduce((s, p) => s + (p.total_pintado || 0), 0);
+  const totalLancamentos = d.produtividade_por_colaborador.reduce((s, p) => s + (p.lancamentos || 0), 0);
+  const totalPerda = d.perdas_por_motivo.reduce((s, p) => s + (p.total_perda || 0), 0);
+
+  document.getElementById('pint-ger-kpis').innerHTML = `
+    <div class="card">
+      <div class="card-label">Total pintado</div>
+      <div class="card-value">${fmtNum(totalPintado)}</div>
+      <div class="card-sub">${fmtNum(totalLancamentos)} lançamento(s)</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Total perdido</div>
+      <div class="card-value" style="color:var(--danger)">${fmtNum(totalPerda)}</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Pedidos com pintura pendente</div>
+      <div class="card-value" style="color:${d.pedidos_pendentes.length ? 'var(--warn)' : 'var(--success)'}">${d.pedidos_pendentes.length}</div>
+    </div>
+  `;
+
+  const elProd = document.getElementById('pint-ger-produtividade');
+  elProd.innerHTML = d.produtividade_por_colaborador.length
+    ? d.produtividade_por_colaborador.map(p => `<div class="ger-rank-row"><span>${p.colaborador}</span><b>${fmtNum(p.total_pintado)} <span style="color:var(--muted);font-weight:400">(${p.lancamentos} lanç.)</span></b></div>`).join('')
+    : '<p style="color:var(--muted);font-size:13px">Sem lançamentos neste mês.</p>';
+
+  const elPerdas = document.getElementById('pint-ger-perdas');
+  elPerdas.innerHTML = d.perdas_por_motivo.length
+    ? d.perdas_por_motivo.map(p => `<div class="ger-rank-row"><span>${p.motivo}</span><b style="color:var(--danger)">${fmtNum(p.total_perda)}</b></div>`).join('')
+    : '<p style="color:var(--muted);font-size:13px">Sem perdas registradas neste mês.</p>';
+
+  const coresLabel = { 1: '1 cor', 2: '2 cores', 3: '3 cores' };
+  const elCores = document.getElementById('pint-ger-cores');
+  elCores.innerHTML = d.distribuicao_cores.length
+    ? d.distribuicao_cores.map(c => `<div class="ger-rank-row"><span>${coresLabel[c.cores] || c.cores}</span><b>${fmtNum(c.total_pintado)} <span style="color:var(--muted);font-weight:400">(${c.lancamentos} lanç.)</span></b></div>`).join('')
+    : '<p style="color:var(--muted);font-size:13px">Sem lançamentos neste mês.</p>';
+
+  const elPend = document.getElementById('pint-ger-pendentes');
+  elPend.innerHTML = d.pedidos_pendentes.length
+    ? d.pedidos_pendentes.map(p => `<div class="ger-rank-row"><span>Pedido ${p.numero_pedido} — ${p.cliente}</span><b style="color:var(--warn)">${p.prazo_entrega ? fmtDate(p.prazo_entrega) : '—'}</b></div>`).join('')
+    : '<p style="color:var(--success);font-size:13px">Nenhum pedido pendente de pintura. 🎉</p>';
+
+  document.getElementById('pint-ger-evolucao').innerHTML = _gerSvgEvolucaoMensalSimples(d.evolucao_mensal);
+}
+
+function _gerSvgEvolucaoMensalSimples(dados) {
+  if (!dados || !dados.length) return '<p style="color:var(--muted);font-size:13px">Sem histórico suficiente.</p>';
+  const nomesMes = {'01':'Jan','02':'Fev','03':'Mar','04':'Abr','05':'Mai','06':'Jun','07':'Jul','08':'Ago','09':'Set','10':'Out','11':'Nov','12':'Dez'};
+  const n = dados.length;
+  const larguraUtil = 528, xIni = 10;
+  const passo = larguraUtil / n;
+  const larguraBarra = Math.min(60, passo - 10);
+  const baseY = 140, topoY = 20;
+  const maxVal = Math.max(...dados.map(x => x.total_pintado), 1);
+  const escala = (baseY - topoY) / maxVal;
+
+  let bars = '', labels = '', mesLabels = '';
+  dados.forEach((item, i) => {
+    const x = xIni + i * passo + (passo - larguraBarra) / 2;
+    const cx = x + larguraBarra / 2;
+    const h = Math.max(item.total_pintado * escala, 1);
+    const y = baseY - h;
+    bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${larguraBarra.toFixed(1)}" height="${h.toFixed(1)}" fill="#a855f7" rx="3"/>`;
+    labels += `<text x="${cx.toFixed(1)}" y="${(y-6).toFixed(1)}" font-size="11" fill="var(--text)" font-weight="700" text-anchor="middle">${fmtNum(item.total_pintado)}</text>`;
+    const [ano, m] = item.mes.split('-');
+    mesLabels += `<text x="${cx.toFixed(1)}" y="155" font-size="11" fill="#6b7280" text-anchor="middle">${nomesMes[m] || m}</text>`;
+  });
+
+  return `<svg viewBox="0 0 548 165" width="100%" height="165">${bars}${labels}${mesLabels}</svg>`;
+}
+
+async function gerarRelatorioPintura() {
+  const mes = _getVal('pint-filtro-mes') || currentMonth();
+  let dados;
+  try {
+    dados = await api(`/pintura/relatorio-por-produto?mes_ini=${encodeURIComponent(mes)}&mes_fim=${encodeURIComponent(mes)}`);
+  } catch (e) {
+    showAlert('Erro ao gerar relatório: ' + e.message, 'danger');
+    return;
+  }
+  if (!dados.length) {
+    showAlert('Não há lançamentos de pintura neste mês para gerar relatório.', 'warning');
+    return;
+  }
+
+  const totalPintado = dados.reduce((s, d) => s + (d.total_pintado || 0), 0);
+  const totalPerda = dados.reduce((s, d) => s + (d.total_perda || 0), 0);
+  const totalSobra = dados.reduce((s, d) => s + (d.total_sobra || 0), 0);
+
+  const linhas = dados.map(d => `
+    <tr>
+      <td style="padding:7px;border-bottom:1px solid #ddd;font-family:Arial,sans-serif;">${d.produto_codigo}</td>
+      <td style="padding:7px;border-bottom:1px solid #ddd;font-family:Arial,sans-serif;">${d.produto_nome}</td>
+      <td style="padding:7px;border-bottom:1px solid #ddd;font-family:Arial,sans-serif;">${d.lancamentos}</td>
+      <td style="padding:7px;border-bottom:1px solid #ddd;font-family:Arial,sans-serif;">${fmtNum(d.total_pintado)}</td>
+      <td style="padding:7px;border-bottom:1px solid #ddd;font-family:Arial,sans-serif;">${fmtNum(d.total_perda)}</td>
+      <td style="padding:7px;border-bottom:1px solid #ddd;font-family:Arial,sans-serif;">${fmtNum(d.total_sobra)}</td>
+    </tr>`).join('');
+
+  const tituloReport = `Relatório de Pintura por Produto — ${mesLabel(mes)}`;
+  const tableHtml = `
+    <div style="font-family:Arial,sans-serif;margin-bottom:12px;font-size:13px;color:#333;">
+      <strong>Período: ${mesLabel(mes)}</strong> · Total pintado: ${fmtNum(totalPintado)} · Total perda: ${fmtNum(totalPerda)} · Total sobra: ${fmtNum(totalSobra)}
+    </div>
+    <table style="width:100%;border-collapse:collapse;margin-top:10px;">
+      <thead>
+        <tr style="background:#333;color:#fff;">
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Código</th>
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Produto</th>
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Lançamentos</th>
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Total Pintado</th>
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Total Perda</th>
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Total Sobra</th>
+        </tr>
+      </thead>
+      <tbody>${linhas}</tbody>
+    </table>
+  `;
+
+  const win = window.open('', '_blank');
+  win.document.write(`<html><head><title>${tituloReport}</title><style>@page{margin:0}body{font-family:Arial,sans-serif;margin:15mm 15mm 22mm 15mm;font-size:12px;counter-reset:page}.print-footer{position:fixed;bottom:8mm;left:15mm;right:15mm;border-top:1px solid #ddd;padding-top:6px;display:flex;justify-content:space-between;font-size:10px;color:#777;font-family:Arial,sans-serif;counter-increment:page}.page-number::after{content:counter(page)}</style></head><body>${_getEmpresaHeader(tituloReport)}${tableHtml}${_getPrintFooter()}</body></html>`);
+  win.document.close();
+  setTimeout(() => win.print(), 500);
+}
+
 function exportarListaCompras(formato) {
   const table = document.getElementById('lista-compras-table');
   if (!table) return;
@@ -9852,6 +10371,7 @@ const MODULOS_CONFIG = {
   dashboard:      { label:'📊 Dashboard',         acoes:['ver'] },
   producao:       { label:'🏭 Produção Diária',    acoes:['ver','criar','editar','deletar'] },
   premiacao:      { label:'🏆 Premiação',          acoes:['ver','criar','editar','deletar'] },
+  pintura:        { label:'🎨 Pintura',            acoes:['ver','criar','editar','deletar'] },
   colaboradores:  { label:'👥 Colaboradores',      acoes:['ver','criar','editar','deletar'] },
   maquinas:       { label:'⚙️ Máquinas',           acoes:['ver','criar','editar','deletar'] },
   pedidos:        { label:'🧾 Pedidos',            acoes:['ver','criar','editar','deletar','importar'] },

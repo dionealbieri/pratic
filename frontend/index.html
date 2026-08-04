@@ -43,6 +43,9 @@
     <a class="nav-item" onclick="showPage('premiacao')" style="cursor:pointer">
       <span class="icon">🏆</span> Premiação
     </a>
+    <a class="nav-item" onclick="showPage('pintura')" style="cursor:pointer">
+      <span class="icon">🎨</span> Pintura
+    </a>
     <div class="nav-section">Cadastros</div>
     <a class="nav-item" onclick="showPage('colaboradores')" style="cursor:pointer">
       <span class="icon">👥</span> Colaboradores
@@ -345,6 +348,128 @@
         <div>
           <div class="section-title">Auxiliares <button class="btn btn-sm btn-secondary" onclick="openModalAuxiliar()" style="font-size:11px;margin-left:8px" data-perm-criar="premiacao">+ Adicionar</button></div>
           <div id="prem-auxiliares"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PINTURA -->
+    <div class="page" id="page-pintura">
+      <div class="barra-fixa" style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap">
+        <button class="btn btn-secondary" id="pint-tab-btn-lancamentos" onclick="switchPinturaTab('lancamentos')" style="border-color:var(--accent);color:var(--accent)">🎨 Lançamentos</button>
+        <button class="btn btn-secondary" id="pint-tab-btn-gerencial" onclick="switchPinturaTab('gerencial')">📊 Gerencial</button>
+      </div>
+
+      <div id="pint-tab-lancamentos">
+      <div class="table-wrap" style="padding:20px;margin-bottom:20px">
+        <div class="table-head-title" id="pint-form-title" style="margin-bottom:18px">Novo lançamento de pintura</div>
+        <input type="hidden" id="pint-edit-id">
+        <div class="form-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+          <div class="form-group">
+            <label>Colaborador</label>
+            <select id="pint-colaborador"></select>
+          </div>
+          <div class="form-group">
+            <label>Data</label>
+            <input type="date" id="pint-data">
+          </div>
+          <div class="form-group">
+            <label>Nº do Pedido</label>
+            <input type="text" id="pint-pedido" placeholder="Ex: 14899">
+          </div>
+          <div class="form-group">
+            <label>Produto</label>
+            <select id="pint-produto"><option value="">Selecione...</option></select>
+            <a id="pint-produto-ver-todos" onclick="verTodosProdutosPintura()" style="display:none;font-size:11px;color:var(--accent2);cursor:pointer;margin-top:2px">Mostrando só os itens deste pedido — ver todos os produtos</a>
+          </div>
+          <div class="form-group" style="grid-column:1 / -1">
+            <label>Quantas cores</label>
+            <div class="flex gap-2" id="pint-cores-opcoes">
+              <button type="button" class="btn btn-secondary pint-cor-btn" data-cores="1" onclick="selecionarCoresPintura(1)" style="flex:1">1 cor</button>
+              <button type="button" class="btn btn-secondary pint-cor-btn" data-cores="2" onclick="selecionarCoresPintura(2)" style="flex:1">2 cores</button>
+              <button type="button" class="btn btn-secondary pint-cor-btn" data-cores="3" onclick="selecionarCoresPintura(3)" style="flex:1">3 cores</button>
+            </div>
+          </div>
+          <div class="form-group" style="grid-column:1 / -1">
+            <label>Quantidade pintada</label>
+            <input type="number" id="pint-quantidade" min="0" placeholder="0">
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px">
+          <div class="form-group">
+            <label>Perda</label>
+            <input type="number" id="pint-perda" min="0" placeholder="0" oninput="atualizarEstadoTipoPerdaPintura()">
+          </div>
+          <div class="form-group">
+            <label>Motivo da perda</label>
+            <select id="pint-perda-tipo" disabled style="opacity:.5">
+              <option value="Quebra">Quebra</option>
+              <option value="Defeito de tinta">Defeito de tinta</option>
+              <option value="Outro">Outro</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Sobra</label>
+            <input type="number" id="pint-sobra" min="0" placeholder="0">
+          </div>
+        </div>
+
+        <div style="margin-top:20px;text-align:right">
+          <button class="btn btn-secondary" id="pint-cancelar-edicao" onclick="cancelarEdicaoPintura()" style="display:none;margin-right:8px">Cancelar edição</button>
+          <button class="btn btn-primary" id="pint-salvar-btn" onclick="salvarPintura()">Salvar Lançamento</button>
+        </div>
+      </div>
+
+      <div class="table-wrap" style="padding:20px">
+        <div class="flex items-center justify-between mb-4">
+          <div class="table-head-title" style="margin-bottom:0">Lançamentos do mês</div>
+          <div class="flex items-center gap-2">
+            <input type="month" id="pint-filtro-mes" onchange="loadPintura()">
+            <button class="btn btn-secondary" onclick="gerarRelatorioPintura()">🖨️ Relatório por Produto</button>
+          </div>
+        </div>
+        <table>
+          <thead>
+            <tr><th>Data</th><th>Colaborador</th><th>Pedido</th><th>Produto</th><th>Cores</th><th>Qtd Pintada</th><th>Perda</th><th>Sobra</th><th></th></tr>
+          </thead>
+          <tbody id="pint-tbody"></tbody>
+        </table>
+      </div>
+      </div>
+
+      <div id="pint-tab-gerencial" style="display:none">
+        <div class="flex items-center justify-between mb-4">
+          <p style="font-size:12px;color:var(--muted);margin:0" id="pint-ger-sub"></p>
+          <input type="month" id="pint-ger-mes" onchange="loadPinturaGerencial()">
+        </div>
+
+        <div class="cards-grid" id="pint-ger-kpis"></div>
+
+        <div class="ger-grid-2">
+          <div class="table-wrap" style="padding:20px">
+            <div class="table-head-title" style="margin-bottom:16px">Produtividade por colaborador</div>
+            <div id="pint-ger-produtividade"></div>
+          </div>
+          <div class="table-wrap" style="padding:20px">
+            <div class="table-head-title" style="margin-bottom:16px">Perdas por motivo</div>
+            <div id="pint-ger-perdas"></div>
+          </div>
+        </div>
+
+        <div class="ger-grid-2" style="margin-top:14px">
+          <div class="table-wrap" style="padding:20px">
+            <div class="table-head-title" style="margin-bottom:16px">Distribuição por quantidade de cores</div>
+            <div id="pint-ger-cores"></div>
+          </div>
+          <div class="table-wrap" style="padding:20px">
+            <div class="table-head-title" style="margin-bottom:16px">Pedidos marcados p/ pintura sem lançamento</div>
+            <div id="pint-ger-pendentes"></div>
+          </div>
+        </div>
+
+        <div class="table-wrap" style="padding:20px;margin-top:14px">
+          <div class="table-head-title" style="margin-bottom:16px">Evolução mensal · total pintado</div>
+          <div id="pint-ger-evolucao"></div>
         </div>
       </div>
     </div>
@@ -693,41 +818,59 @@
 
       <!-- MOVIMENTAÇÕES -->
       <div id="est-tab-movimentacoes" style="display:none">
-        <div class="flex items-center justify-between mb-4 flex-wrap gap-4">
-          <div class="flex gap-3 items-center flex-wrap">
-            <div class="flex items-center gap-1">
-              <label style="font-size:12px;color:var(--muted)">Tipo:</label>
-              <select id="est-filtro-tipo" onchange="loadMovimentacoes()" style="min-width:130px;height:36px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-card);color:var(--text)">
-                <option value="">Todos os tipos</option>
-                <option value="entrada">Entradas</option>
-                <option value="saida">Saídas</option>
-                <option value="perda">Perdas</option>
-                <option value="ajuste">Ajustes</option>
-              </select>
-            </div>
-            
+        <div class="flex items-center gap-3 mb-3" style="flex-wrap:wrap">
+          <div class="flex items-center gap-1">
+            <label style="font-size:12px;color:var(--muted)">Tipo:</label>
+            <select id="est-filtro-tipo" onchange="loadMovimentacoes()" style="min-width:130px;height:36px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-card);color:var(--text)">
+              <option value="">Todos os tipos</option>
+              <option value="entrada">Entradas</option>
+              <option value="saida">Saídas</option>
+              <option value="perda">Perdas</option>
+              <option value="ajuste">Ajustes</option>
+            </select>
+          </div>
+
+          <div class="flex items-center gap-1">
+            <label style="font-size:12px;color:var(--muted)">Categoria:</label>
+            <select id="est-filtro-mov-categoria" onchange="onMudaCategoriaMov()" style="min-width:160px;height:36px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-card);color:var(--text)">
+              <option value="">Todas as categorias</option>
+            </select>
+          </div>
+
+          <div class="flex items-center gap-1">
+            <label style="font-size:12px;color:var(--muted)">Produto:</label>
+            <select id="est-filtro-mov-produto" onchange="loadMovimentacoes()" style="min-width:200px;height:36px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-card);color:var(--text)">
+              <option value="">Todos os produtos</option>
+            </select>
+          </div>
+
+          <div class="flex items-center gap-1">
+            <label style="font-size:12px;color:var(--muted)">Período:</label>
+            <select id="est-filtro-mov-periodo" onchange="onMudaPeriodoMov()" style="min-width:140px;height:36px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-card);color:var(--text)">
+              <option value="hoje">Hoje</option>
+              <option value="ontem">Ontem</option>
+              <option value="mes" selected>Este mês</option>
+              <option value="personalizado">Personalizado</option>
+            </select>
+          </div>
+
+          <div id="est-filtro-mov-datas-wrap" class="flex items-center gap-3" style="display:none;flex-wrap:wrap">
             <div class="flex items-center gap-1">
               <label style="font-size:12px;color:var(--muted)">De:</label>
               <input type="date" id="est-filtro-data-ini" onchange="loadMovimentacoes()" style="height:36px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-card);color:var(--text)">
             </div>
-            
             <div class="flex items-center gap-1">
               <label style="font-size:12px;color:var(--muted)">Até:</label>
               <input type="date" id="est-filtro-data-fim" onchange="loadMovimentacoes()" style="height:36px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-card);color:var(--text)">
             </div>
-            
-            <div class="flex gap-1">
-              <button class="btn btn-sm btn-secondary" style="height:36px;" onclick="setFiltroPeriodoMovimentacoes('hoje')">Hoje</button>
-              <button class="btn btn-sm btn-secondary" style="height:36px;" onclick="setFiltroPeriodoMovimentacoes('ontem')">Ontem</button>
-              <button class="btn btn-sm btn-secondary" style="height:36px;" onclick="setFiltroPeriodoMovimentacoes('mes')">Este Mês</button>
-              <button class="btn btn-sm btn-danger" style="height:36px;" onclick="setFiltroPeriodoMovimentacoes('limpar')" title="Limpar Filtros">✕</button>
-            </div>
           </div>
-          
-          <div class="flex gap-2 items-center">
-            <button class="btn btn-secondary" style="height:36px;" onclick="gerarRelatorioMovimentacoes()">🖨️ Gerar Relatório</button>
-            <button class="btn btn-primary" style="height:36px;" onclick="openModalMovimentacao()" data-perm-movimentar="estoque">+ Nova Movimentação</button>
-          </div>
+
+          <button class="btn btn-sm btn-danger" style="height:36px;" onclick="setFiltroPeriodoMovimentacoes('limpar')" title="Limpar Filtros">✕ Limpar filtros</button>
+        </div>
+
+        <div class="flex justify-end gap-2 items-center mb-4" style="padding-top:12px;border-top:1px solid var(--border)">
+          <button class="btn btn-secondary" style="height:36px;" onclick="gerarRelatorioMovimentacoes()">🖨️ Gerar Relatório</button>
+          <button class="btn btn-primary" style="height:36px;" onclick="openModalMovimentacao()" data-perm-movimentar="estoque">+ Nova Movimentação</button>
         </div>
         <div class="table-wrap">
           <div class="table-head"><span class="table-head-title">Histórico de Movimentações</span></div>
@@ -1763,7 +1906,7 @@
         <div class="form-group"><label>Máquina</label><select id="prod-maquina"></select></div>
         <div class="form-group"><label>Meta do dia</label><input type="number" id="prod-meta" value="8000"></div>
         <div class="form-group" style="grid-column:1/-1">
-          <label>Nº Pedido <span style="color:var(--muted);font-size:11px">(opcional)</span></label>
+          <label id="prod-pedido-label">Nº Pedido <span id="prod-pedido-opcional-tag" style="color:var(--muted);font-size:11px">(opcional)</span></label>
           <div class="flex gap-2">
             <select id="prod-pedido" onchange="onProdPedidoChange()" style="flex: 1; min-width: 0;"><option value="">— Sem pedido vinculado —</option></select>
             <input type="text" id="prod-pedido-manual" placeholder="Ou número manual" style="width: 150px; flex-shrink: 0;" onchange="buscarPedidoManual()">
@@ -2234,6 +2377,12 @@
       <div class="form-group" style="grid-column:1/-1">
         <label>Observações</label>
         <input type="text" id="ped-obs">
+      </div>
+      <div class="form-group" style="grid-column:1/-1">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none;letter-spacing:normal;font-size:14px;color:var(--text)">
+          <input type="checkbox" id="ped-precisa-pintura" style="width:auto">
+          🎨 Este pedido precisa de pintura
+        </label>
       </div>
     </div>
 
@@ -2726,7 +2875,7 @@
   </div>
 </div>
 
-<script src="js/app.js?v=20260728-melhoroperador2"></script>
+<script src="js/app.js?v=20260730-exigirpedido3"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');

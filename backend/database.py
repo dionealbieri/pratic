@@ -111,6 +111,28 @@ def init_db():
             FOREIGN KEY (maquina_id) REFERENCES maquinas(id)
         );
 
+        -- Etapa de pintura, anterior a impressao (producao_diaria). Registro de
+        -- produtividade/perdas/sobras apenas — NAO mexe em estoque_saldo nem
+        -- em meta/premiacao, por definicao (a baixa de estoque continua
+        -- acontecendo so na impressao, como ja era).
+        CREATE TABLE IF NOT EXISTS producao_pintura (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            colaborador_id INTEGER NOT NULL,
+            data TEXT NOT NULL,
+            mes_referencia TEXT NOT NULL,
+            pedido_numero TEXT,
+            produto_estoque_id INTEGER DEFAULT NULL,
+            quantidade_cores INTEGER NOT NULL DEFAULT 1,
+            quantidade_pintada REAL NOT NULL DEFAULT 0,
+            perda_quantidade REAL DEFAULT 0,
+            perda_tipo TEXT,
+            perda_observacao TEXT,
+            sobra_quantidade REAL DEFAULT 0,
+            criado_em TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (colaborador_id) REFERENCES colaboradores(id),
+            FOREIGN KEY (produto_estoque_id) REFERENCES estoque_produtos(id)
+        );
+
         CREATE TABLE IF NOT EXISTS premiacao_operador (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             colaborador_id INTEGER NOT NULL,
@@ -219,6 +241,9 @@ def init_db():
             criado_em TEXT DEFAULT (datetime('now')),
             FOREIGN KEY (produto_id) REFERENCES estoque_produtos(id)
         );
+        -- producao_diaria_id: adicionada via migracao abaixo (precisa existir a
+        -- tabela producao_diaria primeiro, entao o ALTER TABLE fica fora do
+        -- bloco executescript, junto das outras migracoes idempotentes)
 
         CREATE TABLE IF NOT EXISTS configuracoes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -439,6 +464,16 @@ def init_db():
             FOREIGN KEY (pedido_item_id) REFERENCES pedidos_itens(id)
         )
     """)
+    # Vincula cada movimentacao de estoque ao lancamento de producao que a
+    # gerou, com precisao (id exato) em vez de tentar re-identificar por
+    # operador+data+produto+texto do motivo — essa combinacao "fuzzy" e
+    # ambigua quando o mesmo operador tem mais de um lancamento do mesmo
+    # produto no mesmo dia (comum na pratica), fazendo editar/excluir UM
+    # lancamento reverter/apagar por engano a movimentacao de OUTRO.
+    cols_mov = [r[1] for r in conn.execute("PRAGMA table_info(estoque_movimentacoes)").fetchall()]
+    if "producao_diaria_id" not in cols_mov:
+        conn.execute("ALTER TABLE estoque_movimentacoes ADD COLUMN producao_diaria_id INTEGER")
+
     cols_ped = [r[1] for r in conn.execute("PRAGMA table_info(pedidos)").fetchall()]
     if "acrescimo" not in cols_ped:
         conn.execute("ALTER TABLE pedidos ADD COLUMN acrescimo REAL DEFAULT 0")
@@ -448,7 +483,8 @@ def init_db():
         conn.execute("ALTER TABLE pedidos ADD COLUMN desconto_global REAL DEFAULT 0")
     for _c, _t in [("transportadora","TEXT"),("nota_fiscal","TEXT"),("rastreio","TEXT"),
                    ("volumes","INTEGER"),("previsao_entrega","TEXT"),("obs_envio","TEXT"),
-                   ("data_despacho","TEXT"),("data_entrega","TEXT"),("frete_pago","REAL DEFAULT 0")]:
+                   ("data_despacho","TEXT"),("data_entrega","TEXT"),("frete_pago","REAL DEFAULT 0"),
+                   ("precisa_pintura","INTEGER DEFAULT 0")]:
         if _c not in cols_ped:
             conn.execute(f"ALTER TABLE pedidos ADD COLUMN {_c} {_t}")
     conn.execute("""
@@ -604,11 +640,12 @@ def init_db():
         ("empresa_cidade", "", "Cidade da empresa"),
         ("empresa_uf", "", "UF da empresa"),
         ("empresa_logo", "", "Logo da empresa em base64"),
-        ("perm_gestor", "dashboard,producao,premiacao,colaboradores,maquinas,pedidos,estoque,epi,saldo-demanda,consumo-medio,gerencial,graficos,relatorios,configuracoes,backup,perm-usuarios,permissoes,empresa,mobile,estoque_mobile", "Permissões do perfil Gestor"),
-        ("perm_producao", "dashboard,producao,premiacao,colaboradores,maquinas,epi,relatorios", "Permissões do perfil Produção"),
+        ("perm_gestor", "dashboard,producao,premiacao,pintura,colaboradores,maquinas,pedidos,estoque,epi,saldo-demanda,consumo-medio,gerencial,graficos,relatorios,configuracoes,backup,perm-usuarios,permissoes,empresa,mobile,estoque_mobile", "Permissões do perfil Gestor"),
+        ("perm_producao", "dashboard,producao,premiacao,pintura,colaboradores,maquinas,epi,relatorios", "Permissões do perfil Produção"),
         ("perm_comercial", "dashboard,pedidos,relatorios", "Permissões do perfil Comercial"),
         ("perm_estoque", "dashboard,estoque,consumo-medio,relatorios,estoque_mobile", "Permissões do perfil Estoque"),
         ("chat_p2p_permitido", "0", "Permitir chat 1:1 privado entre colaboradores"),
+        ("exigir_pedido_producao_perfis", "", "Perfis que são obrigados a informar número do pedido em todo lançamento de Produção Diária (lista separada por vírgula, ex: producao,comercial)"),
     ]
     for chave, valor, descricao in default_configs:
         conn.execute(
@@ -621,8 +658,9 @@ def init_db():
     # tinham perm_gestor/perm_estoque salvos, uma página nova (ex.: consumo-medio) nunca
     # entraria na string sem isso, e sumiria do menu mesmo para o gestor.
     _paginas_novas_por_perfil = {
-        "perm_gestor": ["consumo-medio", "gerencial"],
+        "perm_gestor": ["consumo-medio", "gerencial", "pintura"],
         "perm_estoque": ["consumo-medio"],
+        "perm_producao": ["pintura"],
     }
     for _chave, _paginas in _paginas_novas_por_perfil.items():
         _row = conn.execute("SELECT valor FROM configuracoes WHERE chave = ?", (_chave,)).fetchone()

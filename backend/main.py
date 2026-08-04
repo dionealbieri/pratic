@@ -6,7 +6,7 @@ import os, shutil, tempfile, datetime, base64, sqlite3
 
 from database import init_db, seed_data, get_conn, DB_PATH
 from auth_utils import get_current_user, validar_sessao_db
-from rotas import auth, colaboradores, maquinas, producao, premiacao, configuracoes, relatorios, estoque, pedidos, epi, comunicacao, gerencial
+from rotas import auth, colaboradores, maquinas, producao, premiacao, configuracoes, relatorios, estoque, pedidos, epi, comunicacao, gerencial, pintura
 
 app = FastAPI(title="PRATIC - Sistema de Produção")
 
@@ -48,6 +48,7 @@ app.include_router(pedidos.router,        prefix="/api/pedidos",        tags=["P
 app.include_router(epi.router,            prefix="/api/epi",            tags=["EPI"],           dependencies=[Depends(get_current_user)])
 app.include_router(comunicacao.router,    prefix="/api/comunicacao",    tags=["Comunicação"],   dependencies=[Depends(get_current_user)])
 app.include_router(gerencial.router,      prefix="/api/gerencial",      tags=["Gerencial"],     dependencies=[Depends(get_current_user)])
+app.include_router(pintura.router,        prefix="/api/pintura",        tags=["Pintura"],       dependencies=[Depends(get_current_user)])
 
 frontend_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
 js_path = os.path.join(frontend_path, "js")

@@ -63,6 +63,7 @@ class PedidoIn(BaseModel):
     frete: Optional[float] = 0.0
     desconto_global: Optional[float] = 0.0
     parcelas: Optional[List[ParcelaPedidoIn]] = []
+    precisa_pintura: Optional[bool] = False
 
 class StatusItemIn(BaseModel):
     status: str
@@ -1471,9 +1472,9 @@ def criar_pedido(p: PedidoIn):
         conn.close()
         raise HTTPException(400, f"Pedido número {p.numero_pedido} já existe (pedido #{dup['id']}).")
     cur.execute("""INSERT INTO pedidos
-        (numero_pedido, cliente_id, prazo_entrega, vendedor, observacoes, acrescimo, frete, desconto_global, status)
-        VALUES (?,?,?,?,?,?,?,?,'aberto')""",
-        (p.numero_pedido, p.cliente_id, (p.prazo_entrega or ""), p.vendedor, p.observacoes, p.acrescimo or 0, p.frete or 0, p.desconto_global or 0))
+        (numero_pedido, cliente_id, prazo_entrega, vendedor, observacoes, acrescimo, frete, desconto_global, status, precisa_pintura)
+        VALUES (?,?,?,?,?,?,?,?,'aberto',?)""",
+        (p.numero_pedido, p.cliente_id, (p.prazo_entrega or ""), p.vendedor, p.observacoes, p.acrescimo or 0, p.frete or 0, p.desconto_global or 0, 1 if p.precisa_pintura else 0))
     pedido_id = cur.lastrowid
     for item in p.itens:
         vunit = item.valor_unitario or 0.0
@@ -1512,9 +1513,9 @@ def atualizar_pedido(id: int, p: PedidoIn):
         conn.close()
         raise HTTPException(400, f"Pedido número {p.numero_pedido} já existe (pedido #{dup['id']}).")
     cur.execute("""UPDATE pedidos SET
-        numero_pedido=?, cliente_id=?, prazo_entrega=?, vendedor=?, observacoes=?, acrescimo=?, frete=?, desconto_global=?
+        numero_pedido=?, cliente_id=?, prazo_entrega=?, vendedor=?, observacoes=?, acrescimo=?, frete=?, desconto_global=?, precisa_pintura=?
         WHERE id=?""",
-        (p.numero_pedido, p.cliente_id, (p.prazo_entrega or ""), p.vendedor, p.observacoes, p.acrescimo or 0, p.frete or 0, p.desconto_global or 0, id))
+        (p.numero_pedido, p.cliente_id, (p.prazo_entrega or ""), p.vendedor, p.observacoes, p.acrescimo or 0, p.frete or 0, p.desconto_global or 0, 1 if p.precisa_pintura else 0, id))
     
     # Mapear status e quantidade produzida dos itens atuais pela descrição (para preservar o progresso)
     progresso_itens = {}

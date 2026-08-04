@@ -89,6 +89,12 @@ def registrar(p: ProducaoIn, current_user = Depends(get_current_user)):
             p.meta = float(_mr[0])
     excedente = (p.producao - p.meta) if p.producao > 0 else 0
 
+    _exigir = conn.execute("SELECT valor FROM configuracoes WHERE chave='exigir_pedido_producao_perfis'").fetchone()
+    _perfis_exigidos = [x.strip() for x in (_exigir[0] if _exigir else '').split(',') if x.strip()]
+    if current_user.get('role') in _perfis_exigidos and not (p.pedido_numero and str(p.pedido_numero).strip()):
+        conn.close()
+        raise HTTPException(400, "Número do pedido é obrigatório para lançar produção (configuração ativada para o seu perfil em Controle de Acesso).")
+
     # Aviso (nao bloqueio) de pedido repetido no mesmo dia: o frontend pede confirmacao.
     # Mesmo produto em pedidos diferentes e permitido; evitamos repetir o MESMO pedido.
     if p.pedido_numero and not p.confirmado:
@@ -126,9 +132,9 @@ def registrar(p: ProducaoIn, current_user = Depends(get_current_user)):
 
         # Saída da produção
         c.execute("""INSERT INTO estoque_movimentacoes
-                     (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior, motivo, responsavel, data)
-                     VALUES (?, 'saida', ?, ?, ?, 'Produção diária automática', ?, ?)""",
-                  (p.produto_estoque_id, consumo, saldo_atual, saldo_atual - consumo, col_nome, p.data))
+                     (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior, motivo, responsavel, data, producao_diaria_id)
+                     VALUES (?, 'saida', ?, ?, ?, 'Produção diária automática', ?, ?, ?)""",
+                  (p.produto_estoque_id, consumo, saldo_atual, saldo_atual - consumo, col_nome, p.data, prod_id))
 
         saldo_apos_consumo = saldo_atual - consumo
 
@@ -137,22 +143,22 @@ def registrar(p: ProducaoIn, current_user = Depends(get_current_user)):
         if sobra > 0:
             c.execute("""INSERT INTO estoque_movimentacoes
                          (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior,
-                          motivo, responsavel, data)
-                         VALUES (?, 'sobra', ?, ?, ?, 'Sobra de produção', ?, ?)""",
+                          motivo, responsavel, data, producao_diaria_id)
+                         VALUES (?, 'sobra', ?, ?, ?, 'Sobra de produção', ?, ?, ?)""",
                       (p.produto_estoque_id, sobra,
                        saldo_atual - consumo,
                        saldo_atual - consumo + sobra,
-                       col_nome, p.data))
+                       col_nome, p.data, prod_id))
             novo_saldo = novo_saldo + sobra
 
         # Perda vinculada ao estoque
         if perda > 0:
             c.execute("""INSERT INTO estoque_movimentacoes
                          (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior,
-                          motivo, tipo_perda, responsavel, observacao, data)
-                         VALUES (?, 'perda', ?, ?, ?, 'Perda na produção', ?, ?, ?, ?)""",
+                          motivo, tipo_perda, responsavel, observacao, data, producao_diaria_id)
+                         VALUES (?, 'perda', ?, ?, ?, 'Perda na produção', ?, ?, ?, ?, ?)""",
                       (p.produto_estoque_id, perda, saldo_apos_consumo, novo_saldo,
-                       p.perda_tipo or 'quebra', col_nome, p.perda_observacao, p.data))
+                       p.perda_tipo or 'quebra', col_nome, p.perda_observacao, p.data, prod_id))
 
         # Atualizar saldo
         if saldo:
@@ -178,10 +184,10 @@ def registrar(p: ProducaoIn, current_user = Depends(get_current_user)):
             novo_saldo = max(0, saldo_atual - perda)
             c.execute("""INSERT INTO estoque_movimentacoes
                          (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior,
-                          motivo, tipo_perda, responsavel, observacao, data)
-                         VALUES (?, 'perda', ?, ?, ?, 'Perda registrada via mobile', ?, ?, ?, ?)""",
+                          motivo, tipo_perda, responsavel, observacao, data, producao_diaria_id)
+                         VALUES (?, 'perda', ?, ?, ?, 'Perda registrada via mobile', ?, ?, ?, ?, ?)""",
                       (primeiro_produto["id"], perda, saldo_atual, novo_saldo,
-                       p.perda_tipo or 'quebra', col_nome, p.perda_observacao, p.data))
+                       p.perda_tipo or 'quebra', col_nome, p.perda_observacao, p.data, prod_id))
             if saldo:
                 conn.execute("UPDATE estoque_saldo SET quantidade=?, ultima_atualizacao=datetime('now') WHERE produto_id=?",
                              (novo_saldo, primeiro_produto["id"]))
@@ -194,80 +200,94 @@ def _reverter_estoque_producao(conn, prod_id: int):
     p = conn.execute("SELECT * FROM producao_diaria WHERE id = ?", (prod_id,)).fetchone()
     if not p:
         return
-    
+
     colaborador_id = p["colaborador_id"]
     data = p["data"]
     produto_estoque_id = p["produto_estoque_id"]
     perda_quantidade = p["perda_quantidade"] or 0
-    
+
     col = conn.execute("SELECT nome FROM colaboradores WHERE id = ?", (colaborador_id,)).fetchone()
     col_nome = col["nome"] if col else "Operador"
-    
-    # Se for registro de produto único, filtramos por produto_id para não afetar outros lançamentos do mesmo operador no mesmo dia
-    if produto_estoque_id:
-        query = """
-            SELECT * FROM estoque_movimentacoes 
-            WHERE data = ? 
-              AND responsavel = ? 
-              AND produto_id = ?
-              AND (motivo LIKE 'Produção diária automática%' 
-                   OR motivo LIKE 'Sobra de produção%' 
-                   OR motivo LIKE 'Perda na produção%' 
-                   OR motivo LIKE 'Perda registrada via mobile%')
-        """
-        params = (data, col_nome, produto_estoque_id)
-    else:
-        # Se produto_estoque_id for nulo, mas houver perda registrada no mobile (sem produto principal),
-        # a perda foi vinculada ao primeiro_produto ativo.
-        if perda_quantidade > 0:
-            primeiro_produto = conn.execute("SELECT id FROM estoque_produtos WHERE ativo=1 LIMIT 1").fetchone()
-            if primeiro_produto:
-                # Se for esse caso de perda avulsa, removemos apenas esse produto
-                query = """
-                    SELECT * FROM estoque_movimentacoes 
-                    WHERE data = ? 
-                      AND responsavel = ? 
-                      AND produto_id = ?
-                      AND (motivo LIKE 'Produção diária automática%' 
-                           OR motivo LIKE 'Sobra de produção%' 
-                           OR motivo LIKE 'Perda na produção%' 
-                           OR motivo LIKE 'Perda registrada via mobile%')
-                """
-                params = (data, col_nome, primeiro_produto["id"])
-            else:
-                return
-        else:
-            # Caso de múltiplos produtos (produto_estoque_id é nulo e sem perda avulsa):
-            # Revertemos todos os movimentos daquele operador naquela data que comecem com os motivos de produção
+
+    # Caminho correto: vínculo direto e exato pelo id do lançamento. Só cai no
+    # "fuzzy" (operador+data+produto+motivo) para movimentações antigas,
+    # criadas antes desse vínculo existir — nessas o match impreciso é o
+    # melhor que dá pra fazer, mas para tudo criado a partir de agora isso
+    # não é mais um problema (ver bug: editar/excluir um lançamento podia
+    # reverter por engano a movimentação de OUTRO lançamento do mesmo
+    # operador+produto no mesmo dia).
+    movs = conn.execute(
+        "SELECT * FROM estoque_movimentacoes WHERE producao_diaria_id = ?", (prod_id,)
+    ).fetchall()
+
+    if not movs:
+        # Se for registro de produto único, filtramos por produto_id para não afetar outros lançamentos do mesmo operador no mesmo dia
+        if produto_estoque_id:
             query = """
                 SELECT * FROM estoque_movimentacoes 
                 WHERE data = ? 
                   AND responsavel = ? 
+                  AND produto_id = ?
+                  AND producao_diaria_id IS NULL
                   AND (motivo LIKE 'Produção diária automática%' 
                        OR motivo LIKE 'Sobra de produção%' 
                        OR motivo LIKE 'Perda na produção%' 
                        OR motivo LIKE 'Perda registrada via mobile%')
             """
-            params = (data, col_nome)
-            
-    movs = conn.execute(query, params).fetchall()
-    
+            params = (data, col_nome, produto_estoque_id)
+            movs = conn.execute(query, params).fetchall()
+        else:
+            # Se produto_estoque_id for nulo, mas houver perda registrada no mobile (sem produto principal),
+            # a perda foi vinculada ao primeiro_produto ativo.
+            if perda_quantidade > 0:
+                primeiro_produto = conn.execute("SELECT id FROM estoque_produtos WHERE ativo=1 LIMIT 1").fetchone()
+                if primeiro_produto:
+                    # Se for esse caso de perda avulsa, removemos apenas esse produto
+                    query = """
+                        SELECT * FROM estoque_movimentacoes 
+                        WHERE data = ? 
+                          AND responsavel = ? 
+                          AND produto_id = ?
+                          AND producao_diaria_id IS NULL
+                          AND (motivo LIKE 'Produção diária automática%' 
+                               OR motivo LIKE 'Sobra de produção%' 
+                               OR motivo LIKE 'Perda na produção%' 
+                               OR motivo LIKE 'Perda registrada via mobile%')
+                    """
+                    params = (data, col_nome, primeiro_produto["id"])
+                    movs = conn.execute(query, params).fetchall()
+            else:
+                # Caso de múltiplos produtos (produto_estoque_id é nulo e sem perda avulsa):
+                # Revertemos todos os movimentos daquele operador naquela data que comecem com os motivos de produção
+                query = """
+                    SELECT * FROM estoque_movimentacoes 
+                    WHERE data = ? 
+                      AND responsavel = ? 
+                      AND producao_diaria_id IS NULL
+                      AND (motivo LIKE 'Produção diária automática%' 
+                           OR motivo LIKE 'Sobra de produção%' 
+                           OR motivo LIKE 'Perda na produção%' 
+                           OR motivo LIKE 'Perda registrada via mobile%')
+                """
+                params = (data, col_nome)
+                movs = conn.execute(query, params).fetchall()
+
     for m in movs:
         m_id = m["id"]
         m_prod_id = m["produto_id"]
         m_tipo = m["tipo"]
         m_qtd = m["quantidade"]
-        
+
         diff = 0
         if m_tipo in ("entrada", "sobra"):
             diff = m_qtd
         elif m_tipo in ("saida", "perda"):
             diff = -m_qtd
-            
+
         saldo_row = conn.execute("SELECT quantidade FROM estoque_saldo WHERE produto_id = ?", (m_prod_id,)).fetchone()
         saldo_atual = saldo_row["quantidade"] if saldo_row else 0
         novo_saldo = max(0, saldo_atual - diff)
-        
+
         conn.execute("UPDATE estoque_saldo SET quantidade = ?, ultima_atualizacao = datetime('now') WHERE produto_id = ?", (novo_saldo, m_prod_id))
         conn.execute("DELETE FROM estoque_movimentacoes WHERE id = ?", (m_id,))
 
@@ -279,6 +299,11 @@ def atualizar(id: int, p: ProducaoIn, current_user = Depends(get_current_user)):
         existe = cur.execute("SELECT id FROM producao_diaria WHERE id = ?", (id,)).fetchone()
         if not existe:
             raise HTTPException(404, "Registro de produção não encontrado")
+
+        _exigir = conn.execute("SELECT valor FROM configuracoes WHERE chave='exigir_pedido_producao_perfis'").fetchone()
+        _perfis_exigidos = [x.strip() for x in (_exigir[0] if _exigir else '').split(',') if x.strip()]
+        if current_user.get('role') in _perfis_exigidos and not (p.pedido_numero and str(p.pedido_numero).strip()):
+            raise HTTPException(400, "Número do pedido é obrigatório para lançar produção (configuração ativada para o seu perfil em Controle de Acesso).")
             
         # 1. Reverter estoque antigo
         _reverter_estoque_producao(cur, id)
@@ -312,9 +337,9 @@ def atualizar(id: int, p: ProducaoIn, current_user = Depends(get_current_user)):
             novo_saldo = max(0, saldo_atual - total_baixa)
     
             cur.execute("""INSERT INTO estoque_movimentacoes
-                         (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior, motivo, responsavel, data)
-                         VALUES (?, 'saida', ?, ?, ?, 'Produção diária automática', ?, ?)""",
-                      (p.produto_estoque_id, consumo, saldo_atual, saldo_atual - consumo, col_nome, p.data))
+                         (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior, motivo, responsavel, data, producao_diaria_id)
+                         VALUES (?, 'saida', ?, ?, ?, 'Produção diária automática', ?, ?, ?)""",
+                      (p.produto_estoque_id, consumo, saldo_atual, saldo_atual - consumo, col_nome, p.data, id))
     
             saldo_apos_consumo = saldo_atual - consumo
     
@@ -322,21 +347,21 @@ def atualizar(id: int, p: ProducaoIn, current_user = Depends(get_current_user)):
             if sobra > 0:
                 cur.execute("""INSERT INTO estoque_movimentacoes
                              (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior,
-                              motivo, responsavel, data)
-                             VALUES (?, 'sobra', ?, ?, ?, 'Sobra de produção', ?, ?)""",
+                              motivo, responsavel, data, producao_diaria_id)
+                             VALUES (?, 'sobra', ?, ?, ?, 'Sobra de produção', ?, ?, ?)""",
                           (p.produto_estoque_id, sobra,
                            saldo_atual - consumo,
                            saldo_atual - consumo + sobra,
-                           col_nome, p.data))
+                           col_nome, p.data, id))
                 novo_saldo = novo_saldo + sobra
     
             if perda > 0:
                 cur.execute("""INSERT INTO estoque_movimentacoes
                              (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior,
-                              motivo, tipo_perda, responsavel, observacao, data)
-                             VALUES (?, 'perda', ?, ?, ?, 'Perda na produção', ?, ?, ?, ?)""",
+                              motivo, tipo_perda, responsavel, observacao, data, producao_diaria_id)
+                             VALUES (?, 'perda', ?, ?, ?, 'Perda na produção', ?, ?, ?, ?, ?)""",
                           (p.produto_estoque_id, perda, saldo_apos_consumo, novo_saldo,
-                           p.perda_tipo or 'quebra', col_nome, p.perda_observacao, p.data))
+                           p.perda_tipo or 'quebra', col_nome, p.perda_observacao, p.data, id))
     
             if saldo:
                 cur.execute("UPDATE estoque_saldo SET quantidade=?, ultima_atualizacao=datetime('now') WHERE produto_id=?",
@@ -356,10 +381,10 @@ def atualizar(id: int, p: ProducaoIn, current_user = Depends(get_current_user)):
                 novo_saldo = max(0, saldo_atual - perda)
                 cur.execute("""INSERT INTO estoque_movimentacoes
                              (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior,
-                              motivo, tipo_perda, responsavel, observacao, data)
-                             VALUES (?, 'perda', ?, ?, ?, 'Perda registrada via mobile', ?, ?, ?, ?)""",
+                              motivo, tipo_perda, responsavel, observacao, data, producao_diaria_id)
+                             VALUES (?, 'perda', ?, ?, ?, 'Perda registrada via mobile', ?, ?, ?, ?, ?)""",
                           (primeiro_produto["id"], perda, saldo_atual, novo_saldo,
-                           p.perda_tipo or 'quebra', col_nome, p.perda_observacao, p.data))
+                           p.perda_tipo or 'quebra', col_nome, p.perda_observacao, p.data, id))
                 if saldo:
                     cur.execute("UPDATE estoque_saldo SET quantidade=?, ultima_atualizacao=datetime('now') WHERE produto_id=?",
                                  (novo_saldo, primeiro_produto["id"]))
