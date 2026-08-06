@@ -80,6 +80,10 @@ class ProdutoIn(BaseModel):
     estoque_minimo: Optional[float] = 0
     preco: Optional[float] = 0
     custo: Optional[float] = 0
+    embalagem_comprimento: Optional[float] = 0
+    embalagem_largura: Optional[float] = 0
+    embalagem_altura: Optional[float] = 0
+    embalagem_peso: Optional[float] = 0
 
 class MovimentacaoIn(BaseModel):
     produto_id: int
@@ -188,9 +192,11 @@ def criar_produto(p: ProdutoIn):
         existente = conn.execute("SELECT id FROM estoque_produtos WHERE codigo=? AND ativo=1", (codigo,)).fetchone()
         if existente:
             raise HTTPException(400, "Já existe um produto ativo com este Código/ID")
-        cur.execute("""INSERT INTO estoque_produtos (codigo, categoria_id, nome, marca, unidade, estoque_minimo, preco, custo)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (codigo, p.categoria_id, p.nome, p.marca, p.unidade, p.estoque_minimo, p.preco or 0, p.custo or 0))
+        cur.execute("""INSERT INTO estoque_produtos (codigo, categoria_id, nome, marca, unidade, estoque_minimo, preco, custo,
+                       embalagem_comprimento, embalagem_largura, embalagem_altura, embalagem_peso)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (codigo, p.categoria_id, p.nome, p.marca, p.unidade, p.estoque_minimo, p.preco or 0, p.custo or 0,
+                     p.embalagem_comprimento or 0, p.embalagem_largura or 0, p.embalagem_altura or 0, p.embalagem_peso or 0))
         produto_id = cur.lastrowid
         cur.execute("INSERT INTO estoque_saldo (produto_id, quantidade) VALUES (?, 0)", (produto_id,))
         conn.commit()
@@ -278,8 +284,10 @@ def atualizar_produto(id: int, p: ProdutoIn):
         if existente:
             raise HTTPException(400, "Já existe outro produto ativo com este Código/ID")
 
-        cur = conn.execute("""UPDATE estoque_produtos SET codigo=?, categoria_id=?, nome=?, marca=?, unidade=?, estoque_minimo=?, preco=?, custo=?
-                            WHERE id=?""", (codigo, p.categoria_id, p.nome, p.marca, p.unidade, p.estoque_minimo, p.preco or 0, p.custo or 0, id))
+        cur = conn.execute("""UPDATE estoque_produtos SET codigo=?, categoria_id=?, nome=?, marca=?, unidade=?, estoque_minimo=?, preco=?, custo=?,
+                            embalagem_comprimento=?, embalagem_largura=?, embalagem_altura=?, embalagem_peso=?
+                            WHERE id=?""", (codigo, p.categoria_id, p.nome, p.marca, p.unidade, p.estoque_minimo, p.preco or 0, p.custo or 0,
+                            p.embalagem_comprimento or 0, p.embalagem_largura or 0, p.embalagem_altura or 0, p.embalagem_peso or 0, id))
         if cur.rowcount == 0:
             raise HTTPException(404, "Produto não encontrado")
         conn.commit()

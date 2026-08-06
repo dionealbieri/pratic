@@ -442,6 +442,15 @@ def init_db():
         conn.execute("ALTER TABLE estoque_produtos ADD COLUMN custo REAL DEFAULT 0")
     if "oculta_pdv" not in cols_prod:
         conn.execute("ALTER TABLE estoque_produtos ADD COLUMN oculta_pdv INTEGER DEFAULT 0")
+    # Migração: dados da embalagem (dimensões e peso) no produto
+    if "embalagem_comprimento" not in cols_prod:
+        conn.execute("ALTER TABLE estoque_produtos ADD COLUMN embalagem_comprimento REAL DEFAULT 0")
+    if "embalagem_largura" not in cols_prod:
+        conn.execute("ALTER TABLE estoque_produtos ADD COLUMN embalagem_largura REAL DEFAULT 0")
+    if "embalagem_altura" not in cols_prod:
+        conn.execute("ALTER TABLE estoque_produtos ADD COLUMN embalagem_altura REAL DEFAULT 0")
+    if "embalagem_peso" not in cols_prod:
+        conn.execute("ALTER TABLE estoque_produtos ADD COLUMN embalagem_peso REAL DEFAULT 0")
     cols_cat = [r[1] for r in conn.execute("PRAGMA table_info(estoque_categorias)").fetchall()]
     if "parent_id" not in cols_cat:
         conn.execute("ALTER TABLE estoque_categorias ADD COLUMN parent_id INTEGER")

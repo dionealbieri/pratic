@@ -8133,6 +8133,10 @@ async function openModalProduto() {
   _setVal('est-prod-minimo', '0');
   _setVal('est-prod-custo', '0');
   _setVal('est-prod-preco', '0');
+  _setVal('est-prod-emb-comp', '0');
+  _setVal('est-prod-emb-larg', '0');
+  _setVal('est-prod-emb-alt', '0');
+  _setVal('est-prod-emb-peso', '0');
   const ti = document.getElementById('modal-prod-est-title'); if (ti) ti.textContent = 'Cadastrar Produto';
   openModal('modal-produto');
 }
@@ -8149,6 +8153,10 @@ async function editProduto(id) {
   _setVal('est-prod-minimo', p.estoque_minimo || 0);
   _setVal('est-prod-custo', p.custo || 0);
   _setVal('est-prod-preco', p.preco || 0);
+  _setVal('est-prod-emb-comp', p.embalagem_comprimento || 0);
+  _setVal('est-prod-emb-larg', p.embalagem_largura || 0);
+  _setVal('est-prod-emb-alt', p.embalagem_altura || 0);
+  _setVal('est-prod-emb-peso', p.embalagem_peso || 0);
   const ti = document.getElementById('modal-prod-est-title'); if (ti) ti.textContent = 'Editar Produto';
   openModal('modal-produto');
 }
@@ -8164,7 +8172,11 @@ async function salvarProduto() {
     unidade: _getVal('est-prod-unidade') || 'unidade',
     estoque_minimo: _numVal('est-prod-minimo'),
     custo: _numVal('est-prod-custo'),
-    preco: _numVal('est-prod-preco')
+    preco: _numVal('est-prod-preco'),
+    embalagem_comprimento: _numVal('est-prod-emb-comp'),
+    embalagem_largura: _numVal('est-prod-emb-larg'),
+    embalagem_altura: _numVal('est-prod-emb-alt'),
+    embalagem_peso: _numVal('est-prod-emb-peso')
   };
   if (!body.nome) { showAlert('Informe o nome do produto', 'danger'); return; }
   try {
