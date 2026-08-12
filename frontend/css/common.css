@@ -1531,3 +1531,113 @@ button:disabled.btn-loading {
   padding: 0 4px;
 }
 
+
+/* CUSTOM MULTISELECT DROPDOWN */
+.custom-multiselect {
+  position: relative;
+  display: inline-block;
+  min-width: 180px;
+  user-select: none;
+}
+
+.multiselect-btn {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  text-align: left;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.multiselect-btn:hover {
+  border-color: var(--accent);
+}
+
+.multiselect-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+  margin-top: 4px;
+  max-height: 300px;
+  display: flex;
+  flex-direction: column;
+}
+
+.multiselect-search-container {
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.multiselect-search {
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.multiselect-search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.multiselect-actions {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 8px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.multiselect-actions button {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 4px;
+}
+
+.multiselect-actions button:hover {
+  text-decoration: underline;
+}
+
+.multiselect-options {
+  overflow-y: auto;
+  flex: 1;
+  padding: 4px 0;
+}
+
+.multiselect-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.2s;
+}
+
+.multiselect-option:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.multiselect-option input[type="checkbox"] {
+  cursor: pointer;
+  accent-color: var(--accent);
+}

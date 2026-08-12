@@ -56,6 +56,56 @@ def _salvar_itens_detalhe(cur, prod_id: int, p: "ProducaoIn"):
                    (prod_id, p.produto_estoque_id, p.producao,
                     p.perda_quantidade or 0, p.sobra_quantidade or 0, tipo_perda_header))
 
+def _movimentar_estoque_item(c, prod_id: int, produto_id: int, quantidade: float,
+                              perda: float, sobra: float, tipo_perda: Optional[str],
+                              perda_observacao: Optional[str], col_nome: str, data: str):
+    """Dá baixa da produção, devolve a sobra ao saldo e registra a perda de UM
+    produto — todas as movimentações vinculadas ao lançamento via
+    producao_diaria_id. Usada tanto para lançamento de produto único quanto
+    para cada item de um lançamento multi-produto, para que a reversão
+    (editar/excluir) sempre encontre o vínculo exato e nunca precise recorrer
+    ao fallback por data+responsável, que podia atingir outros lançamentos do
+    mesmo colaborador no mesmo dia."""
+    consumo = quantidade or 0
+    perda = perda or 0
+    sobra = sobra or 0
+
+    saldo = c.execute("SELECT quantidade FROM estoque_saldo WHERE produto_id=?", (produto_id,)).fetchone()
+    saldo_atual = saldo["quantidade"] if saldo else 0
+    total_baixa = consumo + perda
+    novo_saldo = max(0, saldo_atual - total_baixa)
+
+    if consumo > 0:
+        c.execute("""INSERT INTO estoque_movimentacoes
+                     (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior, motivo, responsavel, data, producao_diaria_id)
+                     VALUES (?, 'saida', ?, ?, ?, 'Produção diária automática', ?, ?, ?)""",
+                  (produto_id, consumo, saldo_atual, saldo_atual - consumo, col_nome, data, prod_id))
+
+    saldo_apos_consumo = saldo_atual - consumo
+
+    if sobra > 0:
+        c.execute("""INSERT INTO estoque_movimentacoes
+                     (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior,
+                      motivo, responsavel, data, producao_diaria_id)
+                     VALUES (?, 'sobra', ?, ?, ?, 'Sobra de produção', ?, ?, ?)""",
+                  (produto_id, sobra, saldo_apos_consumo, saldo_apos_consumo + sobra, col_nome, data, prod_id))
+        novo_saldo = novo_saldo + sobra
+
+    if perda > 0:
+        c.execute("""INSERT INTO estoque_movimentacoes
+                     (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior,
+                      motivo, tipo_perda, responsavel, observacao, data, producao_diaria_id)
+                     VALUES (?, 'perda', ?, ?, ?, 'Perda na produção', ?, ?, ?, ?, ?)""",
+                  (produto_id, perda, saldo_apos_consumo, novo_saldo,
+                   tipo_perda or 'quebra', col_nome, perda_observacao, data, prod_id))
+
+    if saldo:
+        c.execute("UPDATE estoque_saldo SET quantidade=?, ultima_atualizacao=datetime('now') WHERE produto_id=?",
+                     (novo_saldo, produto_id))
+    else:
+        c.execute("INSERT INTO estoque_saldo (produto_id, quantidade) VALUES (?, ?)",
+                     (produto_id, novo_saldo))
+
 @router.get("/")
 def listar(mes: Optional[str] = None, colaborador_id: Optional[int] = None):
     conn = get_conn()
@@ -121,56 +171,24 @@ def registrar(p: ProducaoIn, current_user = Depends(get_current_user)):
     perda = p.perda_quantidade or 0
     _salvar_itens_detalhe(c, prod_id, p)
 
-    # ── Baixa no estoque se produto vinculado
-    if p.produto_estoque_id and p.producao > 0:
-        saldo = conn.execute("SELECT quantidade FROM estoque_saldo WHERE produto_id=?",
-                             (p.produto_estoque_id,)).fetchone()
-        saldo_atual = saldo["quantidade"] if saldo else 0
-        consumo = p.producao
-        total_baixa = consumo + perda
-        novo_saldo = max(0, saldo_atual - total_baixa)
+    # ── Baixa no estoque: um item por produto (multi-produto) ou o produto único do cabeçalho
+    itens_estoque = [it for it in (p.itens or []) if it.produto_estoque_id
+                      and ((it.quantidade or 0) > 0 or (it.perda_quantidade or 0) > 0 or (it.sobra_quantidade or 0) > 0)]
 
-        # Saída da produção
-        c.execute("""INSERT INTO estoque_movimentacoes
-                     (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior, motivo, responsavel, data, producao_diaria_id)
-                     VALUES (?, 'saida', ?, ?, ?, 'Produção diária automática', ?, ?, ?)""",
-                  (p.produto_estoque_id, consumo, saldo_atual, saldo_atual - consumo, col_nome, p.data, prod_id))
+    if itens_estoque:
+        for item in itens_estoque:
+            _movimentar_estoque_item(c, prod_id, item.produto_estoque_id, item.quantidade or 0,
+                                      item.perda_quantidade or 0, item.sobra_quantidade or 0,
+                                      item.tipo_perda or p.perda_tipo, p.perda_observacao, col_nome, p.data)
 
-        saldo_apos_consumo = saldo_atual - consumo
-
-        # Sobra vinculada ao estoque (volta ao saldo)
-        sobra = p.sobra_quantidade or 0
-        if sobra > 0:
-            c.execute("""INSERT INTO estoque_movimentacoes
-                         (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior,
-                          motivo, responsavel, data, producao_diaria_id)
-                         VALUES (?, 'sobra', ?, ?, ?, 'Sobra de produção', ?, ?, ?)""",
-                      (p.produto_estoque_id, sobra,
-                       saldo_atual - consumo,
-                       saldo_atual - consumo + sobra,
-                       col_nome, p.data, prod_id))
-            novo_saldo = novo_saldo + sobra
-
-        # Perda vinculada ao estoque
-        if perda > 0:
-            c.execute("""INSERT INTO estoque_movimentacoes
-                         (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior,
-                          motivo, tipo_perda, responsavel, observacao, data, producao_diaria_id)
-                         VALUES (?, 'perda', ?, ?, ?, 'Perda na produção', ?, ?, ?, ?, ?)""",
-                      (p.produto_estoque_id, perda, saldo_apos_consumo, novo_saldo,
-                       p.perda_tipo or 'quebra', col_nome, p.perda_observacao, p.data, prod_id))
-
-        # Atualizar saldo
-        if saldo:
-            conn.execute("UPDATE estoque_saldo SET quantidade=?, ultima_atualizacao=datetime('now') WHERE produto_id=?",
-                         (novo_saldo, p.produto_estoque_id))
-        else:
-            conn.execute("INSERT INTO estoque_saldo (produto_id, quantidade) VALUES (?, ?)",
-                         (p.produto_estoque_id, novo_saldo))
+    elif p.produto_estoque_id and p.producao > 0:
+        _movimentar_estoque_item(c, prod_id, p.produto_estoque_id, p.producao,
+                                  perda, p.sobra_quantidade or 0,
+                                  p.perda_tipo, p.perda_observacao, col_nome, p.data)
 
     # ── Registrar perda mesmo sem estoque vinculado
-    # (pulado quando o frontend já fez as movimentações manualmente por produto,
-    # caso de lançamento com múltiplos produtos — evita duplicar/atribuir errado)
+    # (pulado quando o frontend já fez as movimentações manualmente por produto —
+    # caso legado de lançamento com múltiplos produtos sem nenhum item com produto_estoque_id)
     elif perda > 0 and not p.movimentacao_manual:
         # Tenta encontrar qualquer produto cadastrado para registrar a perda
         # Se não tiver produto, registra só na producao_diaria (já salvo acima)
@@ -328,48 +346,20 @@ def atualizar(id: int, p: ProducaoIn, current_user = Depends(get_current_user)):
         col_nome = col["nome"] if col else "Operador"
         perda = p.perda_quantidade or 0
         
-        if p.produto_estoque_id and p.producao > 0:
-            saldo = cur.execute("SELECT quantidade FROM estoque_saldo WHERE produto_id=?",
-                                 (p.produto_estoque_id,)).fetchone()
-            saldo_atual = saldo["quantidade"] if saldo else 0
-            consumo = p.producao
-            total_baixa = consumo + perda
-            novo_saldo = max(0, saldo_atual - total_baixa)
-    
-            cur.execute("""INSERT INTO estoque_movimentacoes
-                         (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior, motivo, responsavel, data, producao_diaria_id)
-                         VALUES (?, 'saida', ?, ?, ?, 'Produção diária automática', ?, ?, ?)""",
-                      (p.produto_estoque_id, consumo, saldo_atual, saldo_atual - consumo, col_nome, p.data, id))
-    
-            saldo_apos_consumo = saldo_atual - consumo
-    
-            sobra = p.sobra_quantidade or 0
-            if sobra > 0:
-                cur.execute("""INSERT INTO estoque_movimentacoes
-                             (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior,
-                              motivo, responsavel, data, producao_diaria_id)
-                             VALUES (?, 'sobra', ?, ?, ?, 'Sobra de produção', ?, ?, ?)""",
-                          (p.produto_estoque_id, sobra,
-                           saldo_atual - consumo,
-                           saldo_atual - consumo + sobra,
-                           col_nome, p.data, id))
-                novo_saldo = novo_saldo + sobra
-    
-            if perda > 0:
-                cur.execute("""INSERT INTO estoque_movimentacoes
-                             (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior,
-                              motivo, tipo_perda, responsavel, observacao, data, producao_diaria_id)
-                             VALUES (?, 'perda', ?, ?, ?, 'Perda na produção', ?, ?, ?, ?, ?)""",
-                          (p.produto_estoque_id, perda, saldo_apos_consumo, novo_saldo,
-                           p.perda_tipo or 'quebra', col_nome, p.perda_observacao, p.data, id))
-    
-            if saldo:
-                cur.execute("UPDATE estoque_saldo SET quantidade=?, ultima_atualizacao=datetime('now') WHERE produto_id=?",
-                             (novo_saldo, p.produto_estoque_id))
-            else:
-                cur.execute("INSERT INTO estoque_saldo (produto_id, quantidade) VALUES (?, ?)",
-                             (p.produto_estoque_id, novo_saldo))
-    
+        itens_estoque = [it for it in (p.itens or []) if it.produto_estoque_id
+                          and ((it.quantidade or 0) > 0 or (it.perda_quantidade or 0) > 0 or (it.sobra_quantidade or 0) > 0)]
+
+        if itens_estoque:
+            for item in itens_estoque:
+                _movimentar_estoque_item(cur, id, item.produto_estoque_id, item.quantidade or 0,
+                                          item.perda_quantidade or 0, item.sobra_quantidade or 0,
+                                          item.tipo_perda or p.perda_tipo, p.perda_observacao, col_nome, p.data)
+
+        elif p.produto_estoque_id and p.producao > 0:
+            _movimentar_estoque_item(cur, id, p.produto_estoque_id, p.producao,
+                                      perda, p.sobra_quantidade or 0,
+                                      p.perda_tipo, p.perda_observacao, col_nome, p.data)
+
         elif perda > 0 and not p.movimentacao_manual:
             primeiro_produto = cur.execute(
                 "SELECT id FROM estoque_produtos WHERE ativo=1 LIMIT 1"

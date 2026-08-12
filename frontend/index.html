@@ -1322,9 +1322,22 @@
       <!-- Filtros + Ações -->
       <div class="barra-fixa flex items-center justify-between mb-4" style="flex-wrap:wrap;gap:10px">
         <div class="flex gap-2 items-center" style="flex-wrap:wrap">
-          <select id="svd-filtro-cat" onchange="loadSaldoDemanda()" style="min-width:180px">
-            <option value="">Todas as categorias</option>
-          </select>
+          <!-- Filtro de Categorias Multi-seleção -->
+          <div class="custom-multiselect" id="svd-multi-cat-container" style="min-width:200px">
+            <button class="multiselect-btn" onclick="toggleMultiselect(event, 'svd-multi-cat-dropdown')">
+              <span class="btn-text">Todas as categorias</span>
+              <span class="btn-icon">▼</span>
+            </button>
+            <div class="multiselect-dropdown" id="svd-multi-cat-dropdown" style="display:none">
+              <div class="multiselect-actions">
+                <button type="button" onclick="selectAllMultiselect('svd-multi-cat-dropdown', true, true)">Marcar Todas</button>
+                <button type="button" onclick="selectAllMultiselect('svd-multi-cat-dropdown', false, true)">Desmarcar Todas</button>
+              </div>
+              <div class="multiselect-options" id="svd-multi-cat-options">
+                <!-- Opções injetadas via JS -->
+              </div>
+            </div>
+          </div>
           <select id="svd-filtro-marca" onchange="loadSaldoDemanda()" style="min-width:160px">
             <option value="">Todas as marcas</option>
           </select>
@@ -2894,7 +2907,7 @@
   </div>
 </div>
 
-<script src="js/app.js?v=20260806-embalagem2"></script>
+<script src="js/app.js?v=20260812-sobra-multiproduto-svdcat"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');

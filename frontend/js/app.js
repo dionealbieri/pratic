@@ -2792,14 +2792,14 @@ async function executarSalvarProducao() {
         producao: item.producao || 0,
         produto_estoque_id: item.produto_id,
         perda_quantidade: item.perda || 0,
-        sobra_quantidade: item.sobra || 0
+        sobra_quantidade: item.sobra || 0,
+        pedido_numero: pedidoManual || null
       });
       showAlert('Produção atualizada!');
     } else {
       const itensValidos = prodItens.filter(i => (i.producao || 0) > 0 || (i.perda || 0) > 0 || (i.sobra || 0) > 0);
       if (!itensValidos.length) { showAlert('Informe pelo menos um item com produção ou perda', 'danger'); return; }
 
-      const colNome = document.getElementById('prod-colaborador').selectedOptions[0]?.text || 'Operador';
       let res;
 
       if (itensValidos.length === 1) {
@@ -2815,11 +2815,15 @@ async function executarSalvarProducao() {
           pedido_numero: pedidoManual || null
         });
       } else {
-        // Múltiplos produtos válidos:
-        // 1. Registra a produção diária principal sem vincular a um produto estoque
-        // (evitando que o backend dê baixa da soma total em um único produto), mas
-        // envia a SOMA de perda/sobra de todos os itens para os relatórios ficarem
-        // corretos — a baixa de estoque em si é feita item a item logo abaixo.
+        // Múltiplos produtos válidos: registra a produção diária principal sem
+        // vincular a um produto estoque (evitando que o backend dê baixa da soma
+        // total em um único produto) e envia a SOMA de perda/sobra de todos os
+        // itens para os relatórios do cabeçalho. O backend faz a baixa/sobra/perda
+        // item a item a partir da lista "itens", já vinculando cada movimentação
+        // ao próprio lançamento (producao_diaria_id) — por isso não fazemos mais
+        // as chamadas manuais de /estoque/movimentacoes aqui: além de redundante,
+        // elas ficavam sem esse vínculo e podiam ser revertidas por engano ao
+        // editar/excluir OUTRO lançamento do mesmo colaborador no mesmo dia.
         const totalPerda = itensValidos.reduce((s, i) => s + (i.perda || 0), 0);
         const totalSobra = itensValidos.reduce((s, i) => s + (i.sobra || 0), 0);
         res = await postProducaoComConfirmacao({
@@ -2828,56 +2832,15 @@ async function executarSalvarProducao() {
           produto_estoque_id: null,
           perda_quantidade: totalPerda,
           sobra_quantidade: totalSobra,
-          movimentacao_manual: true,
           pedido_numero: pedidoManual || null,
           itens: itensValidos.map(i => ({
             produto_estoque_id: i.produto_id,
             quantidade: i.producao || 0,
             perda_quantidade: i.perda || 0,
-            sobra_quantidade: i.sobra || 0
+            sobra_quantidade: i.sobra || 0,
+            tipo_perda: i.tipo_perda || 'Quebra'
           }))
         });
-
-        // 2. Faz as baixas/movimentações manuais no estoque para TODOS os itens válidos
-        for (const item of itensValidos) {
-          if (item.produto_id) {
-            try {
-              if (item.producao > 0) {
-                await api('/estoque/movimentacoes', 'POST', {
-                  produto_id: item.produto_id,
-                  tipo: 'saida',
-                  quantidade: item.producao,
-                  motivo: 'Produção diária automática — Pedido ' + (pedidoManual || ''),
-                  responsavel: colNome,
-                  data
-                });
-              }
-              if (item.perda > 0) {
-                await api('/estoque/movimentacoes', 'POST', {
-                  produto_id: item.produto_id,
-                  tipo: 'perda',
-                  quantidade: item.perda,
-                  motivo: 'Perda na produção — Pedido ' + (pedidoManual || ''),
-                  tipo_perda: item.tipo_perda || 'Quebra',
-                  responsavel: colNome,
-                  data
-                });
-              }
-              if (item.sobra > 0) {
-                await api('/estoque/movimentacoes', 'POST', {
-                  produto_id: item.produto_id,
-                  tipo: 'sobra',
-                  quantidade: item.sobra,
-                  motivo: 'Sobra de produção — Pedido ' + (pedidoManual || ''),
-                  responsavel: colNome,
-                  data
-                });
-              }
-            } catch (err) {
-              console.error('Erro ao processar movimentações de estoque para o produto ID ' + item.produto_id, err);
-            }
-          }
-        }
       }
 
       // Atualizar o progresso de produção dos itens do pedido associado
@@ -9194,61 +9157,173 @@ const SVD_CONFIG = {
   sem_demanda: { label: '⚫ Sem demanda', pill: 'pill-info',    cor: 'var(--muted)'   },
 };
 
-async function loadSaldoDemanda() {
-  // Popular filtro de categorias
-  try {
-    const cats = await api('/estoque/categorias');
-    const sel = document.getElementById('svd-filtro-cat');
-    if (sel && sel.options.length <= 1) {
+async function loadSaldoDemanda(isFilterOnly = false) {
+  // Popular filtro de categorias se ainda não estiver preenchido
+  const catContainer = document.getElementById('svd-multi-cat-options');
+  if (catContainer && catContainer.children.length === 0) {
+    try {
+      const cats = await api('/estoque/categorias');
+      // Sort categories alphabetically
+      cats.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' }));
       cats.forEach(c => {
-        const o = document.createElement('option');
-        o.value = c.id; o.textContent = c.nome;
-        sel.appendChild(o);
+        const div = document.createElement('div');
+        div.className = 'multiselect-option';
+        div.innerHTML = `
+          <label style="display:flex;align-items:center;gap:8px;width:100%;cursor:pointer">
+            <input type="checkbox" value="${c.id}" data-label="${c.nome}" onchange="onMultiselectChange('svd-multi-cat-dropdown')">
+            <span>${c.nome}</span>
+          </label>
+        `;
+        catContainer.appendChild(div);
       });
+    } catch(e) {}
+  }
+
+  if (!isFilterOnly) {
+    let url = '/estoque/saldo-vs-demanda';
+    try {
+      svdDados = await api(url);
+      
+      // Filtrar pelas categorias ocultadas (persistidas no backend)
+      const ocultas = await _getSvdCategoriasOcultas();
+      svdDados = svdDados.filter(r => {
+        const catIdStr = r.categoria_id === null || r.categoria_id === undefined ? "null" : String(r.categoria_id);
+        return !ocultas.includes(catIdStr);
+      });
+
+      // Popular filtro de marcas dinamicamente
+      const marcaSel = document.getElementById('svd-filtro-marca');
+      if (marcaSel && marcaSel.options.length <= 1) {
+        const marcas = [...new Set(svdDados.map(r => r.marca).filter(Boolean))].sort();
+        marcas.forEach(m => {
+          const o = document.createElement('option');
+          o.value = m; o.textContent = m;
+          marcaSel.appendChild(o);
+        });
+      }
+    } catch(e) { 
+      showAlert('Erro ao carregar Saldo vs Demanda: ' + e.message, 'danger'); 
+      return;
     }
-  } catch(e) {}
+  }
 
-  const catId = document.getElementById('svd-filtro-cat')?.value || '';
-  let url = '/estoque/saldo-vs-demanda';
-  if (catId) url += '?categoria_id=' + catId;
-
-  try {
-    svdDados = await api(url);
-
-    // Filtrar pelas categorias ocultadas (persistidas no backend)
-    const ocultas = await _getSvdCategoriasOcultas();
-    svdDados = svdDados.filter(r => {
+  const selectedCats = getSelectedMultiselectValues('svd-multi-cat-dropdown');
+  const sit = document.getElementById('svd-filtro-sit')?.value || '';
+  const marca = document.getElementById('svd-filtro-marca')?.value || '';
+  
+  let filtrado = svdDados;
+  
+  // Filter by category
+  if (selectedCats.length > 0) {
+    filtrado = filtrado.filter(r => {
       const catIdStr = r.categoria_id === null || r.categoria_id === undefined ? "null" : String(r.categoria_id);
-      return !ocultas.includes(catIdStr);
+      return selectedCats.includes(catIdStr);
     });
+  }
 
-    // Popular filtro de marcas dinamicamente
-    const marcaSel = document.getElementById('svd-filtro-marca');
-    if (marcaSel && marcaSel.options.length <= 1) {
-      const marcas = [...new Set(svdDados.map(r => r.marca).filter(Boolean))].sort();
-      marcas.forEach(m => {
-        const o = document.createElement('option');
-        o.value = m; o.textContent = m;
-        marcaSel.appendChild(o);
-      });
-    }
+  if (sit === 'monitorados') filtrado = filtrado.filter(r => r.situacao !== 'sem_demanda');
+  else if (sit) filtrado = filtrado.filter(r => r.situacao === sit);
+  if (marca) filtrado = filtrado.filter(r => r.marca === marca);
 
-    const sit = document.getElementById('svd-filtro-sit')?.value || '';
-    const marca = document.getElementById('svd-filtro-marca')?.value || '';
-    let filtrado = svdDados;
-    if (sit === 'monitorados') filtrado = filtrado.filter(r => r.situacao !== 'sem_demanda');
-    else if (sit) filtrado = filtrado.filter(r => r.situacao === sit);
-    if (marca) filtrado = filtrado.filter(r => r.marca === marca);
+  // Sorting: alphabetical by product name if category filter is active
+  if (selectedCats.length > 0) {
+    filtrado.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' }));
+  } else {
+    filtrado.sort((a, b) => {
+      const catComp = (a.categoria || '').localeCompare(b.categoria || '', 'pt-BR', { sensitivity: 'base' });
+      if (catComp !== 0) return catComp;
+      return a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' });
+    });
+  }
 
-    renderSVDKPIs(svdDados);
-    renderSVDTabela(filtrado);
-    renderSVDAlerta(svdDados);
-    checkSVDBadge(svdDados);
+  renderSVDKPIs(svdDados);
+  renderSVDTabela(filtrado);
+  renderSVDAlerta(svdDados);
+  checkSVDBadge(svdDados);
 
-    const el = document.getElementById('svd-ultima-atualizacao');
-    if (el) el.textContent = '🕐 Atualizado em: ' + new Date().toLocaleString('pt-BR');
-  } catch(e) { showAlert('Erro ao carregar Saldo vs Demanda: ' + e.message, 'danger'); }
+  const el = document.getElementById('svd-ultima-atualizacao');
+  if (el) el.textContent = '🕐 Atualizado em: ' + new Date().toLocaleString('pt-BR');
 }
+
+// MULTISELECT DROPDOWN HELPERS
+function toggleMultiselect(event, dropdownId) {
+  event.stopPropagation();
+  const dropdown = document.getElementById(dropdownId);
+  if (!dropdown) return;
+  
+  document.querySelectorAll('.multiselect-dropdown').forEach(el => {
+    if (el.id !== dropdownId) el.style.display = 'none';
+  });
+  
+  dropdown.style.display = dropdown.style.display === 'none' ? 'flex' : 'none';
+}
+
+function selectAllMultiselect(dropdownId, selectAll, triggerChange) {
+  const checkboxes = document.querySelectorAll(`#${dropdownId} .multiselect-options .multiselect-option:not([style*="display: none"]) input[type="checkbox"]`);
+  checkboxes.forEach(cb => cb.checked = selectAll);
+  
+  if (triggerChange) {
+    onMultiselectChange(dropdownId);
+  }
+}
+
+function filterMultiselectOptions(dropdownId) {
+  const dropdown = document.getElementById(dropdownId);
+  if (!dropdown) return;
+  const searchInput = dropdown.querySelector('.multiselect-search');
+  const filterText = searchInput ? searchInput.value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") : '';
+  
+  const options = dropdown.querySelectorAll('.multiselect-option');
+  options.forEach(opt => {
+    const label = opt.querySelector('span').textContent.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    if (label.includes(filterText)) {
+      opt.style.display = 'flex';
+    } else {
+      opt.style.display = 'none';
+    }
+  });
+}
+
+function onMultiselectChange(dropdownId) {
+  if (dropdownId === 'svd-multi-cat-dropdown') {
+    updateMultiselectButtonText('svd-multi-cat-dropdown', 'Todas as categorias');
+    loadSaldoDemanda(true);
+  }
+}
+
+function getSelectedMultiselectValues(dropdownId) {
+  const checkboxes = document.querySelectorAll(`#${dropdownId} .multiselect-options input[type="checkbox"]:checked`);
+  return Array.from(checkboxes).map(cb => cb.value);
+}
+
+function updateMultiselectButtonText(dropdownId, defaultText) {
+  const checkboxes = document.querySelectorAll(`#${dropdownId} .multiselect-options input[type="checkbox"]:checked`);
+  const btnText = document.querySelector(`#${dropdownId}`).previousElementSibling.querySelector('.btn-text');
+  if (!btnText) return;
+  
+  if (checkboxes.length === 0) {
+    btnText.textContent = defaultText;
+  } else if (checkboxes.length === 1) {
+    btnText.textContent = checkboxes[0].getAttribute('data-label');
+  } else {
+    btnText.textContent = `${checkboxes.length} selecionadas`;
+  }
+}
+
+// Bind to window for HTML event handlers
+window.toggleMultiselect = toggleMultiselect;
+window.selectAllMultiselect = selectAllMultiselect;
+window.filterMultiselectOptions = filterMultiselectOptions;
+window.onMultiselectChange = onMultiselectChange;
+window.getSelectedMultiselectValues = getSelectedMultiselectValues;
+window.updateMultiselectButtonText = updateMultiselectButtonText;
+
+// Global listener to close dropdowns when clicking outside
+window.addEventListener('click', function(e) {
+  if (!e.target.closest('.custom-multiselect')) {
+    document.querySelectorAll('.multiselect-dropdown').forEach(el => el.style.display = 'none');
+  }
+});
 
 function renderSVDKPIs(dados) {
   const criticos = dados.filter(r => r.situacao === 'critico').length;
@@ -10219,24 +10294,151 @@ function exportarListaCompras(formato) {
 function exportarSVD(formato) {
   const table = document.getElementById('svd-table');
   if (!table) return;
+  
+  // Group rows by Category
+  const grouped = {};
+  table.querySelectorAll('tbody tr').forEach(tr => {
+    const tds = tr.querySelectorAll('td');
+    if (tds.length >= 8) {
+      const prod = tds[0].innerText.trim();
+      const cat = tds[1].innerText.trim();
+      const saldoAtual = tds[2].innerText.trim();
+      const saldoProj = tds[7].innerText.trim();
+      
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push({ prod, cat, saldoAtual, saldoProj });
+    }
+  });
+
   if (formato === 'pdf') {
+    const printTable = document.createElement('table');
+    printTable.style.width = '100%';
+    printTable.style.borderCollapse = 'collapse';
+    printTable.innerHTML = `
+      <thead>
+        <tr>
+          <th style="background:#333;color:#fff;padding:6px;text-align:left">Produto</th>
+          <th style="background:#333;color:#fff;padding:6px;text-align:left">Categoria</th>
+          <th style="background:#333;color:#fff;padding:6px;text-align:left">Saldo Atual</th>
+          <th style="background:#333;color:#fff;padding:6px;text-align:left">Saldo Projetado</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    `;
+    const tbody = printTable.querySelector('tbody');
+    
+    Object.keys(grouped).forEach(cat => {
+      // Products in this category
+      grouped[cat].forEach(item => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td style="padding:5px;border-bottom:1px solid #ddd">${item.prod}</td>
+          <td style="padding:5px;border-bottom:1px solid #ddd">${item.cat}</td>
+          <td style="padding:5px;border-bottom:1px solid #ddd;font-weight:700">${item.saldoAtual}</td>
+          <td style="padding:5px;border-bottom:1px solid #ddd;font-weight:700">${item.saldoProj}</td>
+        `;
+        tbody.appendChild(row);
+      });
+      
+      // Skip a line (pula uma linha)
+      const blankRow = document.createElement('tr');
+      blankRow.innerHTML = `<td colspan="4" style="height:15px;border:none;"></td>`;
+      tbody.appendChild(blankRow);
+
+      // Describe the category (descreve a categoria)
+      const descRow = document.createElement('tr');
+      descRow.innerHTML = `
+        <td colspan="4" style="background:#f1f5f9;font-weight:700;padding:8px;border-bottom:1px solid #ccc;color:#333">
+          Categoria: ${cat} (Fim da Categoria)
+        </td>
+      `;
+      tbody.appendChild(descRow);
+      
+      // Skip another line for separation
+      const postBlankRow = document.createElement('tr');
+      postBlankRow.innerHTML = `<td colspan="4" style="height:15px;border:none;"></td>`;
+      tbody.appendChild(postBlankRow);
+    });
+
     const win = window.open('','_blank');
     win.document.write(`<html><head><title>Saldo vs Demanda PRATIC</title>
-      <style>@page{margin:0}body{font-family:Arial,sans-serif;margin:15mm 15mm 22mm 15mm;font-size:11px;counter-reset:page}table{width:100%;border-collapse:collapse}th{background:#333;color:#fff;padding:6px;text-align:left}td{padding:5px;border-bottom:1px solid #ddd}.print-footer{position:fixed;bottom:8mm;left:15mm;right:15mm;border-top:1px solid #ddd;padding-top:6px;display:flex;justify-content:space-between;font-size:10px;color:#777;font-family:Arial,sans-serif;counter-increment:page}.page-number::after{content:counter(page)}</style>
+      <style>
+        @page {
+          size: A4 portrait;
+          margin: 15mm 15mm 22mm 15mm;
+        }
+        body {
+          font-family: Arial, sans-serif;
+          margin: 0;
+          font-size: 11px;
+          counter-reset: page;
+        }
+        table {
+          width: 100%;
+          border-collapse: collapse;
+        }
+        tr {
+          page-break-inside: avoid;
+          break-inside: avoid;
+        }
+        thead {
+          display: table-header-group;
+        }
+        th {
+          background: #333;
+          color: #fff;
+          padding: 6px;
+          text-align: left;
+        }
+        td {
+          padding: 5px;
+          border-bottom: 1px solid #ddd;
+        }
+        .print-footer {
+          position: fixed;
+          bottom: -15mm;
+          left: 0;
+          right: 0;
+          border-top: 1px solid #ddd;
+          padding-top: 6px;
+          display: flex;
+          justify-content: space-between;
+          font-size: 10px;
+          color: #777;
+          font-family: Arial, sans-serif;
+          counter-increment: page;
+        }
+        .page-number::after {
+          content: counter(page);
+        }
+      </style>
       </head><body>
       ${_getEmpresaHeader('Saldo vs Demanda')}
-      ${table.outerHTML}
+      ${printTable.outerHTML}
       ${_getPrintFooter()}
       </body></html>`);
     win.document.close();
     setTimeout(() => win.print(), 500);
   } else {
     const rows = [];
-    table.querySelectorAll('tr').forEach(tr => {
-      const row = [];
-      tr.querySelectorAll('th,td').forEach(td => row.push('"' + td.textContent.trim().replace(/"/g,'""') + '"'));
-      rows.push(row.join(';'));
+    rows.push(['"Produto"', '"Categoria"', '"Saldo Atual"', '"Saldo Projetado"'].join(';'));
+    
+    Object.keys(grouped).forEach(cat => {
+      grouped[cat].forEach(item => {
+        const prodEsc = '"' + item.prod.replace(/\n/g, ' ').replace(/"/g, '""') + '"';
+        const catEsc = '"' + item.cat.replace(/"/g, '""') + '"';
+        const saldoAtualEsc = '"' + item.saldoAtual.replace(/"/g, '""') + '"';
+        const saldoProjEsc = '"' + item.saldoProj.replace(/"/g, '""') + '"';
+        rows.push([prodEsc, catEsc, saldoAtualEsc, saldoProjEsc].join(';'));
+      });
+      // Skip a line
+      rows.push(';;;');
+      // Describe the category
+      rows.push([`"Categoria: ${cat} (Fim da Categoria)"`, '""', '""', '""'].join(';'));
+      // Skip another line
+      rows.push(';;;');
     });
+    
     const csv = '\uFEFF' + rows.join('\n');
     const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
     const a = document.createElement('a');
