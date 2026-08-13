@@ -1395,14 +1395,14 @@
     <!-- LISTA DE COMPRAS -->
     <div class="page" id="page-lista-compras">
       <div class="barra-fixa flex items-center justify-between mb-4" style="flex-wrap:wrap;gap:10px">
-        <p style="color:var(--muted);font-size:13px;margin:0">Marcas com produtos em situação crítica ou de atenção, agrupados por tipo e tamanho.</p>
+        <p style="color:var(--muted);font-size:13px;margin:0">Copos descartável, copos de papel, copos de isopor e tampas descartável — agrupados por marca, tipo e tamanho. Em vermelho/amarelo, o que precisa de atenção.</p>
         <div class="flex gap-2">
           <button class="btn btn-secondary" onclick="loadListaCompras()">↻ Atualizar</button>
           <button class="btn btn-secondary" onclick="imprimirListaCompras()">🖨️ Imprimir</button>
         </div>
       </div>
       <div id="lc-ultima-atualizacao" style="font-size:12px;color:var(--muted);margin-bottom:16px;text-align:center"></div>
-      <div id="lc-content" style="max-width:640px;margin:0 auto"></div>
+      <div id="lc-content" style="max-width:420px"></div>
     </div>
 
     <!-- CONSUMO MÉDIO -->
@@ -2923,7 +2923,7 @@
   </div>
 </div>
 
-<script src="js/app.js?v=20260813-lista-compras"></script>
+<script src="js/app.js?v=20260813-lista-compras-v4"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');

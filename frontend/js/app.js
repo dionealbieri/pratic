@@ -9567,26 +9567,57 @@ async function loadListaCompras() {
   if (dt) dt.textContent = '🕐 Atualizado em: ' + new Date().toLocaleString('pt-BR');
 }
 
-function _agruparListaCompras(dados) {
-  const criticos = dados.filter(r => r.situacao === 'critico' || r.situacao === 'atencao');
+// Classifica cada item quanto à urgência de compra:
+// (a) crítico/atenção porque tem pedido em aberto pressionando o estoque, ou
+// (b) saldo no ou abaixo do mínimo cadastrado, mesmo SEM nenhum pedido puxando.
+// Itens que não se encaixam em nenhum dos dois ficam "não urgentes" — ainda
+// aparecem na lista (se a marca deles for qualificada), só sem alarme visual.
+function _classificarItemCompras(r) {
+  if (r.situacao === 'critico' || r.situacao === 'atencao') {
+    return { urgente: true, situacao: r.situacao, semPedido: false };
+  }
+  const minimo = r.estoque_minimo || 0;
+  if (minimo > 0 && r.saldo_atual <= minimo) {
+    return { urgente: true, situacao: r.saldo_atual <= 0 ? 'critico' : 'atencao', semPedido: (r.total_demanda || 0) === 0 };
+  }
+  return { urgente: false, situacao: 'ok', semPedido: false };
+}
 
+// Só essas 4 categorias entram na Lista de Compras — o restante do catálogo
+// (EPI, insumos de escritório, squeeze, chaveiros etc.) fica de fora, mesmo
+// que também seja "revenda". Nomes batendo exatamente com o cadastro.
+const CATEGORIAS_LISTA_COMPRAS = ['COPOS DESCARTÁVEL', 'COPOS DE PAPEL', 'COPOS DE ISOPOR', 'TAMPAS DESCARTÁVEL'];
+
+function _agruparListaCompras(dados) {
+  const norm = s => String(s || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  const categoriasAlvo = CATEGORIAS_LISTA_COMPRAS.map(norm);
+
+  // 1) só produtos dessas 4 categorias entram — o resto do catálogo nem é avaliado
+  const relevantes = dados.filter(r => categoriasAlvo.includes(norm(r.categoria)));
+  const classificados = relevantes.map(r => ({ r, cl: _classificarItemCompras(r) }));
+
+  // 2) TODOS os produtos dessas categorias aparecem, mesmo os que não precisam de
+  // compra agora — assim dá pra ver o catálogo inteiro de copos/tampas de uma vez.
+  // A cor de cada linha (e a bolinha da marca) que indica o que é urgente.
   const porMarca = {};
-  criticos.forEach(r => {
+  classificados.forEach(({ r, cl }) => {
     const marca = (r.marca || 'SEM MARCA').trim() || 'SEM MARCA';
     if (!porMarca[marca]) porMarca[marca] = { itens: [], criticos: 0, atencao: 0 };
-    porMarca[marca].itens.push(r);
-    if (r.situacao === 'critico') porMarca[marca].criticos++; else porMarca[marca].atencao++;
+    porMarca[marca].itens.push({ r, cl });
+    if (cl.urgente) { if (cl.situacao === 'critico') porMarca[marca].criticos++; else porMarca[marca].atencao++; }
   });
 
   const marcas = Object.keys(porMarca).map(marca => {
     const grupo = porMarca[marca];
-    // dentro da marca: subtipo -> furo -> lista de {tamanho, saldo_projetado}
+    // dentro da marca: subtipo -> furo -> lista de tamanhos
     const porSubtipo = {};
-    grupo.itens.forEach(r => {
+    grupo.itens.forEach(({ r, cl }) => {
       const { subtipo, furo, tamanho } = _parseNomeProdutoCompras(r.nome, marca);
       if (!porSubtipo[subtipo]) porSubtipo[subtipo] = {};
       if (!porSubtipo[subtipo][furo]) porSubtipo[subtipo][furo] = [];
-      porSubtipo[subtipo][furo].push({ tamanho, saldo: r.saldo_projetado, situacao: r.situacao, unidade: r.unidade });
+      // com demanda: valor já descontado (saldo_projetado); sem demanda: valor puro do estoque
+      const saldo = (r.total_demanda || 0) > 0 ? r.saldo_projetado : r.saldo_atual;
+      porSubtipo[subtipo][furo].push({ tamanho, saldo, situacao: cl.situacao, semPedido: cl.semPedido, urgente: cl.urgente, unidade: r.unidade });
     });
 
     const ordemFuro = { '': 0, 'Com Furo': 1, 'Sem Furo': 2 };
@@ -9605,8 +9636,9 @@ function _agruparListaCompras(dados) {
     return { marca, criticos: grupo.criticos, atencao: grupo.atencao, total: grupo.itens.length, subtipos };
   });
 
-  // marcas com mais itens críticos primeiro; empate quebra por total de itens
-  marcas.sort((a, b) => b.criticos - a.criticos || b.total - a.total || a.marca.localeCompare(b.marca, 'pt-BR'));
+  // marcas com mais itens críticos primeiro, depois mais em atenção; sem nenhum
+  // item urgente cai pro fim, em ordem alfabética
+  marcas.sort((a, b) => b.criticos - a.criticos || b.atencao - a.atencao || a.marca.localeCompare(b.marca, 'pt-BR'));
   return marcas;
 }
 
@@ -9616,27 +9648,30 @@ function renderListaCompras() {
   const marcas = _agruparListaCompras(lcDados);
 
   if (!marcas.length) {
-    el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:30px 0">Nenhum produto crítico ou em atenção no momento! 🎉</p>';
+    el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:30px 0">Nenhum produto cadastrado nessas categorias.</p>';
     return;
   }
 
   el.innerHTML = marcas.map(g => {
-    const bola = g.criticos > 0 ? '🔴' : '🟡';
+    const bola = g.criticos > 0 ? '🔴' : (g.atencao > 0 ? '🟡' : '🟢');
     return `
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin-bottom:14px">
-      <div style="display:flex;align-items:center;justify-content:center;gap:8px;font-family:var(--font-head);font-weight:700;font-size:15px;margin-bottom:12px">
+    <div style="padding:14px 0;margin-bottom:4px;border-bottom:1px solid var(--border)">
+      <div style="display:flex;align-items:center;gap:8px;font-family:var(--font-head);font-weight:700;font-size:15px;margin-bottom:12px">
         <span>${bola}</span><span>${g.marca}</span>
         <span style="color:var(--muted);font-weight:400;font-size:12px">${g.total} ${g.total === 1 ? 'item' : 'itens'}</span>
       </div>
       ${g.subtipos.map(st => `
         <div style="margin-bottom:10px">
-          <div style="font-size:12px;font-weight:700;color:var(--muted);text-align:center;text-transform:uppercase;letter-spacing:.03em;margin-bottom:4px">${st.subtipo}</div>
+          <div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;margin-bottom:4px">${st.subtipo}</div>
           ${st.furos.map(f => `
-            ${f.furo ? `<div style="font-size:11px;color:var(--muted);text-align:center;margin:4px 0 2px">— ${f.furo} —</div>` : ''}
+            ${f.furo ? `<div style="font-size:11px;color:var(--muted);margin:4px 0 2px">— ${f.furo} —</div>` : ''}
             ${f.tamanhos.map(t => `
-              <div style="display:flex;justify-content:center;gap:16px;padding:3px 0;font-size:13px">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:3px 0;font-size:13px;max-width:340px">
                 <span>${t.tamanho}</span>
-                <span style="color:${t.situacao === 'critico' ? 'var(--danger)' : 'var(--warn)'};font-weight:600">Saldo: ${fmtNum(t.saldo)} ${t.unidade || ''}</span>
+                <span style="display:flex;align-items:baseline;gap:6px">
+                  <span style="color:${!t.urgente ? 'var(--text)' : (t.situacao === 'critico' ? 'var(--danger)' : 'var(--warn)')};font-weight:${t.urgente ? 600 : 400}">Saldo: ${fmtNum(t.saldo)} ${t.unidade || ''}</span>
+                  ${t.semPedido ? '<span style="font-size:10px;color:var(--muted);font-weight:400">(sem pedido)</span>' : ''}
+                </span>
               </div>
             `).join('')}
           `).join('')}
@@ -9648,22 +9683,25 @@ function renderListaCompras() {
 
 function imprimirListaCompras() {
   const marcas = _agruparListaCompras(lcDados);
-  if (!marcas.length) { showAlert('Nenhum produto crítico ou em atenção no momento!'); return; }
+  if (!marcas.length) { showAlert('Nenhum produto cadastrado nessas categorias.'); return; }
 
   const corpo = marcas.map(g => {
-    const bola = g.criticos > 0 ? '🔴' : '🟡';
+    const bola = g.criticos > 0 ? '🔴' : (g.atencao > 0 ? '🟡' : '🟢');
     return `
-    <div style="border:1px solid #ccc;border-radius:8px;padding:12px 16px;margin-bottom:12px;break-inside:avoid">
-      <div style="text-align:center;font-weight:700;font-size:14px;margin-bottom:8px">${bola} ${g.marca} <span style="color:#777;font-weight:400;font-size:11px">(${g.total} ${g.total === 1 ? 'item' : 'itens'})</span></div>
+    <div style="padding:10px 0;margin-bottom:2px;border-bottom:1px solid #ccc;break-inside:avoid">
+      <div style="font-weight:700;font-size:14px;margin-bottom:8px">${bola} ${g.marca} <span style="color:#777;font-weight:400;font-size:11px">(${g.total} ${g.total === 1 ? 'item' : 'itens'})</span></div>
       ${g.subtipos.map(st => `
         <div style="margin-bottom:8px">
-          <div style="font-size:11px;font-weight:700;color:#555;text-align:center;text-transform:uppercase;margin-bottom:3px">${st.subtipo}</div>
+          <div style="font-size:11px;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:3px">${st.subtipo}</div>
           ${st.furos.map(f => `
-            ${f.furo ? `<div style="font-size:10px;color:#777;text-align:center;margin:3px 0 2px">— ${f.furo} —</div>` : ''}
+            ${f.furo ? `<div style="font-size:10px;color:#777;margin:3px 0 2px">— ${f.furo} —</div>` : ''}
             ${f.tamanhos.map(t => `
-              <div style="display:flex;justify-content:center;gap:14px;padding:2px 0;font-size:12px">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;gap:14px;padding:2px 0;font-size:12px;max-width:340px">
                 <span>${t.tamanho}</span>
-                <span style="color:${t.situacao === 'critico' ? '#b91c1c' : '#92400e'};font-weight:600">Saldo: ${fmtNum(t.saldo)} ${t.unidade || ''}</span>
+                <span style="display:flex;align-items:baseline;gap:6px">
+                  <span style="color:${!t.urgente ? '#111' : (t.situacao === 'critico' ? '#b91c1c' : '#92400e')};font-weight:${t.urgente ? 600 : 400}">Saldo: ${fmtNum(t.saldo)} ${t.unidade || ''}</span>
+                  ${t.semPedido ? '<span style="font-size:9px;color:#777;font-weight:400">(sem pedido)</span>' : ''}
+                </span>
               </div>
             `).join('')}
           `).join('')}
@@ -9678,7 +9716,7 @@ function imprimirListaCompras() {
     .print-footer{position:fixed;bottom:8mm;left:15mm;right:15mm;border-top:1px solid #ddd;padding-top:6px;display:flex;justify-content:space-between;font-size:10px;color:#777;font-family:Arial,sans-serif;counter-increment:page}
     .page-number::after{content:counter(page)}</style></head><body>
     ${_getEmpresaHeader('Lista de Compras')}
-    <div style="max-width:480px;margin:0 auto">${corpo}</div>
+    <div style="max-width:420px">${corpo}</div>
     ${_getPrintFooter()}
     </body></html>`);
   win.document.close();
