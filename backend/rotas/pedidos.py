@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 from database import get_conn
 from auth_utils import get_current_user
+from rotas.producao import _reverter_estoque_producao
 import httpx
 import os, re, tempfile, datetime
 from html.parser import HTMLParser
@@ -1664,7 +1665,20 @@ def deletar_pedido(id: int, current_user = Depends(get_current_user)):
             raise HTTPException(404, "Pedido não encontrado")
         numero_pedido = ped["numero_pedido"]
 
-        # 3. Buscar todos os itens do pedido que estão com status 'entregue' (separados) e possuem produto_id
+        # 3. Excluir lançamentos de produção vinculados a este pedido (pelo número),
+        # revertendo a baixa/sobra/perda de estoque de cada um. Sem isso, o produto
+        # ficava "preso" fora do estoque e o operador precisava caçar e apagar
+        # cada lançamento manualmente depois de excluir o pedido.
+        lancamentos = cur.execute(
+            "SELECT id FROM producao_diaria WHERE pedido_numero = ?", (numero_pedido,)
+        ).fetchall()
+        for lanc in lancamentos:
+            lanc_id = lanc["id"]
+            _reverter_estoque_producao(cur, lanc_id)
+            cur.execute("DELETE FROM producao_diaria_itens WHERE producao_diaria_id = ?", (lanc_id,))
+            cur.execute("DELETE FROM producao_diaria WHERE id = ?", (lanc_id,))
+
+        # 4. Buscar todos os itens do pedido que estão com status 'entregue' (separados) e possuem produto_id
         itens_com_estoque = cur.execute("""
             SELECT i.produto_id, i.quantidade, ep.nome as produto_nome
             FROM pedidos_itens i
@@ -1672,7 +1686,7 @@ def deletar_pedido(id: int, current_user = Depends(get_current_user)):
             WHERE i.pedido_id = ? AND i.status = 'entregue'
         """, (id,)).fetchall()
 
-        # 4. Devolver a quantidade ao estoque de cada item
+        # 5. Devolver a quantidade ao estoque de cada item
         from datetime import date
         for item in itens_com_estoque:
             produto_id = item["produto_id"]
@@ -1706,7 +1720,7 @@ def deletar_pedido(id: int, current_user = Depends(get_current_user)):
                     VALUES (?, ?)
                 """, (produto_id, saldo_posterior))
 
-        # 5. Excluir o pedido e suas dependências
+        # 6. Excluir o pedido e suas dependências
         cur.execute("""DELETE FROM producao_programada WHERE pedido_item_id IN
                        (SELECT id FROM pedidos_itens WHERE pedido_id=?)""", (id,))
         cur.execute("DELETE FROM pedidos_parcelas WHERE pedido_id=?", (id,))

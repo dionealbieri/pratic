@@ -156,6 +156,7 @@ const pageTitles = {
   'perdas-sobras': 'Perdas e Sobras Detalhado',
   estoque: 'Estoque',
   'saldo-demanda': 'Saldo vs Demanda',
+  'lista-compras': 'Lista de Compras',
   'consumo-medio': 'Consumo Médio',
   'gerencial': 'Painel Gerencial',
   pedidos: 'Pedidos & Fila de Produção',
@@ -225,6 +226,7 @@ const PAGE_META_MAIN = {
   epi:           { icon:'🦺', label:'EPI', section:'Operações' },
   comunicacao:   { icon:'<svg viewBox="0 0 24 24" width="17" height="17" style="vertical-align:-3px"><path fill="#25d366" d="M12 2C6.5 2 2 6 2 11c0 1.9.7 3.7 1.9 5.1L3 22l6-1.5c.9.3 1.9.5 3 .5 5.5 0 10-4 10-9S17.5 2 12 2z"/></svg>', label:'Comunicação', section:'Operações' },
   'saldo-demanda': { icon:'📊', label:'Saldo vs Demanda', section:'Operações' },
+  'lista-compras': { icon:'🛒', label:'Lista de Compras', section:'Operações' },
   'consumo-medio': { icon:'📉', label:'Consumo Médio', section:'Operações' },
   'gerencial': { icon:'📈', label:'Painel Gerencial', section:'Análises' },
   graficos:      { icon:'📈', label:'Gráficos', section:'Análises' },
@@ -385,6 +387,7 @@ function showPage(name) {
     'perdas-sobras': loadPerdasSobrasDetalhado,
     estoque: loadEstoque,
     'saldo-demanda': loadSaldoDemanda,
+    'lista-compras': loadListaCompras,
     'consumo-medio': loadConsumoMedio,
     'gerencial': loadGerencial,
     pedidos: loadPedidos_init,
@@ -9489,39 +9492,196 @@ async function verDetalhesSVD(prodId, nome) {
   }
 }
 
-function gerarListaCompras() {
-  const criticos = svdDados.filter(r => r.situacao === 'critico' || r.situacao === 'atencao');
-  if (!criticos.length) { showAlert('Nenhum produto crítico ou em atenção no momento!'); return; }
+// ─── LISTA DE COMPRAS (agrupada por marca → tipo → furo → tamanho) ────────
+// Reaproveita os mesmos dados do Saldo vs Demanda (saldo já descontando a
+// demanda de pedidos em aberto); aqui só filtramos pro que precisa de ação
+// (crítico/atenção) e reorganizamos numa visão de leitura rápida, sem tabela.
 
-  const titleEl = document.querySelector('#modal-lista-compras .modal-title');
-  if (titleEl) {
-    titleEl.textContent = '🛒 Lista de Compras (Demanda)';
+// Divide o nome do produto nos pedaços "tipo / furo / tamanho", removendo a
+// marca (já mostrada no cabeçalho do grupo) e códigos internos soltos.
+// Ex: "TAMPA RETA S/FURO - 451 - 440/550ML - ALTACOPO" com marca "ALTACOPO"
+//  -> { subtipo: "TAMPA RETA", furo: "Sem Furo", tamanho: "440/550ML" }
+function _parseNomeProdutoCompras(nome, marca) {
+  const norm = s => String(s || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  let work = norm(nome);
+  const marcaU = norm(marca).trim();
+
+  // 1. tamanho: primeiro trecho numérico com ML/MM em qualquer lugar da string
+  // (não só em segmentos separados por hífen — furo/tamanho às vezes vêm colados
+  // sem separador próprio, ex: "TAMPA BOLHA C/FURO 330ML"). Se não achar unidade,
+  // cai pra uma sequência de números separados por barra (ex: "350/400/500/700").
+  let tamanho = '—';
+  let m = work.match(/\d+(?:\s*\/\s*\d+)*\s*(ML|MM)\b/);
+  if (m) {
+    tamanho = m[0].replace(/\s+/g, '');
+    work = work.slice(0, m.index) + ' ' + work.slice(m.index + m[0].length);
+  } else {
+    m = work.match(/\d+(?:\s*\/\s*\d+){1,}/);
+    if (m) {
+      tamanho = m[0].replace(/\s+/g, '');
+      work = work.slice(0, m.index) + ' ' + work.slice(m.index + m[0].length);
+    }
   }
 
-  document.getElementById('modal-lista-compras-content').innerHTML = `
-    <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
-      Produtos que precisam de reposição para atender a demanda atual dos pedidos em aberto.
-    </p>
-    <div class="table-wrap">
-      <table id="lista-compras-table">
-        <thead><tr><th>Produto</th><th>Categoria</th><th>Saldo Atual</th><th>Demanda Total</th><th>Déficit</th><th>Sugestão de Compra</th><th>Situação</th></tr></thead>
-        <tbody>${criticos.map(r => {
-          const deficit = Math.max(0, r.total_demanda - r.saldo_atual);
-          const sugestao = deficit + Math.max(r.estoque_minimo || 0, Math.round(r.total_demanda * 0.2));
-          const cfg = SVD_CONFIG[r.situacao];
-          return `<tr>
-            <td><strong>${r.nome}</strong>${r.marca?'<br><span style="font-size:11px;color:var(--muted)">'+r.marca+'</span>':''}</td>
-            <td>${r.categoria}</td>
-            <td>${fmtNum(r.saldo_atual)} ${r.unidade}</td>
-            <td>${fmtNum(r.total_demanda)} ${r.unidade}</td>
-            <td style="color:var(--danger);font-weight:700">${deficit > 0 ? fmtNum(deficit) : '—'} ${r.unidade}</td>
-            <td style="color:var(--success);font-weight:700">${fmtNum(sugestao)} ${r.unidade}</td>
-            <td><span class="pill ${cfg.pill}">${cfg.label}</span></td>
-          </tr>`;
-        }).join('')}</tbody>
-      </table>
+  // 2. furo (com ou sem) — mesma lógica de busca solta na string
+  let furo = '';
+  m = work.match(/\bC\s*\/?\s*FURO\b/);
+  if (m) { furo = 'Com Furo'; work = work.slice(0, m.index) + ' ' + work.slice(m.index + m[0].length); }
+  else {
+    m = work.match(/\bS\s*\/?\s*FURO\b/);
+    if (m) { furo = 'Sem Furo'; work = work.slice(0, m.index) + ' ' + work.slice(m.index + m[0].length); }
+  }
+
+  // 3. marca — remove como palavra inteira (aceita plural com S no final, ex:
+  // "CRISTALCOPOS" no nome vs "CRISTALCOPO" cadastrado como marca)
+  if (marcaU) {
+    work = work.replace(new RegExp('\\b' + marcaU + 'S?\\b', 'g'), ' ');
+  }
+
+  // 4. o que sobrar: limpa separadores e descarta código numérico solto (ex: "451")
+  const subtipo = work
+    .split(/[-\/]/)
+    .map(s => s.trim())
+    .filter(s => s && !/^\d+$/.test(s))
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim() || 'OUTROS';
+
+  return { subtipo, furo, tamanho };
+}
+
+let lcDados = [];
+
+async function loadListaCompras() {
+  const el = document.getElementById('lc-content');
+  if (el) el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:30px 0">Carregando...</p>';
+  try {
+    lcDados = await api('/estoque/saldo-vs-demanda');
+  } catch (e) {
+    if (el) el.innerHTML = '<p style="color:var(--danger);text-align:center;padding:30px 0">Erro ao carregar: ' + e.message + '</p>';
+    return;
+  }
+  renderListaCompras();
+  const dt = document.getElementById('lc-ultima-atualizacao');
+  if (dt) dt.textContent = '🕐 Atualizado em: ' + new Date().toLocaleString('pt-BR');
+}
+
+function _agruparListaCompras(dados) {
+  const criticos = dados.filter(r => r.situacao === 'critico' || r.situacao === 'atencao');
+
+  const porMarca = {};
+  criticos.forEach(r => {
+    const marca = (r.marca || 'SEM MARCA').trim() || 'SEM MARCA';
+    if (!porMarca[marca]) porMarca[marca] = { itens: [], criticos: 0, atencao: 0 };
+    porMarca[marca].itens.push(r);
+    if (r.situacao === 'critico') porMarca[marca].criticos++; else porMarca[marca].atencao++;
+  });
+
+  const marcas = Object.keys(porMarca).map(marca => {
+    const grupo = porMarca[marca];
+    // dentro da marca: subtipo -> furo -> lista de {tamanho, saldo_projetado}
+    const porSubtipo = {};
+    grupo.itens.forEach(r => {
+      const { subtipo, furo, tamanho } = _parseNomeProdutoCompras(r.nome, marca);
+      if (!porSubtipo[subtipo]) porSubtipo[subtipo] = {};
+      if (!porSubtipo[subtipo][furo]) porSubtipo[subtipo][furo] = [];
+      porSubtipo[subtipo][furo].push({ tamanho, saldo: r.saldo_projetado, situacao: r.situacao, unidade: r.unidade });
+    });
+
+    const ordemFuro = { '': 0, 'Com Furo': 1, 'Sem Furo': 2 };
+    const numeroInicial = s => { const m = String(s).match(/\d+/); return m ? parseInt(m[0], 10) : 999999; };
+
+    const subtipos = Object.keys(porSubtipo).sort().map(subtipo => ({
+      subtipo,
+      furos: Object.keys(porSubtipo[subtipo])
+        .sort((a, b) => (ordemFuro[a] ?? 9) - (ordemFuro[b] ?? 9))
+        .map(furo => ({
+          furo,
+          tamanhos: porSubtipo[subtipo][furo].sort((a, b) => numeroInicial(a.tamanho) - numeroInicial(b.tamanho))
+        }))
+    }));
+
+    return { marca, criticos: grupo.criticos, atencao: grupo.atencao, total: grupo.itens.length, subtipos };
+  });
+
+  // marcas com mais itens críticos primeiro; empate quebra por total de itens
+  marcas.sort((a, b) => b.criticos - a.criticos || b.total - a.total || a.marca.localeCompare(b.marca, 'pt-BR'));
+  return marcas;
+}
+
+function renderListaCompras() {
+  const el = document.getElementById('lc-content');
+  if (!el) return;
+  const marcas = _agruparListaCompras(lcDados);
+
+  if (!marcas.length) {
+    el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:30px 0">Nenhum produto crítico ou em atenção no momento! 🎉</p>';
+    return;
+  }
+
+  el.innerHTML = marcas.map(g => {
+    const bola = g.criticos > 0 ? '🔴' : '🟡';
+    return `
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px 20px;margin-bottom:14px">
+      <div style="display:flex;align-items:center;justify-content:center;gap:8px;font-family:var(--font-head);font-weight:700;font-size:15px;margin-bottom:12px">
+        <span>${bola}</span><span>${g.marca}</span>
+        <span style="color:var(--muted);font-weight:400;font-size:12px">${g.total} ${g.total === 1 ? 'item' : 'itens'}</span>
+      </div>
+      ${g.subtipos.map(st => `
+        <div style="margin-bottom:10px">
+          <div style="font-size:12px;font-weight:700;color:var(--muted);text-align:center;text-transform:uppercase;letter-spacing:.03em;margin-bottom:4px">${st.subtipo}</div>
+          ${st.furos.map(f => `
+            ${f.furo ? `<div style="font-size:11px;color:var(--muted);text-align:center;margin:4px 0 2px">— ${f.furo} —</div>` : ''}
+            ${f.tamanhos.map(t => `
+              <div style="display:flex;justify-content:center;gap:16px;padding:3px 0;font-size:13px">
+                <span>${t.tamanho}</span>
+                <span style="color:${t.situacao === 'critico' ? 'var(--danger)' : 'var(--warn)'};font-weight:600">Saldo: ${fmtNum(t.saldo)} ${t.unidade || ''}</span>
+              </div>
+            `).join('')}
+          `).join('')}
+        </div>
+      `).join('')}
     </div>`;
-  openModal('modal-lista-compras');
+  }).join('');
+}
+
+function imprimirListaCompras() {
+  const marcas = _agruparListaCompras(lcDados);
+  if (!marcas.length) { showAlert('Nenhum produto crítico ou em atenção no momento!'); return; }
+
+  const corpo = marcas.map(g => {
+    const bola = g.criticos > 0 ? '🔴' : '🟡';
+    return `
+    <div style="border:1px solid #ccc;border-radius:8px;padding:12px 16px;margin-bottom:12px;break-inside:avoid">
+      <div style="text-align:center;font-weight:700;font-size:14px;margin-bottom:8px">${bola} ${g.marca} <span style="color:#777;font-weight:400;font-size:11px">(${g.total} ${g.total === 1 ? 'item' : 'itens'})</span></div>
+      ${g.subtipos.map(st => `
+        <div style="margin-bottom:8px">
+          <div style="font-size:11px;font-weight:700;color:#555;text-align:center;text-transform:uppercase;margin-bottom:3px">${st.subtipo}</div>
+          ${st.furos.map(f => `
+            ${f.furo ? `<div style="font-size:10px;color:#777;text-align:center;margin:3px 0 2px">— ${f.furo} —</div>` : ''}
+            ${f.tamanhos.map(t => `
+              <div style="display:flex;justify-content:center;gap:14px;padding:2px 0;font-size:12px">
+                <span>${t.tamanho}</span>
+                <span style="color:${t.situacao === 'critico' ? '#b91c1c' : '#92400e'};font-weight:600">Saldo: ${fmtNum(t.saldo)} ${t.unidade || ''}</span>
+              </div>
+            `).join('')}
+          `).join('')}
+        </div>
+      `).join('')}
+    </div>`;
+  }).join('');
+
+  const win = window.open('', '_blank');
+  win.document.write(`<html><head><title>Lista de Compras PRATIC</title>
+    <style>@page{margin:0}body{font-family:Arial,sans-serif;margin:15mm 15mm 22mm 15mm;font-size:12px;counter-reset:page;color:#111}
+    .print-footer{position:fixed;bottom:8mm;left:15mm;right:15mm;border-top:1px solid #ddd;padding-top:6px;display:flex;justify-content:space-between;font-size:10px;color:#777;font-family:Arial,sans-serif;counter-increment:page}
+    .page-number::after{content:counter(page)}</style></head><body>
+    ${_getEmpresaHeader('Lista de Compras')}
+    <div style="max-width:480px;margin:0 auto">${corpo}</div>
+    ${_getPrintFooter()}
+    </body></html>`);
+  win.document.close();
+  setTimeout(() => win.print(), 500);
 }
 
 // ─── CONSUMO MÉDIO ────────────────────────────────────────────────────────
