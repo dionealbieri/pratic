@@ -9656,21 +9656,21 @@ function renderListaCompras() {
     const bola = g.criticos > 0 ? '🔴' : (g.atencao > 0 ? '🟡' : '🟢');
     return `
     <div style="padding:14px 0;margin-bottom:4px;border-bottom:1px solid var(--border)">
-      <div style="display:flex;align-items:center;gap:8px;font-family:var(--font-head);font-weight:700;font-size:15px;margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:8px;font-family:var(--font-head);font-weight:700;font-size:17px;margin-bottom:12px">
         <span>${bola}</span><span>${g.marca}</span>
-        <span style="color:var(--muted);font-weight:400;font-size:12px">${g.total} ${g.total === 1 ? 'item' : 'itens'}</span>
+        <span style="color:var(--muted);font-weight:400;font-size:13px">${g.total} ${g.total === 1 ? 'item' : 'itens'}</span>
       </div>
       ${g.subtipos.map(st => `
         <div style="margin-bottom:10px">
-          <div style="font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;margin-bottom:4px">${st.subtipo}</div>
+          <div style="font-size:13px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;margin-bottom:4px">${st.subtipo}</div>
           ${st.furos.map(f => `
-            ${f.furo ? `<div style="font-size:11px;color:var(--muted);margin:4px 0 2px">— ${f.furo} —</div>` : ''}
+            ${f.furo ? `<div style="font-size:12px;color:var(--muted);margin:4px 0 2px">— ${f.furo} —</div>` : ''}
             ${f.tamanhos.map(t => `
-              <div style="display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:3px 0;font-size:13px;max-width:340px">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:4px 0;font-size:15px;max-width:380px">
                 <span>${t.tamanho}</span>
                 <span style="display:flex;align-items:baseline;gap:6px">
                   <span style="color:${!t.urgente ? 'var(--text)' : (t.situacao === 'critico' ? 'var(--danger)' : 'var(--warn)')};font-weight:${t.urgente ? 600 : 400}">Saldo: ${fmtNum(t.saldo)} ${t.unidade || ''}</span>
-                  ${t.semPedido ? '<span style="font-size:10px;color:var(--muted);font-weight:400">(sem pedido)</span>' : ''}
+                  ${t.semPedido ? '<span style="font-size:11px;color:var(--muted);font-weight:400">(sem pedido)</span>' : ''}
                 </span>
               </div>
             `).join('')}
@@ -9689,18 +9689,18 @@ function imprimirListaCompras() {
     const bola = g.criticos > 0 ? '🔴' : (g.atencao > 0 ? '🟡' : '🟢');
     return `
     <div style="padding:10px 0;margin-bottom:2px;border-bottom:1px solid #ccc;break-inside:avoid">
-      <div style="font-weight:700;font-size:14px;margin-bottom:8px">${bola} ${g.marca} <span style="color:#777;font-weight:400;font-size:11px">(${g.total} ${g.total === 1 ? 'item' : 'itens'})</span></div>
+      <div style="font-weight:700;font-size:16px;margin-bottom:8px">${bola} ${g.marca} <span style="color:#777;font-weight:400;font-size:12px">(${g.total} ${g.total === 1 ? 'item' : 'itens'})</span></div>
       ${g.subtipos.map(st => `
         <div style="margin-bottom:8px">
-          <div style="font-size:11px;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:3px">${st.subtipo}</div>
+          <div style="font-size:12px;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:3px">${st.subtipo}</div>
           ${st.furos.map(f => `
-            ${f.furo ? `<div style="font-size:10px;color:#777;margin:3px 0 2px">— ${f.furo} —</div>` : ''}
+            ${f.furo ? `<div style="font-size:11px;color:#777;margin:3px 0 2px">— ${f.furo} —</div>` : ''}
             ${f.tamanhos.map(t => `
-              <div style="display:flex;justify-content:space-between;align-items:baseline;gap:14px;padding:2px 0;font-size:12px;max-width:340px">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;gap:14px;padding:3px 0;font-size:14px;max-width:380px">
                 <span>${t.tamanho}</span>
                 <span style="display:flex;align-items:baseline;gap:6px">
                   <span style="color:${!t.urgente ? '#111' : (t.situacao === 'critico' ? '#b91c1c' : '#92400e')};font-weight:${t.urgente ? 600 : 400}">Saldo: ${fmtNum(t.saldo)} ${t.unidade || ''}</span>
-                  ${t.semPedido ? '<span style="font-size:9px;color:#777;font-weight:400">(sem pedido)</span>' : ''}
+                  ${t.semPedido ? '<span style="font-size:10px;color:#777;font-weight:400">(sem pedido)</span>' : ''}
                 </span>
               </div>
             `).join('')}
@@ -9712,11 +9712,11 @@ function imprimirListaCompras() {
 
   const win = window.open('', '_blank');
   win.document.write(`<html><head><title>Lista de Compras PRATIC</title>
-    <style>@page{margin:0}body{font-family:Arial,sans-serif;margin:15mm 15mm 22mm 15mm;font-size:12px;counter-reset:page;color:#111}
+    <style>@page{margin:0}body{font-family:Arial,sans-serif;margin:15mm 15mm 22mm 15mm;font-size:13px;counter-reset:page;color:#111}
     .print-footer{position:fixed;bottom:8mm;left:15mm;right:15mm;border-top:1px solid #ddd;padding-top:6px;display:flex;justify-content:space-between;font-size:10px;color:#777;font-family:Arial,sans-serif;counter-increment:page}
     .page-number::after{content:counter(page)}</style></head><body>
     ${_getEmpresaHeader('Lista de Compras')}
-    <div style="max-width:420px">${corpo}</div>
+    <div style="max-width:460px">${corpo}</div>
     ${_getPrintFooter()}
     </body></html>`);
   win.document.close();
