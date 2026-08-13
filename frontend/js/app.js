@@ -9588,31 +9588,13 @@ function _classificarItemCompras(r) {
 // que também seja "revenda". Nomes batendo exatamente com o cadastro.
 const CATEGORIAS_LISTA_COMPRAS = ['COPOS DESCARTÁVEL', 'COPOS DE PAPEL', 'COPOS DE ISOPOR', 'TAMPAS DESCARTÁVEL'];
 
-function _agruparListaCompras(dados) {
-  const norm = s => String(s || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
-  const categoriasAlvo = CATEGORIAS_LISTA_COMPRAS.map(norm);
-
-  // 1) só produtos dessas 4 categorias entram — o resto do catálogo nem é avaliado
-  const relevantes = dados.filter(r => categoriasAlvo.includes(norm(r.categoria)));
-  const classificados = relevantes.map(r => ({ r, cl: _classificarItemCompras(r) }));
-
-  // 2) dentro dessas categorias, só a marca que tem PELO MENOS 1 item urgente
-  // (crítico/atenção) aparece na lista — sem isso, marcas totalmente tranquilas
-  // (saldo alto, sem pedido) lotavam a tela e atrapalhavam a decisão de compra.
-  const marcasQualificadas = new Set();
-  classificados.forEach(({ r, cl }) => {
-    if (cl.urgente) marcasQualificadas.add((r.marca || 'SEM MARCA').trim() || 'SEM MARCA');
-  });
-  if (!marcasQualificadas.size) return [];
-
-  // 3) para as marcas qualificadas, lista TODOS os produtos dela dentro dessas
-  // categorias (não só os urgentes) — assim quem vai comprar já vê o catálogo
-  // inteiro daquele fornecedor de uma vez. A cor de cada linha (e a bolinha da
-  // marca) que indica o que é urgente.
+// Constrói a estrutura marca -> subtipo -> furo -> tamanhos a partir de uma
+// lista já classificada de {r, cl}. Usada tanto para a lista padrão (só
+// marcas com pendência) quanto para o catálogo completo (usado pela busca).
+function _montarGruposPorMarca(classificados) {
   const porMarca = {};
   classificados.forEach(({ r, cl }) => {
     const marca = (r.marca || 'SEM MARCA').trim() || 'SEM MARCA';
-    if (!marcasQualificadas.has(marca)) return;
     if (!porMarca[marca]) porMarca[marca] = { itens: [], criticos: 0, atencao: 0 };
     porMarca[marca].itens.push({ r, cl });
     if (cl.urgente) { if (cl.situacao === 'critico') porMarca[marca].criticos++; else porMarca[marca].atencao++; }
@@ -9620,13 +9602,11 @@ function _agruparListaCompras(dados) {
 
   const marcas = Object.keys(porMarca).map(marca => {
     const grupo = porMarca[marca];
-    // dentro da marca: subtipo -> furo -> lista de tamanhos
     const porSubtipo = {};
     grupo.itens.forEach(({ r, cl }) => {
       const { subtipo, furo, tamanho } = _parseNomeProdutoCompras(r.nome, marca);
       if (!porSubtipo[subtipo]) porSubtipo[subtipo] = {};
       if (!porSubtipo[subtipo][furo]) porSubtipo[subtipo][furo] = [];
-      // com demanda: valor já descontado (saldo_projetado); sem demanda: valor puro do estoque
       const saldo = (r.total_demanda || 0) > 0 ? r.saldo_projetado : r.saldo_atual;
       porSubtipo[subtipo][furo].push({ tamanho, saldo, situacao: cl.situacao, semPedido: cl.semPedido, urgente: cl.urgente, unidade: r.unidade });
     });
@@ -9647,38 +9627,53 @@ function _agruparListaCompras(dados) {
     return { marca, criticos: grupo.criticos, atencao: grupo.atencao, total: grupo.itens.length, subtipos };
   });
 
-  // marcas com mais itens críticos primeiro, depois mais em atenção; sem nenhum
-  // item urgente cai pro fim, em ordem alfabética
   marcas.sort((a, b) => b.criticos - a.criticos || b.atencao - a.atencao || a.marca.localeCompare(b.marca, 'pt-BR'));
   return marcas;
 }
 
+function _classificarDadosLC(dados) {
+  const norm = s => String(s || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  const categoriasAlvo = CATEGORIAS_LISTA_COMPRAS.map(norm);
+  const relevantes = dados.filter(r => categoriasAlvo.includes(norm(r.categoria)));
+  return relevantes.map(r => ({ r, cl: _classificarItemCompras(r) }));
+}
+
+// Lista padrão: só marca com pelo menos 1 item urgente (crítico/atenção) —
+// é o que aparece na tela sem nenhum filtro digitado.
+function _agruparListaCompras(dados) {
+  const classificados = _classificarDadosLC(dados);
+  const marcasQualificadas = new Set();
+  classificados.forEach(({ r, cl }) => {
+    if (cl.urgente) marcasQualificadas.add((r.marca || 'SEM MARCA').trim() || 'SEM MARCA');
+  });
+  if (!marcasQualificadas.size) return [];
+  const filtrados = classificados.filter(({ r }) => marcasQualificadas.has((r.marca || 'SEM MARCA').trim() || 'SEM MARCA'));
+  return _montarGruposPorMarca(filtrados);
+}
+
+// Catálogo completo: TODA marca dessas 4 categorias, mesmo sem nenhuma
+// pendência — usado só pela busca, pra deixar achar qualquer marca e incluir
+// no pedido por outro motivo (reposição preventiva, por exemplo).
+function _agruparListaComprasCompleto(dados) {
+  const classificados = _classificarDadosLC(dados);
+  return _montarGruposPorMarca(classificados);
+}
+
 let lcSeq = 0;
 
-function renderListaCompras() {
-  const el = document.getElementById('lc-content');
-  if (!el) return;
-  const marcas = _agruparListaCompras(lcDados);
-
-  if (!marcas.length) {
-    el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:30px 0">Nenhum produto cadastrado nessas categorias.</p>';
-    return;
-  }
-
-  lcSeq = 0;
-  el.innerHTML = marcas.map(g => {
-    const bola = g.criticos > 0 ? '🔴' : (g.atencao > 0 ? '🟡' : '🟢');
-    return `
-    <div data-marca-card data-marca="${g.marca.toLowerCase()}" style="padding-bottom:14px;border-bottom:1px solid var(--border)">
+function _cardMarcaLC(g, ocultoPadrao) {
+  const bola = g.criticos > 0 ? '🔴' : (g.atencao > 0 ? '🟡' : '🟢');
+  return `
+    <div data-marca-card data-marca="${g.marca.toLowerCase()}" data-oculto-padrao="${ocultoPadrao ? '1' : '0'}" style="padding-bottom:14px;border-bottom:1px solid var(--border);${ocultoPadrao ? 'display:none' : ''}">
       <div style="display:flex;align-items:center;gap:8px;font-family:var(--font-head);font-weight:700;font-size:17px;margin-bottom:12px">
         <span>${bola}</span><span>${g.marca}</span>
         <span style="color:var(--muted);font-weight:400;font-size:13px">${g.total} ${g.total === 1 ? 'item' : 'itens'}</span>
       </div>
       ${g.subtipos.map(st => `
         <div style="margin-bottom:10px">
-          <div style="font-size:13px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;margin-bottom:4px">${st.subtipo}</div>
+          <div style="font-size:13px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:.03em;margin-bottom:4px">${st.subtipo}</div>
           ${st.furos.map(f => `
-            ${f.furo ? `<div style="font-size:12px;color:var(--muted);margin:4px 0 2px">— ${f.furo} —</div>` : ''}
+            ${f.furo ? `<div style="font-size:12px;font-weight:600;color:var(--success);margin:4px 0 2px">— ${f.furo} —</div>` : ''}
             ${f.tamanhos.map(t => {
               const id = 'lcqtd' + (lcSeq++);
               const produtoLabel = st.subtipo + (f.furo ? ' — ' + f.furo : '');
@@ -9701,7 +9696,26 @@ function renderListaCompras() {
         </div>
       `).join('')}
     </div>`;
-  }).join('');
+}
+
+function renderListaCompras() {
+  const el = document.getElementById('lc-content');
+  if (!el) return;
+  const marcas = _agruparListaCompras(lcDados);
+  const todas = _agruparListaComprasCompleto(lcDados);
+  const nomesQualificados = new Set(marcas.map(g => g.marca));
+  const extras = todas.filter(g => !nomesQualificados.has(g.marca));
+
+  if (!marcas.length && !extras.length) {
+    el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:30px 0">Nenhum produto cadastrado nessas categorias.</p>';
+    return;
+  }
+
+  lcSeq = 0;
+  // marcas com pendência aparecem direto; o resto do catálogo fica pronto no
+  // DOM mas escondido, só aparecendo quando o filtro de marca encontra ela
+  el.innerHTML = marcas.map(g => _cardMarcaLC(g, false)).join('')
+    + extras.map(g => _cardMarcaLC(g, true)).join('');
 }
 
 function toggleQtdLC(chk, id) {
@@ -9713,7 +9727,13 @@ function toggleQtdLC(chk, id) {
 function filtrarListaCompras(texto) {
   const t = (texto || '').toLowerCase().trim();
   document.querySelectorAll('#lc-content > [data-marca-card]').forEach(card => {
-    card.style.display = card.dataset.marca.includes(t) ? '' : 'none';
+    if (!t) {
+      // sem busca: só quem tem pendência fica visível (comportamento padrão)
+      card.style.display = card.dataset.ocultoPadrao === '1' ? 'none' : '';
+    } else {
+      // com busca: qualquer marca das 4 categorias pode aparecer, mesmo sem pendência
+      card.style.display = card.dataset.marca.includes(t) ? '' : 'none';
+    }
   });
 }
 
@@ -9786,9 +9806,9 @@ function imprimirListaCompras() {
       <div style="font-weight:700;font-size:16px;margin-bottom:8px">${bola} ${g.marca} <span style="color:#777;font-weight:400;font-size:12px">(${g.total} ${g.total === 1 ? 'item' : 'itens'})</span></div>
       ${g.subtipos.map(st => `
         <div style="margin-bottom:8px">
-          <div style="font-size:12px;font-weight:700;color:#555;text-transform:uppercase;margin-bottom:3px">${st.subtipo}</div>
+          <div style="font-size:12px;font-weight:700;color:#1d4ed8;text-transform:uppercase;margin-bottom:3px">${st.subtipo}</div>
           ${st.furos.map(f => `
-            ${f.furo ? `<div style="font-size:11px;color:#777;margin:3px 0 2px">— ${f.furo} —</div>` : ''}
+            ${f.furo ? `<div style="font-size:11px;font-weight:700;color:#047857;margin:3px 0 2px">— ${f.furo} —</div>` : ''}
             ${f.tamanhos.map(t => `
               <div style="display:flex;justify-content:space-between;align-items:baseline;gap:14px;padding:3px 0;font-size:14px;max-width:380px">
                 <span>${t.tamanho}</span>
