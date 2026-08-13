@@ -9725,6 +9725,17 @@ function renderListaCompras() {
   // DOM mas escondido, só aparecendo quando o filtro de marca encontra ela
   el.innerHTML = marcas.map(g => _cardMarcaLC(g, false)).join('')
     + extras.map(g => _cardMarcaLC(g, true)).join('');
+
+  // preenche as sugestões do campo de filtro com as marcas de verdade que
+  // existem nessas categorias, pra quem for usar não precisar adivinhar nome
+  const datalist = document.getElementById('lc-marcas-datalist');
+  if (datalist) {
+    datalist.innerHTML = todas
+      .map(g => g.marca)
+      .sort((a, b) => a.localeCompare(b, 'pt-BR'))
+      .map(m => `<option value="${m}"></option>`)
+      .join('');
+  }
 }
 
 function toggleQtdLC(chk, id) {

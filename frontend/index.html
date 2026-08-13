@@ -1397,7 +1397,8 @@
       <div class="barra-fixa flex items-center justify-between mb-4" style="flex-wrap:wrap;gap:10px">
         <p style="color:var(--muted);font-size:14px;margin:0">Copos descartável, copos de papel, copos de isopor e tampas descartável — agrupados por marca, tipo e tamanho. Em vermelho/amarelo, o que precisa de atenção.</p>
         <div class="flex gap-2" style="flex-wrap:wrap">
-          <input id="lc-filtro-marca" type="text" placeholder="Filtrar por marca..." oninput="filtrarListaCompras(this.value)" style="min-width:180px">
+          <input id="lc-filtro-marca" type="text" list="lc-marcas-datalist" placeholder="Filtrar por marca..." oninput="filtrarListaCompras(this.value)" style="min-width:180px">
+          <datalist id="lc-marcas-datalist"></datalist>
           <button class="btn btn-secondary" onclick="loadListaCompras()">↻ Atualizar</button>
           <button class="btn btn-secondary" onclick="imprimirListaCompras()">🖨️ Imprimir catálogo</button>
           <button class="btn btn-primary" onclick="gerarPedidoCompra()">🛒 Gerar pedido de compra</button>
@@ -2925,7 +2926,7 @@
   </div>
 </div>
 
-<script src="js/app.js?v=20260813-lista-compras-v13"></script>
+<script src="js/app.js?v=20260813-lista-compras-v14"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');
