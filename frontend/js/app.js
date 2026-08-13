@@ -9653,6 +9653,8 @@ function _agruparListaCompras(dados) {
   return marcas;
 }
 
+let lcSeq = 0;
+
 function renderListaCompras() {
   const el = document.getElementById('lc-content');
   if (!el) return;
@@ -9663,10 +9665,11 @@ function renderListaCompras() {
     return;
   }
 
+  lcSeq = 0;
   el.innerHTML = marcas.map(g => {
     const bola = g.criticos > 0 ? '🔴' : (g.atencao > 0 ? '🟡' : '🟢');
     return `
-    <div style="padding-bottom:14px;border-bottom:1px solid var(--border)">
+    <div data-marca-card data-marca="${g.marca.toLowerCase()}" style="padding-bottom:14px;border-bottom:1px solid var(--border)">
       <div style="display:flex;align-items:center;gap:8px;font-family:var(--font-head);font-weight:700;font-size:17px;margin-bottom:12px">
         <span>${bola}</span><span>${g.marca}</span>
         <span style="color:var(--muted);font-weight:400;font-size:13px">${g.total} ${g.total === 1 ? 'item' : 'itens'}</span>
@@ -9676,21 +9679,98 @@ function renderListaCompras() {
           <div style="font-size:13px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;margin-bottom:4px">${st.subtipo}</div>
           ${st.furos.map(f => `
             ${f.furo ? `<div style="font-size:12px;color:var(--muted);margin:4px 0 2px">— ${f.furo} —</div>` : ''}
-            ${f.tamanhos.map(t => `
-              <div style="display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:4px 0;font-size:15px;max-width:340px">
-                <span>${t.tamanho}</span>
-                <span style="display:flex;align-items:baseline;gap:6px">
-                  <span style="color:${!t.urgente ? 'var(--text)' : (t.situacao === 'critico' ? 'var(--danger)' : 'var(--warn)')};font-weight:${t.urgente ? 600 : 400}">Saldo: ${fmtNum(t.saldo)} ${t.unidade || ''}</span>
-                  ${t.semPedido ? '<span style="font-size:11px;color:var(--muted);font-weight:400">(sem pedido)</span>' : ''}
-                </span>
-              </div>
-            `).join('')}
+            ${f.tamanhos.map(t => {
+              const id = 'lcqtd' + (lcSeq++);
+              const produtoLabel = st.subtipo + (f.furo ? ' — ' + f.furo : '');
+              return `
+              <div class="lc-row" style="padding:3px 0;max-width:340px">
+                <label style="display:flex;align-items:baseline;gap:8px;font-size:15px;cursor:pointer">
+                  <input type="checkbox" class="lc-chk" data-marca="${g.marca}" data-produto="${produtoLabel}" data-tamanho="${t.tamanho}" data-unidade="${t.unidade || ''}" onchange="toggleQtdLC(this, '${id}')" style="margin:0;flex-shrink:0">
+                  <span style="flex:1">${t.tamanho}</span>
+                  <span style="display:flex;align-items:baseline;gap:6px">
+                    <span style="color:${!t.urgente ? 'var(--text)' : (t.situacao === 'critico' ? 'var(--danger)' : 'var(--warn)')};font-weight:${t.urgente ? 600 : 400}">Saldo: ${fmtNum(t.saldo)} ${t.unidade || ''}</span>
+                    ${t.semPedido ? '<span style="font-size:11px;color:var(--muted);font-weight:400">(sem pedido)</span>' : ''}
+                  </span>
+                </label>
+                <div id="qtdbox-${id}" style="display:none;padding:4px 0 0 24px">
+                  <input type="number" min="1" id="${id}" class="lc-qtd-input" placeholder="Quantidade a comprar" style="width:180px">
+                </div>
+              </div>`;
+            }).join('')}
           `).join('')}
         </div>
       `).join('')}
     </div>`;
   }).join('');
 }
+
+function toggleQtdLC(chk, id) {
+  const box = document.getElementById('qtdbox-' + id);
+  box.style.display = chk.checked ? 'block' : 'none';
+  if (chk.checked) document.getElementById(id).focus();
+}
+
+function filtrarListaCompras(texto) {
+  const t = (texto || '').toLowerCase().trim();
+  document.querySelectorAll('#lc-content > [data-marca-card]').forEach(card => {
+    card.style.display = card.dataset.marca.includes(t) ? '' : 'none';
+  });
+}
+
+function gerarPedidoCompra() {
+  const marcados = Array.from(document.querySelectorAll('#lc-content .lc-chk:checked'));
+  if (!marcados.length) { showAlert('Selecione pelo menos um item para gerar o pedido.', 'danger'); return; }
+
+  const itens = [];
+  let faltaQtd = false;
+  marcados.forEach(chk => {
+    const qtdInput = chk.closest('.lc-row').querySelector('.lc-qtd-input');
+    const qtd = qtdInput.value;
+    if (!qtd || Number(qtd) <= 0) {
+      qtdInput.style.outline = '1px solid var(--danger)';
+      faltaQtd = true;
+      return;
+    }
+    qtdInput.style.outline = '';
+    itens.push({ marca: chk.dataset.marca, produto: chk.dataset.produto, tamanho: chk.dataset.tamanho, unidade: chk.dataset.unidade, qtd: Number(qtd) });
+  });
+  if (faltaQtd) { showAlert('Informe a quantidade para todos os itens marcados.', 'danger'); return; }
+
+  const porMarca = {};
+  itens.forEach(i => { (porMarca[i.marca] = porMarca[i.marca] || []).push(i); });
+
+  const corpo = Object.keys(porMarca).sort((a, b) => a.localeCompare(b, 'pt-BR')).map(marca => `
+    <div style="margin-bottom:18px;break-inside:avoid">
+      <div style="font-weight:700;font-size:15px;margin-bottom:6px">${marca}</div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="border-bottom:1px solid #ccc">
+          <th style="text-align:left;padding:4px 6px 4px 0">Produto</th>
+          <th style="text-align:left;padding:4px 6px">Tamanho</th>
+          <th style="text-align:right;padding:4px 0 4px 6px">Qtd. solicitada</th>
+        </tr></thead>
+        <tbody>
+          ${porMarca[marca].map(i => `<tr style="border-bottom:1px solid #eee">
+            <td style="padding:4px 6px 4px 0">${i.produto}</td>
+            <td style="padding:4px 6px">${i.tamanho}</td>
+            <td style="padding:4px 0 4px 6px;text-align:right;font-weight:700">${fmtNum(i.qtd)} ${i.unidade || ''}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  `).join('');
+
+  const win = window.open('', '_blank');
+  win.document.write(`<html><head><title>Pedido de Compra PRATIC</title>
+    <style>@page{size:A4;margin:15mm 15mm 15mm 15mm}
+    body{font-family:Arial,sans-serif;margin:0;font-size:13px;color:#111}</style></head><body>
+    ${_getEmpresaHeader('Pedido de Compra')}
+    <div style="font-size:10px;color:#777;margin-bottom:16px">Emitido em: ${new Date().toLocaleString('pt-BR')}</div>
+    ${corpo}
+    </body></html>`);
+  win.document.close();
+  setTimeout(() => win.print(), 500);
+}
+
 
 function imprimirListaCompras() {
   const marcas = _agruparListaCompras(lcDados);
