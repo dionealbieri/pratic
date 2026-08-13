@@ -9596,12 +9596,23 @@ function _agruparListaCompras(dados) {
   const relevantes = dados.filter(r => categoriasAlvo.includes(norm(r.categoria)));
   const classificados = relevantes.map(r => ({ r, cl: _classificarItemCompras(r) }));
 
-  // 2) TODOS os produtos dessas categorias aparecem, mesmo os que não precisam de
-  // compra agora — assim dá pra ver o catálogo inteiro de copos/tampas de uma vez.
-  // A cor de cada linha (e a bolinha da marca) que indica o que é urgente.
+  // 2) dentro dessas categorias, só a marca que tem PELO MENOS 1 item urgente
+  // (crítico/atenção) aparece na lista — sem isso, marcas totalmente tranquilas
+  // (saldo alto, sem pedido) lotavam a tela e atrapalhavam a decisão de compra.
+  const marcasQualificadas = new Set();
+  classificados.forEach(({ r, cl }) => {
+    if (cl.urgente) marcasQualificadas.add((r.marca || 'SEM MARCA').trim() || 'SEM MARCA');
+  });
+  if (!marcasQualificadas.size) return [];
+
+  // 3) para as marcas qualificadas, lista TODOS os produtos dela dentro dessas
+  // categorias (não só os urgentes) — assim quem vai comprar já vê o catálogo
+  // inteiro daquele fornecedor de uma vez. A cor de cada linha (e a bolinha da
+  // marca) que indica o que é urgente.
   const porMarca = {};
   classificados.forEach(({ r, cl }) => {
     const marca = (r.marca || 'SEM MARCA').trim() || 'SEM MARCA';
+    if (!marcasQualificadas.has(marca)) return;
     if (!porMarca[marca]) porMarca[marca] = { itens: [], criticos: 0, atencao: 0 };
     porMarca[marca].itens.push({ r, cl });
     if (cl.urgente) { if (cl.situacao === 'critico') porMarca[marca].criticos++; else porMarca[marca].atencao++; }
