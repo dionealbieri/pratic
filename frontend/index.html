@@ -1397,8 +1397,22 @@
       <div class="barra-fixa flex items-center justify-between mb-4" style="flex-wrap:wrap;gap:10px">
         <p style="color:var(--muted);font-size:14px;margin:0">Copos descartável, copos de papel, copos de isopor e tampas descartável — agrupados por marca, tipo e tamanho. Em vermelho/amarelo, o que precisa de atenção.</p>
         <div class="flex gap-2" style="flex-wrap:wrap">
-          <input id="lc-filtro-marca" type="text" list="lc-marcas-datalist" placeholder="Filtrar por marca..." oninput="filtrarListaCompras(this.value)" style="min-width:180px">
-          <datalist id="lc-marcas-datalist"></datalist>
+          <div class="custom-multiselect" id="lc-marca-filtro-container" style="min-width:200px">
+            <button class="multiselect-btn" onclick="toggleMultiselect(event, 'lc-marca-filtro-dropdown')">
+              <span class="btn-text" id="lc-marca-filtro-btn-text">Todas as marcas</span>
+              <span class="btn-icon">▼</span>
+            </button>
+            <div class="multiselect-dropdown" id="lc-marca-filtro-dropdown" style="display:none">
+              <div class="multiselect-search-container">
+                <input type="text" class="multiselect-search" placeholder="Buscar marca..." oninput="filterMultiselectOptions('lc-marca-filtro-dropdown')">
+              </div>
+              <div class="multiselect-options" id="lc-marca-filtro-options">
+                <div class="multiselect-option" onclick="selecionarMarcaLC('')" style="cursor:pointer">
+                  <span>Todas as marcas</span>
+                </div>
+              </div>
+            </div>
+          </div>
           <button class="btn btn-secondary" onclick="loadListaCompras()">↻ Atualizar</button>
           <button class="btn btn-secondary" onclick="imprimirListaCompras()">🖨️ Imprimir catálogo</button>
           <button class="btn btn-primary" onclick="gerarPedidoCompra()">🛒 Gerar pedido de compra</button>
@@ -2926,7 +2940,7 @@
   </div>
 </div>
 
-<script src="js/app.js?v=20260813-lista-compras-v14"></script>
+<script src="js/app.js?v=20260813-lista-compras-v15"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');

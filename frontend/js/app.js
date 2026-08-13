@@ -9726,16 +9726,22 @@ function renderListaCompras() {
   el.innerHTML = marcas.map(g => _cardMarcaLC(g, false)).join('')
     + extras.map(g => _cardMarcaLC(g, true)).join('');
 
-  // preenche as sugestões do campo de filtro com as marcas de verdade que
-  // existem nessas categorias, pra quem for usar não precisar adivinhar nome
-  const datalist = document.getElementById('lc-marcas-datalist');
-  if (datalist) {
-    datalist.innerHTML = todas
-      .map(g => g.marca)
-      .sort((a, b) => a.localeCompare(b, 'pt-BR'))
-      .map(m => `<option value="${m}"></option>`)
-      .join('');
+  // preenche o dropdown de marcas com as marcas de verdade que existem nessas
+  // categorias, pra quem for usar não precisar adivinhar nome nenhum
+  const opcoesEl = document.getElementById('lc-marca-filtro-options');
+  if (opcoesEl) {
+    const nomesOrdenados = todas.map(g => g.marca).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    opcoesEl.innerHTML = '<div class="multiselect-option" onclick="selecionarMarcaLC(\'\')" style="cursor:pointer"><span>Todas as marcas</span></div>'
+      + nomesOrdenados.map(m => `<div class="multiselect-option" onclick="selecionarMarcaLC('${m.replace(/'/g, "\\'")}')" style="cursor:pointer"><span>${m}</span></div>`).join('');
   }
+}
+
+function selecionarMarcaLC(marca) {
+  const btnText = document.getElementById('lc-marca-filtro-btn-text');
+  if (btnText) btnText.textContent = marca || 'Todas as marcas';
+  const dropdown = document.getElementById('lc-marca-filtro-dropdown');
+  if (dropdown) dropdown.style.display = 'none';
+  filtrarListaCompras(marca);
 }
 
 function toggleQtdLC(chk, id) {
