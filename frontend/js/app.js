@@ -66,6 +66,7 @@ const PAGINAS_SISTEMA = [
   { key:'maquinas',      label:'⚙️ Máquinas'           },
   { key:'epi',           label:'🦺 EPI'               },
   { key:'saldo-demanda', label:'📊 Saldo vs Demanda'   },
+  { key:'lista-compras', label:'🛒 Lista de Compras'   },
   { key:'consumo-medio', label:'📉 Consumo Médio'      },
   { key:'gerencial',     label:'📈 Painel Gerencial'    },
   { key:'configuracoes', label:'🔧 Configurações'      },
