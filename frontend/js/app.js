@@ -9683,17 +9683,17 @@ function renderListaCompras() {
               const id = 'lcqtd' + (lcSeq++);
               const produtoLabel = st.subtipo + (f.furo ? ' — ' + f.furo : '');
               return `
-              <div class="lc-row" style="padding:3px 0;max-width:340px">
-                <label style="display:flex;align-items:baseline;gap:8px;font-size:15px;cursor:pointer">
-                  <input type="checkbox" class="lc-chk" data-marca="${g.marca}" data-produto="${produtoLabel}" data-tamanho="${t.tamanho}" data-unidade="${t.unidade || ''}" onchange="toggleQtdLC(this, '${id}')" style="margin:0;flex-shrink:0">
+              <div class="lc-row" style="padding:5px 0;max-width:360px">
+                <label style="display:flex;align-items:center;gap:10px;font-size:17px;cursor:pointer">
+                  <input type="checkbox" class="lc-chk" data-marca="${g.marca}" data-produto="${produtoLabel}" data-tamanho="${t.tamanho}" data-unidade="${t.unidade || ''}" onchange="toggleQtdLC(this, '${id}')" style="margin:0;flex-shrink:0;width:20px;height:20px;cursor:pointer">
                   <span style="flex:1">${t.tamanho}</span>
                   <span style="display:flex;align-items:baseline;gap:6px">
                     <span style="color:${!t.urgente ? 'var(--text)' : (t.situacao === 'critico' ? 'var(--danger)' : 'var(--warn)')};font-weight:${t.urgente ? 600 : 400}">Saldo: ${fmtNum(t.saldo)} ${t.unidade || ''}</span>
-                    ${t.semPedido ? '<span style="font-size:11px;color:var(--muted);font-weight:400">(sem pedido)</span>' : ''}
+                    ${t.semPedido ? '<span style="font-size:12px;color:var(--muted);font-weight:400">(sem pedido)</span>' : ''}
                   </span>
                 </label>
-                <div id="qtdbox-${id}" style="display:none;padding:4px 0 0 24px">
-                  <input type="number" min="1" id="${id}" class="lc-qtd-input" placeholder="Quantidade a comprar" style="width:180px">
+                <div id="qtdbox-${id}" style="display:none;padding:5px 0 0 30px">
+                  <input type="number" min="1" id="${id}" class="lc-qtd-input" placeholder="Quantidade a comprar" style="width:200px;font-size:15px;height:36px">
                 </div>
               </div>`;
             }).join('')}
@@ -9759,11 +9759,14 @@ function gerarPedidoCompra() {
     </div>
   `).join('');
 
+  const dataHoje = new Date().toLocaleDateString('pt-BR');
+  const tituloRelatorio = `Pedido de Compra - ${dataHoje}`;
+
   const win = window.open('', '_blank');
-  win.document.write(`<html><head><title>Pedido de Compra PRATIC</title>
+  win.document.write(`<html><head><title>${tituloRelatorio} PRATIC</title>
     <style>@page{size:A4;margin:15mm 15mm 15mm 15mm}
     body{font-family:Arial,sans-serif;margin:0;font-size:13px;color:#111}</style></head><body>
-    ${_getEmpresaHeader('Pedido de Compra')}
+    ${_getEmpresaHeader(tituloRelatorio)}
     <div style="font-size:10px;color:#777;margin-bottom:16px">Emitido em: ${new Date().toLocaleString('pt-BR')}</div>
     ${corpo}
     </body></html>`);
