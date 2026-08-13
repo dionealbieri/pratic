@@ -9588,6 +9588,13 @@ function _classificarItemCompras(r) {
 // que também seja "revenda". Nomes batendo exatamente com o cadastro.
 const CATEGORIAS_LISTA_COMPRAS = ['COPOS DESCARTÁVEL', 'COPOS DE PAPEL', 'COPOS DE ISOPOR', 'TAMPAS DESCARTÁVEL'];
 
+// Marcas que sempre aparecem na tela, mesmo sem nenhum item crítico/atenção —
+// são os fornecedores principais, que fazem sentido revisar toda vez mesmo
+// tranquilos. Comparação ignora espaço/acento/caixa (ex: "Total Plast" bate
+// com "TOTALPLAST").
+const MARCAS_PRINCIPAIS_LC = ['ALTACOPO', 'CRISTALCOPO', 'TOTALPLAST', 'RIOPLASTIC', 'BIAMAR', 'FNS'];
+const _normMarcaLC = s => String(s || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, '');
+
 // Constrói a estrutura marca -> subtipo -> furo -> tamanhos a partir de uma
 // lista já classificada de {r, cl}. Usada tanto para a lista padrão (só
 // marcas com pendência) quanto para o catálogo completo (usado pela busca).
@@ -9638,13 +9645,15 @@ function _classificarDadosLC(dados) {
   return relevantes.map(r => ({ r, cl: _classificarItemCompras(r) }));
 }
 
-// Lista padrão: só marca com pelo menos 1 item urgente (crítico/atenção) —
-// é o que aparece na tela sem nenhum filtro digitado.
+// Lista padrão: marca com pelo menos 1 item urgente (crítico/atenção), OU uma
+// das marcas principais (sempre visível, mesmo tranquila) — é o que aparece
+// na tela sem nenhum filtro digitado.
 function _agruparListaCompras(dados) {
   const classificados = _classificarDadosLC(dados);
   const marcasQualificadas = new Set();
   classificados.forEach(({ r, cl }) => {
-    if (cl.urgente) marcasQualificadas.add((r.marca || 'SEM MARCA').trim() || 'SEM MARCA');
+    const marca = (r.marca || 'SEM MARCA').trim() || 'SEM MARCA';
+    if (cl.urgente || MARCAS_PRINCIPAIS_LC.includes(_normMarcaLC(marca))) marcasQualificadas.add(marca);
   });
   if (!marcasQualificadas.size) return [];
   const filtrados = classificados.filter(({ r }) => marcasQualificadas.has((r.marca || 'SEM MARCA').trim() || 'SEM MARCA'));
