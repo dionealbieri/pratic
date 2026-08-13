@@ -9655,7 +9655,7 @@ function renderListaCompras() {
   el.innerHTML = marcas.map(g => {
     const bola = g.criticos > 0 ? '🔴' : (g.atencao > 0 ? '🟡' : '🟢');
     return `
-    <div style="padding:14px 0;margin-bottom:4px;border-bottom:1px solid var(--border)">
+    <div style="padding-bottom:14px;border-bottom:1px solid var(--border)">
       <div style="display:flex;align-items:center;gap:8px;font-family:var(--font-head);font-weight:700;font-size:17px;margin-bottom:12px">
         <span>${bola}</span><span>${g.marca}</span>
         <span style="color:var(--muted);font-weight:400;font-size:13px">${g.total} ${g.total === 1 ? 'item' : 'itens'}</span>
@@ -9666,7 +9666,7 @@ function renderListaCompras() {
           ${st.furos.map(f => `
             ${f.furo ? `<div style="font-size:12px;color:var(--muted);margin:4px 0 2px">— ${f.furo} —</div>` : ''}
             ${f.tamanhos.map(t => `
-              <div style="display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:4px 0;font-size:15px;max-width:640px">
+              <div style="display:flex;justify-content:space-between;align-items:baseline;gap:16px;padding:4px 0;font-size:15px;max-width:340px">
                 <span>${t.tamanho}</span>
                 <span style="display:flex;align-items:baseline;gap:6px">
                   <span style="color:${!t.urgente ? 'var(--text)' : (t.situacao === 'critico' ? 'var(--danger)' : 'var(--warn)')};font-weight:${t.urgente ? 600 : 400}">Saldo: ${fmtNum(t.saldo)} ${t.unidade || ''}</span>
@@ -9712,13 +9712,11 @@ function imprimirListaCompras() {
 
   const win = window.open('', '_blank');
   win.document.write(`<html><head><title>Lista de Compras PRATIC</title>
-    <style>@page{size:A4;margin:15mm 15mm 22mm 15mm}
-    body{font-family:Arial,sans-serif;margin:0;font-size:13px;counter-reset:page;color:#111}
-    .print-footer{position:fixed;bottom:-14mm;left:0;right:0;border-top:1px solid #ddd;padding-top:6px;display:flex;justify-content:space-between;font-size:10px;color:#777;font-family:Arial,sans-serif;counter-increment:page}
-    .page-number::after{content:counter(page)}</style></head><body>
+    <style>@page{size:A4;margin:15mm 15mm 15mm 15mm}
+    body{font-family:Arial,sans-serif;margin:0;font-size:13px;color:#111}</style></head><body>
     ${_getEmpresaHeader('Lista de Compras')}
+    <div style="font-size:10px;color:#777;margin-bottom:12px">Emitido em: ${new Date().toLocaleString('pt-BR')}</div>
     <div style="max-width:460px">${corpo}</div>
-    ${_getPrintFooter()}
     </body></html>`);
   win.document.close();
   setTimeout(() => win.print(), 500);
