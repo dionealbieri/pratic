@@ -2406,14 +2406,27 @@ function renderProdItens() {
       `;
     }
 
-    let rowStyle = 'display:grid; grid-template-columns: 2.5fr 70px 70px 70px 1fr 28px; gap:6px; align-items:flex-end; margin-bottom:10px; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:10px;';
+    let rowStyle = 'display:grid; grid-template-columns: 2.5fr 70px 70px 70px 1fr 28px; gap:6px; align-items:flex-end;';
+    let groupStyle = 'margin-bottom:10px; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:10px;';
     if (item.concluido) {
-      rowStyle += ' opacity: 0.55; pointer-events: none; background: rgba(255,255,255,0.01); border-radius: 4px; padding: 4px;';
+      groupStyle += ' opacity: 0.55; pointer-events: none; background: rgba(255,255,255,0.01); border-radius: 4px; padding: 4px;';
     }
 
     const isDeleteDisabled = item.concluido || item.pedido_item_id;
 
+    const mostrarMotivo = item.tipo_perda === 'Outros' && (item.perda || 0) > 0;
+    const motivoHtml = `
+      <div class="prod-item-motivo" id="motivo-perda-${idx}" style="margin-top:8px;${mostrarMotivo ? '' : 'display:none'}">
+        <label class="prod-field-label">Motivo da perda (obrigatório para "Outros")</label>
+        <input type="text" value="${(item.observacao || '').replace(/"/g, '&quot;')}" placeholder="Descreva o motivo da perda"
+               oninput="prodItens[${idx}].observacao=this.value"
+               ${item.concluido ? 'disabled' : ''}
+               style="font-size:13px;padding:8px 10px;width:100%">
+      </div>
+    `;
+
     return `
+      <div class="prod-item-group" style="${groupStyle}">
       <div class="prod-item-row" style="${rowStyle}">
         ${productFieldHtml}
         <div class="prod-field-col prod-field-producao" style="min-width:0">
@@ -2439,13 +2452,15 @@ function renderProdItens() {
         </div>
         <div class="prod-field-col prod-field-tipoperda" style="min-width:0">
           <label class="prod-field-label">Tipo Perda</label>
-          <select id="select-tipoperda-${idx}" onchange="prodItens[${idx}].tipo_perda=this.value" ${(item.concluido || !(item.perda > 0)) ? 'disabled' : ''} style="font-size:12px;padding:8px 4px;width:100%;min-width:0;${(item.perda > 0) ? '' : 'opacity:0.5;cursor:not-allowed;'}">
+          <select id="select-tipoperda-${idx}" onchange="prodItens[${idx}].tipo_perda=this.value; renderProdItens()" ${(item.concluido || !(item.perda > 0)) ? 'disabled' : ''} style="font-size:12px;padding:8px 4px;width:100%;min-width:0;${(item.perda > 0) ? '' : 'opacity:0.5;cursor:not-allowed;'}">
             ${TIPOS_PERDA_MOD.map(t => `<option value="${t}" ${item.tipo_perda===t?'selected':''}>${t}</option>`).join('')}
           </select>
         </div>
         <div class="prod-field-col prod-field-acoes" style="min-width:0">
           <button class="btn btn-sm btn-danger" onclick="removeProdItem(${idx})" ${isDeleteDisabled?'disabled':''} style="padding:6px 8px;width:100%">✕</button>
         </div>
+      </div>
+      ${motivoHtml}
       </div>
     `;
   }).join('');
@@ -2460,6 +2475,11 @@ function atualizarEstadoTipoPerda(idx) {
   sel.disabled = !temPerda;
   sel.style.opacity = temPerda ? '' : '0.5';
   sel.style.cursor = temPerda ? '' : 'not-allowed';
+
+  // some com a caixa de motivo se a perda for zerada de novo (sem precisar
+  // recarregar a lista inteira e perder o foco de quem está digitando)
+  const motivoBox = document.getElementById(`motivo-perda-${idx}`);
+  if (motivoBox && !temPerda) motivoBox.style.display = 'none';
 }
 window.atualizarEstadoTipoPerda = atualizarEstadoTipoPerda;
 
@@ -2735,6 +2755,8 @@ async function salvarProducao() {
   const editId = document.getElementById('prod-edit-id').value;
   const itens = prodItens.filter(i => (i.producao || 0) > 0 || (i.perda || 0) > 0 || (i.sobra || 0) > 0);
   if (!editId && !itens.length) { showAlert('Informe pelo menos um item com produção ou perda', 'danger'); return; }
+  const itensSemMotivo = prodItens.filter(i => i.tipo_perda === 'Outros' && (i.perda || 0) > 0 && !(i.observacao || '').trim());
+  if (itensSemMotivo.length) { showAlert('Informe o motivo da perda para os itens com tipo "Outros"', 'danger'); return; }
   const base = itens.length ? itens : prodItens;
   const total = prodItens.reduce((s, i) => s + (i.producao || 0), 0);
   const pedido = document.getElementById('prod-pedido-manual').value.trim();
@@ -2796,6 +2818,8 @@ async function executarSalvarProducao() {
         producao: item.producao || 0,
         produto_estoque_id: item.produto_id,
         perda_quantidade: item.perda || 0,
+        perda_tipo: item.tipo_perda,
+        perda_observacao: item.observacao || null,
         sobra_quantidade: item.sobra || 0,
         pedido_numero: pedidoManual || null
       });
@@ -2815,6 +2839,7 @@ async function executarSalvarProducao() {
           produto_estoque_id: primItem.produto_id,
           perda_quantidade: primItem.perda || 0,
           perda_tipo: primItem.tipo_perda,
+          perda_observacao: primItem.observacao || null,
           sobra_quantidade: primItem.sobra || 0,
           pedido_numero: pedidoManual || null
         });
@@ -2842,7 +2867,8 @@ async function executarSalvarProducao() {
             quantidade: i.producao || 0,
             perda_quantidade: i.perda || 0,
             sobra_quantidade: i.sobra || 0,
-            tipo_perda: i.tipo_perda || 'Quebra'
+            tipo_perda: i.tipo_perda || 'Quebra',
+            observacao: i.observacao || null
           }))
         });
       }

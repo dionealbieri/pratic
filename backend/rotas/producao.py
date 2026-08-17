@@ -12,6 +12,7 @@ class ProducaoItemIn(BaseModel):
     perda_quantidade: Optional[float] = 0
     sobra_quantidade: Optional[float] = 0
     tipo_perda: Optional[str] = None
+    observacao: Optional[str] = None
 
 class ProducaoIn(BaseModel):
     colaborador_id: int
@@ -179,7 +180,7 @@ def registrar(p: ProducaoIn, current_user = Depends(get_current_user)):
         for item in itens_estoque:
             _movimentar_estoque_item(c, prod_id, item.produto_estoque_id, item.quantidade or 0,
                                       item.perda_quantidade or 0, item.sobra_quantidade or 0,
-                                      item.tipo_perda or p.perda_tipo, p.perda_observacao, col_nome, p.data)
+                                      item.tipo_perda or p.perda_tipo, item.observacao or p.perda_observacao, col_nome, p.data)
 
     elif p.produto_estoque_id and p.producao > 0:
         _movimentar_estoque_item(c, prod_id, p.produto_estoque_id, p.producao,
@@ -353,7 +354,7 @@ def atualizar(id: int, p: ProducaoIn, current_user = Depends(get_current_user)):
             for item in itens_estoque:
                 _movimentar_estoque_item(cur, id, item.produto_estoque_id, item.quantidade or 0,
                                           item.perda_quantidade or 0, item.sobra_quantidade or 0,
-                                          item.tipo_perda or p.perda_tipo, p.perda_observacao, col_nome, p.data)
+                                          item.tipo_perda or p.perda_tipo, item.observacao or p.perda_observacao, col_nome, p.data)
 
         elif p.produto_estoque_id and p.producao > 0:
             _movimentar_estoque_item(cur, id, p.produto_estoque_id, p.producao,
