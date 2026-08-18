@@ -2119,7 +2119,7 @@ let prodItens = [];
 let prodEstoqueCache = [];
 let prodRevendaCache = [];
 let revendaProdutos = [];
-const TIPOS_PERDA_MOD = ['Quebra','Defeito','Contaminação','Mal formado','Rebarba','Fora de especificação','Falta na embalagem','Outros'];
+const TIPOS_PERDA_MOD = ['Quebra','Defeito','Erro na Produção','Mal formado','Fora de especificação','Falta na embalagem','Outros'];
 
 async function openModalProducao() {
   const [mqs, cols, prods, pedidos] = await Promise.all([
@@ -2155,7 +2155,7 @@ async function openModalProducao() {
     checkbox.checked = modoSimplificadoPerfil;
   }
 
-  prodItens = [{ produto_id: null, producao: 0, perda: 0, sobra: 0, tipo_perda: 'Quebra' }];
+  prodItens = [{ produto_id: null, producao: 0, sobra: 0, perdas: [] }];
 
   // Clean simple inputs
   document.getElementById('prod-simples-qtd').value = '';
@@ -2200,12 +2200,17 @@ function atualizarSimplificadoData() {
   tipoPerdaSel.style.cursor = (perda > 0) ? '' : 'not-allowed';
   const tipo = tipoPerdaSel.value || 'Quebra';
 
+  const motivoContainer = document.getElementById('prod-simples-motivo-outros-container');
+  const motivoInput = document.getElementById('prod-simples-motivo-outros');
+  const mostrarMotivo = tipo === 'Outros' && perda > 0;
+  if (motivoContainer) motivoContainer.style.display = mostrarMotivo ? '' : 'none';
+  const observacao = motivoInput ? motivoInput.value : '';
+
   prodItens = [{
     produto_id: null,
     producao: qtd,
-    perda: perda,
     sobra: sobra,
-    tipo_perda: tipo
+    perdas: perda > 0 ? [{ quantidade: perda, tipo_perda: tipo, observacao: observacao }] : []
   }];
   atualizarTotalProd();
 }
@@ -2307,7 +2312,7 @@ async function buscarPedidoManual() {
 async function onProdPedidoChange() {
   const pedId = document.getElementById('prod-pedido').value;
   if (!pedId) {
-    prodItens = [{ produto_id: null, producao: 0, perda: 0, sobra: 0, tipo_perda: 'Quebra' }];
+    prodItens = [{ produto_id: null, producao: 0, sobra: 0, perdas: [] }];
     document.getElementById('prod-pedido-manual').value = '';
     renderProdItens();
     atualizarTotalProd();
@@ -2342,7 +2347,7 @@ async function onProdPedidoChange() {
       };
     });
     
-    if (!prodItens.length) prodItens = [{ produto_id: null, producao: 0, perda: 0, sobra: 0, tipo_perda: 'Quebra' }];
+    if (!prodItens.length) prodItens = [{ produto_id: null, producao: 0, sobra: 0, perdas: [] }];
 
     renderProdItens();
     atualizarTotalProd();
@@ -2367,6 +2372,25 @@ function toggleItemConcluido(idx, checked) {
   atualizarTotalProd();
 }
 window.toggleItemConcluido = toggleItemConcluido;
+
+function _totalPerdaItem(item) {
+  return (item.perdas || []).reduce((s, p) => s + (p.quantidade || 0), 0);
+}
+
+function _perdasSemMotivo(item) {
+  return (item.perdas || []).some(p => p.tipo_perda === 'Outros' && (p.quantidade || 0) > 0 && !(p.observacao || '').trim());
+}
+
+function addPerdaLinha(idx) {
+  if (!prodItens[idx].perdas) prodItens[idx].perdas = [];
+  prodItens[idx].perdas.push({ quantidade: null, tipo_perda: 'Quebra', observacao: '' });
+  renderProdItens();
+}
+
+function removePerdaLinha(idx, li) {
+  prodItens[idx].perdas.splice(li, 1);
+  renderProdItens();
+}
 
 function renderProdItens() {
   const el = document.getElementById('prod-itens-list');
@@ -2406,24 +2430,38 @@ function renderProdItens() {
       `;
     }
 
-    let rowStyle = 'display:grid; grid-template-columns: 2.5fr 70px 70px 70px 1fr 28px; gap:6px; align-items:flex-end;';
+    let rowStyle = 'display:grid; grid-template-columns: 2.5fr 70px 70px 70px 28px; gap:6px; align-items:flex-end;';
     let groupStyle = 'margin-bottom:10px; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:10px;';
     if (item.concluido) {
       groupStyle += ' opacity: 0.55; pointer-events: none; background: rgba(255,255,255,0.01); border-radius: 4px; padding: 4px;';
     }
 
     const isDeleteDisabled = item.concluido || item.pedido_item_id;
+    const totalPerda = _totalPerdaItem(item);
 
-    const mostrarMotivo = item.tipo_perda === 'Outros' && (item.perda || 0) > 0;
-    const motivoHtml = `
-      <div class="prod-item-motivo" id="motivo-perda-${idx}" style="margin-top:8px;${mostrarMotivo ? '' : 'display:none'}">
-        <label class="prod-field-label">Motivo da perda (obrigatório para "Outros")</label>
-        <input type="text" value="${(item.observacao || '').replace(/"/g, '&quot;')}" placeholder="Descreva o motivo da perda"
-               oninput="prodItens[${idx}].observacao=this.value"
-               ${item.concluido ? 'disabled' : ''}
-               style="font-size:13px;padding:8px 10px;width:100%">
-      </div>
-    `;
+    const perdasHtml = (item.perdas || []).map((linha, li) => {
+      const mostrarMotivo = linha.tipo_perda === 'Outros' && (linha.quantidade || 0) > 0;
+      return `
+        <div style="display:grid;grid-template-columns:80px 1fr 28px;gap:8px;align-items:flex-start;margin-bottom:6px">
+          <input type="number" value="${linha.quantidade || ''}" min="0" placeholder="0"
+                 oninput="prodItens[${idx}].perdas[${li}].quantidade=+this.value; atualizarTotalPerdaLabel(${idx})"
+                 ${item.concluido ? 'disabled' : ''}
+                 style="font-size:13px;text-align:center;padding:8px 4px;border-color:rgba(239,68,68,.35)">
+          <div>
+            <select onchange="prodItens[${idx}].perdas[${li}].tipo_perda=this.value; renderProdItens()" ${item.concluido ? 'disabled' : ''} style="font-size:12px;padding:8px 6px;width:100%">
+              ${TIPOS_PERDA_MOD.map(t => `<option value="${t}" ${linha.tipo_perda===t?'selected':''}>${t}</option>`).join('')}
+            </select>
+            ${mostrarMotivo ? `
+              <input type="text" value="${(linha.observacao || '').replace(/"/g, '&quot;')}" placeholder="Descreva o motivo (obrigatório)"
+                     oninput="prodItens[${idx}].perdas[${li}].observacao=this.value"
+                     ${item.concluido ? 'disabled' : ''}
+                     style="font-size:13px;padding:8px 10px;width:100%;margin-top:6px">
+            ` : ''}
+          </div>
+          <button class="btn btn-sm btn-danger" onclick="removePerdaLinha(${idx}, ${li})" ${item.concluido ? 'disabled' : ''} style="padding:6px 8px" title="Remover este motivo">✕</button>
+        </div>
+      `;
+    }).join('');
 
     return `
       <div class="prod-item-group" style="${groupStyle}">
@@ -2438,10 +2476,7 @@ function renderProdItens() {
         </div>
         <div class="prod-field-col prod-field-perda" style="min-width:0">
           <label class="prod-field-label">Perda</label>
-          <input type="number" value="${item.perda||''}" min="0" placeholder="0"
-                 oninput="prodItens[${idx}].perda=+this.value; atualizarEstadoTipoPerda(${idx})"
-                 ${item.concluido ? 'disabled' : ''}
-                 style="font-size:13px;text-align:center;padding:8px 4px;border-color:rgba(239,68,68,.35);width:100%;min-width:0">
+          <div id="total-perda-${idx}" style="font-size:13px;text-align:center;padding:8px 4px;color:${totalPerda > 0 ? 'var(--danger)' : 'var(--muted)'};font-weight:600">${fmtNum(totalPerda)}</div>
         </div>
         <div class="prod-field-col prod-field-sobra" style="min-width:0">
           <label class="prod-field-label">Sobra</label>
@@ -2450,38 +2485,29 @@ function renderProdItens() {
                  ${item.concluido ? 'disabled' : ''}
                  style="font-size:13px;text-align:center;padding:8px 4px;border-color:rgba(16,185,129,.35);width:100%;min-width:0">
         </div>
-        <div class="prod-field-col prod-field-tipoperda" style="min-width:0">
-          <label class="prod-field-label">Tipo Perda</label>
-          <select id="select-tipoperda-${idx}" onchange="prodItens[${idx}].tipo_perda=this.value; renderProdItens()" ${(item.concluido || !(item.perda > 0)) ? 'disabled' : ''} style="font-size:12px;padding:8px 4px;width:100%;min-width:0;${(item.perda > 0) ? '' : 'opacity:0.5;cursor:not-allowed;'}">
-            ${TIPOS_PERDA_MOD.map(t => `<option value="${t}" ${item.tipo_perda===t?'selected':''}>${t}</option>`).join('')}
-          </select>
-        </div>
         <div class="prod-field-col prod-field-acoes" style="min-width:0">
           <button class="btn btn-sm btn-danger" onclick="removeProdItem(${idx})" ${isDeleteDisabled?'disabled':''} style="padding:6px 8px;width:100%">✕</button>
         </div>
       </div>
-      ${motivoHtml}
+      <div style="margin-top:8px">
+        <label class="prod-field-label" style="display:block;margin-bottom:4px">Perdas deste item</label>
+        ${perdasHtml}
+        <button class="btn btn-sm btn-secondary" onclick="addPerdaLinha(${idx})" ${item.concluido ? 'disabled' : ''} style="font-size:12px">+ Adicionar motivo de perda</button>
+      </div>
       </div>
     `;
   }).join('');
 }
 
-function atualizarEstadoTipoPerda(idx) {
-  // Habilita o select de Tipo Perda só quando há perda informada nesse item;
-  // sem perda, o campo fica desabilitado (evita motivo de perda sem perda real)
-  const sel = document.getElementById(`select-tipoperda-${idx}`);
-  if (!sel) return;
-  const temPerda = (prodItens[idx].perda || 0) > 0;
-  sel.disabled = !temPerda;
-  sel.style.opacity = temPerda ? '' : '0.5';
-  sel.style.cursor = temPerda ? '' : 'not-allowed';
-
-  // some com a caixa de motivo se a perda for zerada de novo (sem precisar
-  // recarregar a lista inteira e perder o foco de quem está digitando)
-  const motivoBox = document.getElementById(`motivo-perda-${idx}`);
-  if (motivoBox && !temPerda) motivoBox.style.display = 'none';
+function atualizarTotalPerdaLabel(idx) {
+  const el = document.getElementById('total-perda-' + idx);
+  if (!el) return;
+  const total = _totalPerdaItem(prodItens[idx]);
+  el.textContent = fmtNum(total);
+  el.style.color = total > 0 ? 'var(--danger)' : 'var(--muted)';
 }
-window.atualizarEstadoTipoPerda = atualizarEstadoTipoPerda;
+
+window.atualizarTotalPerdaLabel = atualizarTotalPerdaLabel;
 
 // ─── PERDAS E SOBRAS DETALHADO (página + gráfico do dashboard) ─────────────
 
@@ -2489,6 +2515,7 @@ async function _psdPopularFiltros(prefixo) {
   const selProduto = document.getElementById(prefixo + '-produto');
   const selColab = document.getElementById(prefixo + '-colaborador');
   const selTipo = document.getElementById(prefixo + '-tipo');
+  const selMarca = document.getElementById(prefixo + '-marca');
   if (selProduto && selProduto.options.length <= 1) {
     try {
       const prods = await api('/estoque/produtos');
@@ -2506,6 +2533,13 @@ async function _psdPopularFiltros(prefixo) {
   if (selTipo && selTipo.options.length <= 1) {
     selTipo.innerHTML = '<option value="">Todos os tipos</option>' +
       TIPOS_PERDA_MOD.map(t => `<option value="${t}">${t}</option>`).join('');
+  }
+  if (selMarca && selMarca.options.length <= 1) {
+    try {
+      const marcas = await api('/relatorios/perdas-sobras-marcas');
+      selMarca.innerHTML = '<option value="">Todas as marcas</option>' +
+        (marcas || []).map(m => `<option value="${m}">${m}</option>`).join('');
+    } catch (e) {}
   }
 }
 
@@ -2527,12 +2561,80 @@ function _psdQueryString(prefixo, iniId, fimId) {
   const produto = document.getElementById(prefixo + '-produto')?.value;
   const colaborador = document.getElementById(prefixo + '-colaborador')?.value;
   const tipo = document.getElementById(prefixo + '-tipo')?.value;
+  const marca = document.getElementById(prefixo + '-marca')?.value;
   if (ini) params.set('data_inicio', ini);
   if (fim) params.set('data_fim', fim);
   if (produto) params.set('produto_id', produto);
   if (colaborador) params.set('colaborador_id', colaborador);
   if (tipo) params.set('tipo_perda', tipo);
+  if (marca) params.set('marca', marca);
   return params.toString();
+}
+
+let psdVisaoAtual = 'detalhado';
+let psdUltimoResultado = null;
+
+function psdMudarVisao(modo) {
+  psdVisaoAtual = modo;
+  const btnDet = document.getElementById('psd-btn-detalhado');
+  const btnAgr = document.getElementById('psd-btn-agrupado');
+  const tabDet = document.getElementById('psd-tabela-detalhado');
+  const tabAgr = document.getElementById('psd-tabela-agrupado');
+  if (btnDet) btnDet.classList.toggle('btn-primary', modo === 'detalhado');
+  if (btnAgr) btnAgr.classList.toggle('btn-primary', modo === 'agrupado');
+  if (tabDet) tabDet.style.display = modo === 'detalhado' ? '' : 'none';
+  if (tabAgr) tabAgr.style.display = modo === 'agrupado' ? '' : 'none';
+  if (psdUltimoResultado) _psdRenderizar(psdUltimoResultado);
+}
+
+function _psdRenderizar(res) {
+  const ocorrencias = res.ocorrencias || [];
+  const agrupado = res.agrupado || [];
+  const cardsEl = document.getElementById('psd-cards');
+  if (cardsEl) {
+    cardsEl.innerHTML = `
+      <div class="card"><div class="card-label">Total perdido</div><div style="font-family:var(--font-head);font-weight:800;font-size:20px;color:var(--danger)">${fmtNum(res.total_perda)}</div></div>
+      <div class="card"><div class="card-label">Total sobra</div><div style="font-family:var(--font-head);font-weight:800;font-size:20px;color:var(--success)">${fmtNum(res.total_sobra)}</div></div>
+      <div class="card"><div class="card-label">Ocorrências</div><div style="font-family:var(--font-head);font-weight:800;font-size:20px">${ocorrencias.length}</div></div>
+    `;
+  }
+
+  const tbody = document.getElementById('psd-tbody');
+  if (tbody) {
+    if (!ocorrencias.length) {
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted)">Nenhuma ocorrência no período/filtros selecionados</td></tr>';
+    } else {
+      tbody.innerHTML = ocorrencias.map(o => `
+        <tr>
+          <td>${fmtDate(o.data)}</td>
+          <td>${o.produto_nome || '—'}</td>
+          <td>${o.marca || '—'}</td>
+          <td>${o.colaborador_nome || '—'}</td>
+          <td>${o.maquina_nome || '—'}</td>
+          <td>${o.tipo_perda || '—'}</td>
+          <td style="color:${o.perda_quantidade > 0 ? 'var(--danger)' : 'inherit'}">${fmtNum(o.perda_quantidade)}</td>
+          <td style="color:${o.sobra_quantidade > 0 ? 'var(--success)' : 'inherit'}">${fmtNum(o.sobra_quantidade)}</td>
+          <td>${o.pedido_numero || '—'}</td>
+        </tr>
+      `).join('');
+    }
+  }
+
+  const tbodyAgr = document.getElementById('psd-tbody-agrupado');
+  if (tbodyAgr) {
+    if (!agrupado.length) {
+      tbodyAgr.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--muted)">Nenhuma perda no período/filtros selecionados</td></tr>';
+    } else {
+      tbodyAgr.innerHTML = agrupado.map(a => `
+        <tr>
+          <td>${a.marca}</td>
+          <td>${a.tipo_perda}</td>
+          <td>${a.ocorrencias}</td>
+          <td style="color:var(--danger);font-weight:600">${fmtNum(a.quantidade)}</td>
+        </tr>
+      `).join('');
+    }
+  }
 }
 
 async function loadPerdasSobrasDetalhado() {
@@ -2540,37 +2642,13 @@ async function loadPerdasSobrasDetalhado() {
   _psdDefaultDatas('psd-data-ini', 'psd-data-fim');
   const qs = _psdQueryString('psd', 'psd-data-ini', 'psd-data-fim');
   const tbody = document.getElementById('psd-tbody');
-  const cardsEl = document.getElementById('psd-cards');
-  if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted)">Carregando...</td></tr>';
+  if (tbody) tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted)">Carregando...</td></tr>';
   try {
     const res = await api('/relatorios/perdas-sobras-detalhado?' + qs);
-    const ocorrencias = res.ocorrencias || [];
-    if (cardsEl) {
-      cardsEl.innerHTML = `
-        <div class="card"><div class="card-label">Total perdido</div><div style="font-family:var(--font-head);font-weight:800;font-size:20px;color:var(--danger)">${fmtNum(res.total_perda)}</div></div>
-        <div class="card"><div class="card-label">Total sobra</div><div style="font-family:var(--font-head);font-weight:800;font-size:20px;color:var(--success)">${fmtNum(res.total_sobra)}</div></div>
-        <div class="card"><div class="card-label">Ocorrências</div><div style="font-family:var(--font-head);font-weight:800;font-size:20px">${ocorrencias.length}</div></div>
-      `;
-    }
-    if (!tbody) return;
-    if (!ocorrencias.length) {
-      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted)">Nenhuma ocorrência no período/filtros selecionados</td></tr>';
-      return;
-    }
-    tbody.innerHTML = ocorrencias.map(o => `
-      <tr>
-        <td>${fmtDate(o.data)}</td>
-        <td>${o.produto_nome || '—'}</td>
-        <td>${o.colaborador_nome || '—'}</td>
-        <td>${o.maquina_nome || '—'}</td>
-        <td>${o.tipo_perda || '—'}</td>
-        <td style="color:${o.perda_quantidade > 0 ? 'var(--danger)' : 'inherit'}">${fmtNum(o.perda_quantidade)}</td>
-        <td style="color:${o.sobra_quantidade > 0 ? 'var(--success)' : 'inherit'}">${fmtNum(o.sobra_quantidade)}</td>
-        <td>${o.pedido_numero || '—'}</td>
-      </tr>
-    `).join('');
+    psdUltimoResultado = res;
+    psdMudarVisao(psdVisaoAtual);
   } catch (e) {
-    if (tbody) tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--danger)">${e.message}</td></tr>`;
+    if (tbody) tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--danger)">${e.message}</td></tr>`;
   }
 }
 window.loadPerdasSobrasDetalhado = loadPerdasSobrasDetalhado;
@@ -2624,7 +2702,7 @@ window.loadGraficoPerdasSobras = loadGraficoPerdasSobras;
 
 
 function addItemProducao() {
-  prodItens.push({ produto_id: null, producao: 0, perda: 0, sobra: 0, tipo_perda: 'Quebra' });
+  prodItens.push({ produto_id: null, producao: 0, sobra: 0, perdas: [] });
   renderProdItens();
 }
 
@@ -2675,9 +2753,9 @@ async function editarProducao(id, colId, maqId, data, meta, producao, produtoEst
     document.getElementById('prod-simples-perda').value = perdaQtd || '';
     document.getElementById('prod-simples-sobra').value = sobraQtd || '';
     document.getElementById('prod-simples-tipo-perda').value = 'Quebra';
-    prodItens = [{ produto_id: null, producao: producao, perda: perdaQtd, sobra: sobraQtd, tipo_perda: 'Quebra' }];
+    prodItens = [{ produto_id: null, producao: producao, sobra: sobraQtd, perdas: (perdaQtd > 0 ? [{ quantidade: perdaQtd, tipo_perda: 'Quebra', observacao: '' }] : []) }];
   } else {
-    prodItens = [{ produto_id: produtoEstoqueId, producao: producao, perda: perdaQtd, sobra: sobraQtd, tipo_perda: 'Quebra' }];
+    prodItens = [{ produto_id: produtoEstoqueId, producao: producao, sobra: sobraQtd, perdas: (perdaQtd > 0 ? [{ quantidade: perdaQtd, tipo_perda: 'Quebra', observacao: '' }] : []) }];
   }
 
   toggleFormSimplificado();
@@ -2753,9 +2831,9 @@ async function salvarProducao() {
   if (!valid) return;
 
   const editId = document.getElementById('prod-edit-id').value;
-  const itens = prodItens.filter(i => (i.producao || 0) > 0 || (i.perda || 0) > 0 || (i.sobra || 0) > 0);
+  const itens = prodItens.filter(i => (i.producao || 0) > 0 || _totalPerdaItem(i) > 0 || (i.sobra || 0) > 0);
   if (!editId && !itens.length) { showAlert('Informe pelo menos um item com produção ou perda', 'danger'); return; }
-  const itensSemMotivo = prodItens.filter(i => i.tipo_perda === 'Outros' && (i.perda || 0) > 0 && !(i.observacao || '').trim());
+  const itensSemMotivo = prodItens.filter(i => _perdasSemMotivo(i));
   if (itensSemMotivo.length) { showAlert('Informe o motivo da perda para os itens com tipo "Outros"', 'danger'); return; }
   const base = itens.length ? itens : prodItens;
   const total = prodItens.reduce((s, i) => s + (i.producao || 0), 0);
@@ -2769,13 +2847,14 @@ async function salvarProducao() {
   const linhas = base.map(i => {
     const prod = prodEstoqueCache.find(p => p.id === i.produto_id);
     const nome = prod ? _produtoLabel(prod) : 'Sem produto vinculado (não baixa estoque)';
+    const perdaTotal = _totalPerdaItem(i);
     const partes = [];
     if (i.producao > 0) partes.push('produção ' + fmtNum(i.producao));
-    if (i.perda > 0) partes.push('perda ' + fmtNum(i.perda));
+    if (perdaTotal > 0) partes.push('perda ' + fmtNum(perdaTotal));
     if (i.sobra > 0) partes.push('sobra ' + fmtNum(i.sobra));
     let saldo = '';
     if (prod && !editId) {
-      const baixa = (i.producao || 0) + (i.perda || 0) - (i.sobra || 0);
+      const baixa = (i.producao || 0) + perdaTotal - (i.sobra || 0);
       const novo = Math.max(0, (prod.quantidade_atual || 0) - baixa);
       saldo = '<br><span style="color:var(--muted);font-size:12px">estoque: ' + fmtNum(prod.quantidade_atual || 0) + ' &rarr; <b style="color:var(--text,#e6e9ef)">' + fmtNum(novo) + '</b> ' + (prod.unidade || '') + '</span>';
     }
@@ -2817,15 +2896,13 @@ async function executarSalvarProducao() {
         colaborador_id: colId, maquina_id: maqId, data, meta,
         producao: item.producao || 0,
         produto_estoque_id: item.produto_id,
-        perda_quantidade: item.perda || 0,
-        perda_tipo: item.tipo_perda,
-        perda_observacao: item.observacao || null,
+        perdas: (item.perdas || []).map(pl => ({ quantidade: pl.quantidade || 0, tipo_perda: pl.tipo_perda, observacao: pl.observacao || null })),
         sobra_quantidade: item.sobra || 0,
         pedido_numero: pedidoManual || null
       });
       showAlert('Produção atualizada!');
     } else {
-      const itensValidos = prodItens.filter(i => (i.producao || 0) > 0 || (i.perda || 0) > 0 || (i.sobra || 0) > 0);
+      const itensValidos = prodItens.filter(i => (i.producao || 0) > 0 || _totalPerdaItem(i) > 0 || (i.sobra || 0) > 0);
       if (!itensValidos.length) { showAlert('Informe pelo menos um item com produção ou perda', 'danger'); return; }
 
       let res;
@@ -2837,9 +2914,7 @@ async function executarSalvarProducao() {
           colaborador_id: colId, maquina_id: maqId, data, meta,
           producao: totalProducao,
           produto_estoque_id: primItem.produto_id,
-          perda_quantidade: primItem.perda || 0,
-          perda_tipo: primItem.tipo_perda,
-          perda_observacao: primItem.observacao || null,
+          perdas: (primItem.perdas || []).map(pl => ({ quantidade: pl.quantidade || 0, tipo_perda: pl.tipo_perda, observacao: pl.observacao || null })),
           sobra_quantidade: primItem.sobra || 0,
           pedido_numero: pedidoManual || null
         });
@@ -2853,7 +2928,7 @@ async function executarSalvarProducao() {
         // as chamadas manuais de /estoque/movimentacoes aqui: além de redundante,
         // elas ficavam sem esse vínculo e podiam ser revertidas por engano ao
         // editar/excluir OUTRO lançamento do mesmo colaborador no mesmo dia.
-        const totalPerda = itensValidos.reduce((s, i) => s + (i.perda || 0), 0);
+        const totalPerda = itensValidos.reduce((s, i) => s + _totalPerdaItem(i), 0);
         const totalSobra = itensValidos.reduce((s, i) => s + (i.sobra || 0), 0);
         res = await postProducaoComConfirmacao({
           colaborador_id: colId, maquina_id: maqId, data, meta,
@@ -2865,10 +2940,8 @@ async function executarSalvarProducao() {
           itens: itensValidos.map(i => ({
             produto_estoque_id: i.produto_id,
             quantidade: i.producao || 0,
-            perda_quantidade: i.perda || 0,
             sobra_quantidade: i.sobra || 0,
-            tipo_perda: i.tipo_perda || 'Quebra',
-            observacao: i.observacao || null
+            perdas: (i.perdas || []).map(pl => ({ quantidade: pl.quantidade || 0, tipo_perda: pl.tipo_perda, observacao: pl.observacao || null }))
           }))
         });
       }
@@ -6590,7 +6663,14 @@ async function salvarPedido() {
       };
       showPage('pintura');
     }
-  } catch(e){ showPopup('⚠️ Não foi possível salvar', `<div style="color:#ff6b6b">${e.message}</div>`); }
+  } catch(e){
+    const msg = e.message || '';
+    if (/já existe/i.test(msg)) {
+      showPopup('📋 Esse número de pedido já existe', `<div>${msg}</div><div style="margin-top:10px;color:var(--muted);font-size:13px">Confira o número — se for outro pedido, ele precisa de um número diferente. Se for o mesmo pedido reenviado, procure ele na lista em vez de cadastrar de novo.</div>`);
+    } else {
+      showPopup('⚠️ Não foi possível salvar', `<div style="color:#ff6b6b">${msg}</div>`);
+    }
+  }
 }
 
 async function loadClientes() {
@@ -9580,6 +9660,7 @@ function _parseNomeProdutoCompras(nome, marca) {
 let lcDados = [];
 
 async function loadListaCompras() {
+  lcTrocarModo('padrao');
   const el = document.getElementById('lc-content');
   if (el) el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:30px 0">Carregando...</p>';
   try {
@@ -9591,6 +9672,158 @@ async function loadListaCompras() {
   renderListaCompras();
   const dt = document.getElementById('lc-ultima-atualizacao');
   if (dt) dt.textContent = '🕐 Atualizado em: ' + new Date().toLocaleString('pt-BR');
+}
+
+// ─── LISTA AVULSA (outros produtos, fora das 4 categorias da Lista Padrão) ──
+let lcAvulsaCarregado = false;
+let lcAvulsaTodosProdutos = [];
+let lcAvulsaSeq = 0;
+
+function lcTrocarModo(modo) {
+  const tabPadrao = document.getElementById('lc-tab-padrao');
+  const tabAvulsa = document.getElementById('lc-tab-avulsa');
+  const contPadrao = document.getElementById('lc-padrao-container');
+  const contAvulsa = document.getElementById('lc-avulsa-container');
+  if (tabPadrao) { tabPadrao.classList.toggle('btn-primary', modo === 'padrao'); tabPadrao.classList.toggle('btn-secondary', modo !== 'padrao'); }
+  if (tabAvulsa) { tabAvulsa.classList.toggle('btn-primary', modo === 'avulsa'); tabAvulsa.classList.toggle('btn-secondary', modo !== 'avulsa'); }
+  if (contPadrao) contPadrao.style.display = modo === 'padrao' ? '' : 'none';
+  if (contAvulsa) contAvulsa.style.display = modo === 'avulsa' ? '' : 'none';
+  if (modo === 'avulsa' && !lcAvulsaCarregado) lcCarregarAvulsa();
+}
+
+async function lcCarregarAvulsa() {
+  lcAvulsaCarregado = true;
+  const sel = document.getElementById('lc-avulsa-categoria');
+  if (sel) sel.innerHTML = '<option value="">Carregando...</option>';
+  try {
+    lcAvulsaTodosProdutos = await api('/estoque/produtos');
+  } catch (e) {
+    lcAvulsaTodosProdutos = [];
+  }
+  // exclui as 4 categorias que já são cobertas pela Lista Padrão
+  const nucleo = CATEGORIAS_LISTA_COMPRAS.map(_normMarcaLC);
+  const categorias = [...new Set(
+    lcAvulsaTodosProdutos.map(p => p.categoria_nome).filter(c => c && !nucleo.includes(_normMarcaLC(c)))
+  )].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  if (sel) {
+    sel.innerHTML = '<option value="">Selecione uma categoria...</option>' +
+      categorias.map(c => `<option value="${c}">${c}</option>`).join('');
+  }
+}
+
+function lcAvulsaTrocarCategoria() {
+  const categoria = document.getElementById('lc-avulsa-categoria')?.value || '';
+  const selMarca = document.getElementById('lc-avulsa-marca');
+  if (selMarca) {
+    const marcas = [...new Set(
+      lcAvulsaTodosProdutos.filter(p => p.categoria_nome === categoria).map(p => p.marca).filter(Boolean)
+    )].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    selMarca.innerHTML = '<option value="">Todas as marcas</option>' + marcas.map(m => `<option value="${m}">${m}</option>`).join('');
+  }
+  renderListaAvulsa();
+}
+
+function renderListaAvulsa() {
+  const el = document.getElementById('lc-avulsa-content');
+  if (!el) return;
+  const categoria = document.getElementById('lc-avulsa-categoria')?.value || '';
+  const marca = document.getElementById('lc-avulsa-marca')?.value || '';
+  if (!categoria) {
+    el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:30px 0">Selecione uma categoria pra ver os produtos.</p>';
+    return;
+  }
+  let produtos = lcAvulsaTodosProdutos.filter(p => p.categoria_nome === categoria);
+  if (marca) produtos = produtos.filter(p => p.marca === marca);
+  if (!produtos.length) {
+    el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:30px 0">Nenhum produto encontrado nessa categoria/marca.</p>';
+    return;
+  }
+
+  const porMarca = {};
+  produtos.forEach(p => {
+    const m = p.marca || 'Sem marca';
+    if (!porMarca[m]) porMarca[m] = [];
+    porMarca[m].push(p);
+  });
+  const marcasOrdenadas = Object.keys(porMarca).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+
+  lcAvulsaSeq = 0;
+  el.innerHTML = marcasOrdenadas.map(m => {
+    const itens = porMarca[m].sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
+    return `
+    <div style="padding-bottom:14px;border-bottom:1px solid var(--border)">
+      <div style="font-family:var(--font-head);font-weight:700;font-size:17px;margin-bottom:12px">${m}</div>
+      ${itens.map(p => {
+        const id = 'lcavqtd' + (lcAvulsaSeq++);
+        return `
+        <div class="lc-row" style="padding:5px 0;max-width:360px">
+          <label style="display:flex;align-items:center;gap:10px;font-size:15px;cursor:pointer">
+            <input type="checkbox" class="lc-avulsa-chk" data-marca="${m}" data-produto="${(p.nome || '').replace(/"/g, '&quot;')}" data-unidade="${p.unidade || ''}" onchange="toggleQtdLC(this, '${id}')" style="margin:0;flex-shrink:0;width:20px;height:20px;cursor:pointer">
+            <span style="flex:1">${p.nome}</span>
+            <span style="color:var(--muted);font-size:13px">Saldo: ${fmtNum(p.quantidade_atual)} ${p.unidade || ''}</span>
+          </label>
+          <div id="qtdbox-${id}" style="display:none;padding:5px 0 0 30px">
+            <input type="number" min="1" id="${id}" class="lc-qtd-input" placeholder="Quantidade a comprar" style="width:200px;font-size:15px;height:36px">
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+  }).join('');
+}
+
+function gerarSolicitacaoAvulsa() {
+  const marcados = Array.from(document.querySelectorAll('#lc-avulsa-content .lc-avulsa-chk:checked'));
+  if (!marcados.length) { showAlert('Selecione pelo menos um item pra gerar a solicitação.', 'danger'); return; }
+
+  const itens = [];
+  let faltaQtd = false;
+  marcados.forEach(chk => {
+    const qtdInput = chk.closest('.lc-row').querySelector('.lc-qtd-input');
+    const qtd = qtdInput.value;
+    if (!qtd || Number(qtd) <= 0) {
+      qtdInput.style.outline = '1px solid var(--danger)';
+      faltaQtd = true;
+      return;
+    }
+    qtdInput.style.outline = '';
+    itens.push({ marca: chk.dataset.marca, produto: chk.dataset.produto, unidade: chk.dataset.unidade, qtd: Number(qtd) });
+  });
+  if (faltaQtd) { showAlert('Informe a quantidade para todos os itens marcados.', 'danger'); return; }
+
+  const porMarca = {};
+  itens.forEach(i => { (porMarca[i.marca] = porMarca[i.marca] || []).push(i); });
+
+  const corpo = Object.keys(porMarca).sort((a, b) => a.localeCompare(b, 'pt-BR')).map(marca => `
+    <div style="margin-bottom:18px;break-inside:avoid">
+      <div style="font-weight:700;font-size:15px;margin-bottom:6px">${marca}</div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="border-bottom:1px solid #ccc">
+          <th style="text-align:left;padding:4px 6px 4px 0">Produto</th>
+          <th style="text-align:right;padding:4px 0 4px 6px">Qtd. solicitada</th>
+        </tr></thead>
+        <tbody>
+          ${porMarca[marca].map(i => `<tr style="border-bottom:1px solid #eee">
+            <td style="padding:4px 6px 4px 0">${i.produto}</td>
+            <td style="padding:4px 0 4px 6px;text-align:right;font-weight:700">${fmtNum(i.qtd)} ${i.unidade || ''}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  `).join('');
+
+  const dataHoje = new Date().toLocaleDateString('pt-BR');
+  const tituloRelatorio = `Lista Avulsa de Compra - ${dataHoje}`;
+
+  const win = window.open('', '_blank');
+  win.document.write(`<html><head><title>${tituloRelatorio} PRATIC</title>
+    <style>@page{size:A4;margin:15mm 15mm 15mm 15mm}
+    body{font-family:Arial,sans-serif;margin:0;font-size:13px;color:#111}</style></head><body>
+    ${_getEmpresaHeader(tituloRelatorio)}
+    <div style="font-size:10px;color:#777;margin-bottom:16px">Emitido em: ${new Date().toLocaleString('pt-BR')}</div>
+    ${corpo}
+    </body></html>`);
+  win.document.close();
+  setTimeout(() => win.print(), 500);
 }
 
 // Classifica cada item quanto à urgência de compra:

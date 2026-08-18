@@ -1394,32 +1394,57 @@
 
     <!-- LISTA DE COMPRAS -->
     <div class="page" id="page-lista-compras">
-      <div class="barra-fixa flex items-center justify-between mb-4" style="flex-wrap:wrap;gap:10px">
-        <p style="color:var(--muted);font-size:14px;margin:0">Copos descartável, copos de papel, copos de isopor e tampas descartável — agrupados por marca, tipo e tamanho. Em vermelho/amarelo, o que precisa de atenção.</p>
-        <div class="flex gap-2" style="flex-wrap:wrap">
-          <div class="custom-multiselect" id="lc-marca-filtro-container" style="min-width:200px">
-            <button class="multiselect-btn" onclick="toggleMultiselect(event, 'lc-marca-filtro-dropdown')">
-              <span class="btn-text" id="lc-marca-filtro-btn-text">Todas as marcas</span>
-              <span class="btn-icon">▼</span>
-            </button>
-            <div class="multiselect-dropdown" id="lc-marca-filtro-dropdown" style="display:none">
-              <div class="multiselect-search-container">
-                <input type="text" class="multiselect-search" placeholder="Buscar marca..." oninput="filterMultiselectOptions('lc-marca-filtro-dropdown')">
-              </div>
-              <div class="multiselect-options" id="lc-marca-filtro-options">
-                <div class="multiselect-option" onclick="selecionarMarcaLC('')" style="cursor:pointer">
-                  <span>Todas as marcas</span>
+      <div class="flex gap-2 mb-4">
+        <button class="btn btn-sm btn-primary" id="lc-tab-padrao" onclick="lcTrocarModo('padrao')">📋 Lista Padrão</button>
+        <button class="btn btn-sm btn-secondary" id="lc-tab-avulsa" onclick="lcTrocarModo('avulsa')">🗂️ Lista Avulsa</button>
+      </div>
+
+      <!-- MODO PADRÃO (não mexer — igual já era) -->
+      <div id="lc-padrao-container">
+        <div class="barra-fixa flex items-center justify-between mb-4" style="flex-wrap:wrap;gap:10px">
+          <p style="color:var(--muted);font-size:14px;margin:0">Copos descartável, copos de papel, copos de isopor e tampas descartável — agrupados por marca, tipo e tamanho. Em vermelho/amarelo, o que precisa de atenção.</p>
+          <div class="flex gap-2" style="flex-wrap:wrap">
+            <div class="custom-multiselect" id="lc-marca-filtro-container" style="min-width:200px">
+              <button class="multiselect-btn" onclick="toggleMultiselect(event, 'lc-marca-filtro-dropdown')">
+                <span class="btn-text" id="lc-marca-filtro-btn-text">Todas as marcas</span>
+                <span class="btn-icon">▼</span>
+              </button>
+              <div class="multiselect-dropdown" id="lc-marca-filtro-dropdown" style="display:none">
+                <div class="multiselect-search-container">
+                  <input type="text" class="multiselect-search" placeholder="Buscar marca..." oninput="filterMultiselectOptions('lc-marca-filtro-dropdown')">
+                </div>
+                <div class="multiselect-options" id="lc-marca-filtro-options">
+                  <div class="multiselect-option" onclick="selecionarMarcaLC('')" style="cursor:pointer">
+                    <span>Todas as marcas</span>
+                  </div>
                 </div>
               </div>
             </div>
+            <button class="btn btn-secondary" onclick="loadListaCompras()">↻ Atualizar</button>
+            <button class="btn btn-secondary" onclick="imprimirListaCompras()">🖨️ Imprimir catálogo</button>
+            <button class="btn btn-primary" onclick="gerarPedidoCompra()">🛒 Gerar pedido de compra</button>
           </div>
-          <button class="btn btn-secondary" onclick="loadListaCompras()">↻ Atualizar</button>
-          <button class="btn btn-secondary" onclick="imprimirListaCompras()">🖨️ Imprimir catálogo</button>
-          <button class="btn btn-primary" onclick="gerarPedidoCompra()">🛒 Gerar pedido de compra</button>
         </div>
+        <div id="lc-ultima-atualizacao" style="font-size:12px;color:var(--muted);margin-bottom:16px;text-align:center"></div>
+        <div id="lc-content" style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px 32px;align-items:start"></div>
       </div>
-      <div id="lc-ultima-atualizacao" style="font-size:12px;color:var(--muted);margin-bottom:16px;text-align:center"></div>
-      <div id="lc-content" style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px 32px;align-items:start"></div>
+
+      <!-- MODO AVULSO (novo) -->
+      <div id="lc-avulsa-container" style="display:none">
+        <div class="barra-fixa flex items-center justify-between mb-4" style="flex-wrap:wrap;gap:10px">
+          <p style="color:var(--muted);font-size:14px;margin:0">Monte uma solicitação de compra pra qualquer outro produto (EPI, insumos, material de escritório etc.) — escolha a categoria e, se quiser, filtre por marca.</p>
+          <div class="flex gap-2" style="flex-wrap:wrap">
+            <select id="lc-avulsa-categoria" style="min-width:220px" onchange="lcAvulsaTrocarCategoria()">
+              <option value="">Selecione uma categoria...</option>
+            </select>
+            <select id="lc-avulsa-marca" style="min-width:180px" onchange="renderListaAvulsa()">
+              <option value="">Todas as marcas</option>
+            </select>
+            <button class="btn btn-primary" onclick="gerarSolicitacaoAvulsa()">🗂️ Gerar solicitação</button>
+          </div>
+        </div>
+        <div id="lc-avulsa-content" style="display:grid;grid-template-columns:repeat(3,1fr);gap:4px 32px;align-items:start"></div>
+      </div>
     </div>
 
     <!-- CONSUMO MÉDIO -->
@@ -1910,22 +1935,39 @@
           <select id="psd-produto" style="min-width:180px"><option value="">Todos os produtos</option></select>
           <select id="psd-colaborador" style="min-width:160px"><option value="">Todos os operadores</option></select>
           <select id="psd-tipo" style="min-width:160px"><option value="">Todos os tipos</option></select>
+          <select id="psd-marca" style="min-width:160px"><option value="">Todas as marcas</option></select>
           <button class="btn btn-secondary" onclick="loadPerdasSobrasDetalhado()">Filtrar</button>
+        </div>
+        <div class="flex gap-2">
+          <button class="btn btn-sm btn-secondary" id="psd-btn-detalhado" onclick="psdMudarVisao('detalhado')">Detalhado</button>
+          <button class="btn btn-sm btn-secondary" id="psd-btn-agrupado" onclick="psdMudarVisao('agrupado')">Agrupado por marca</button>
         </div>
       </div>
 
       <div class="cards-grid" id="psd-cards" style="margin-bottom:20px"></div>
 
-      <div class="table-wrap">
+      <div class="table-wrap" id="psd-tabela-detalhado">
         <div class="table-head"><span class="table-head-title">Ocorrências</span></div>
         <table>
           <thead>
             <tr>
-              <th>Data</th><th>Produto</th><th>Operador</th><th>Máquina</th>
+              <th>Data</th><th>Produto</th><th>Marca</th><th>Operador</th><th>Máquina</th>
               <th>Tipo</th><th>Perda</th><th>Sobra</th><th>Pedido</th>
             </tr>
           </thead>
           <tbody id="psd-tbody"></tbody>
+        </table>
+      </div>
+
+      <div class="table-wrap" id="psd-tabela-agrupado" style="display:none">
+        <div class="table-head"><span class="table-head-title">Total de perda por marca e motivo</span></div>
+        <table>
+          <thead>
+            <tr>
+              <th>Marca</th><th>Motivo</th><th>Ocorrências</th><th>Quantidade perdida</th>
+            </tr>
+          </thead>
+          <tbody id="psd-tbody-agrupado"></tbody>
         </table>
       </div>
     </div>
@@ -1991,13 +2033,16 @@
           <select id="prod-simples-tipo-perda" onchange="atualizarSimplificadoData()">
             <option value="Quebra">Quebra</option>
             <option value="Defeito">Defeito</option>
-            <option value="Contaminação">Contaminação</option>
+            <option value="Erro na Produção">Erro na Produção</option>
             <option value="Mal formado">Mal formado</option>
-            <option value="Rebarba">Rebarba</option>
             <option value="Fora de especificação">Fora de especificação</option>
             <option value="Falta na embalagem">Falta na embalagem</option>
             <option value="Outros">Outros</option>
           </select>
+        </div>
+        <div class="form-group" id="prod-simples-motivo-outros-container" style="display:none">
+          <label>Descreva o motivo</label>
+          <input type="text" id="prod-simples-motivo-outros" placeholder="Descreva o motivo da perda" oninput="atualizarSimplificadoData()">
         </div>
       </div>
 
@@ -2007,12 +2052,11 @@
           <div style="font-family:var(--font-head);font-weight:700;font-size:14px">Produtos Produzidos</div>
           <button class="btn btn-sm btn-neon" onclick="addItemProducao()">+ Adicionar Produto</button>
         </div>
-        <div style="display:grid;grid-template-columns:minmax(0,2fr) 70px 70px 70px 110px 28px;gap:6px;margin-bottom:6px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">
+        <div style="display:grid;grid-template-columns:minmax(0,2.5fr) 70px 70px 70px 28px;gap:6px;margin-bottom:6px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px">
           <span>Produto do Estoque</span>
           <span style="text-align:center">Prod.</span>
           <span style="text-align:center">Perda</span>
           <span style="text-align:center">Sobra</span>
-          <span style="text-align:center">Tipo Perda</span>
           <span></span>
         </div>
         <div id="prod-itens-list"></div>
@@ -2940,7 +2984,7 @@
   </div>
 </div>
 
-<script src="js/app.js?v=20260814-motivo-perda-outros"></script>
+<script src="js/app.js?v=20260814-lista-avulsa-pedido-dup"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');
