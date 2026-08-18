@@ -6,6 +6,11 @@ from auth_utils import get_current_user
 
 router = APIRouter()
 
+class PerdaLinhaIn(BaseModel):
+    quantidade: float = 0
+    tipo_perda: Optional[str] = None
+    observacao: Optional[str] = None
+
 class ProducaoItemIn(BaseModel):
     produto_estoque_id: Optional[int] = None
     quantidade: float = 0
@@ -13,6 +18,7 @@ class ProducaoItemIn(BaseModel):
     sobra_quantidade: Optional[float] = 0
     tipo_perda: Optional[str] = None
     observacao: Optional[str] = None
+    perdas: Optional[List[PerdaLinhaIn]] = None
 
 class ProducaoIn(BaseModel):
     colaborador_id: int
@@ -24,6 +30,7 @@ class ProducaoIn(BaseModel):
     perda_quantidade: Optional[float] = 0
     perda_tipo: Optional[str] = None
     perda_observacao: Optional[str] = None
+    perdas: Optional[List[PerdaLinhaIn]] = None
     sobra_quantidade: Optional[float] = 0
     pedido_id: Optional[int] = None
     pedido_numero: Optional[str] = None
@@ -31,49 +38,77 @@ class ProducaoIn(BaseModel):
     movimentacao_manual: Optional[bool] = False
     itens: Optional[List[ProducaoItemIn]] = None
 
+def _normalizar_perdas(perdas_list, fallback_qtd, fallback_tipo, fallback_obs):
+    """Um produto pode ter vários motivos de perda no mesmo lançamento (ex:
+    5 unidades quebradas + 3 com falta na embalagem). Se o frontend já manda
+    a lista nova (`perdas`), usa ela. Senão, cai no formato antigo de um
+    valor só — mantém lançamentos e integrações anteriores funcionando."""
+    if perdas_list:
+        return [(pl.quantidade or 0, pl.tipo_perda, pl.observacao) for pl in perdas_list if (pl.quantidade or 0) > 0]
+    if (fallback_qtd or 0) > 0:
+        return [(fallback_qtd, fallback_tipo, fallback_obs)]
+    return []
+
 def _salvar_itens_detalhe(cur, prod_id: int, p: "ProducaoIn"):
     """Grava o detalhe por produto de um lançamento em producao_diaria_itens.
     Se o frontend mandou a lista de itens (lançamento multi-produto), grava cada
     um. Senão, espelha o cabeçalho como um único item (lançamento de produto
     único) — assim todo lançamento, novo ou editado, sempre tem detalhe
-    consultável pros relatórios por categoria/produto."""
+    consultável pros relatórios por categoria/produto.
+    O detalhe fino por motivo (várias linhas de perda) fica só em
+    estoque_movimentacoes; aqui grava-se a SOMA (pra relatórios que só
+    precisam do total, como Painel Gerencial e Premiação) e o tipo mostrado
+    vira 'Múltiplos' quando há mais de um motivo diferente."""
     cur.execute("DELETE FROM producao_diaria_itens WHERE producao_diaria_id=?", (prod_id,))
     if p.itens:
         for item in p.itens:
-            if (item.quantidade or 0) <= 0 and (item.perda_quantidade or 0) <= 0 and (item.sobra_quantidade or 0) <= 0:
+            perdas = _normalizar_perdas(item.perdas, item.perda_quantidade, item.tipo_perda, item.observacao)
+            perda_total = sum(q for q, _, _ in perdas)
+            if (item.quantidade or 0) <= 0 and perda_total <= 0 and (item.sobra_quantidade or 0) <= 0:
                 continue
-            # tipo_perda só faz sentido quando há perda de fato; sem perda, fica NULL
-            tipo_perda_item = (item.tipo_perda or p.perda_tipo) if (item.perda_quantidade or 0) > 0 else None
+            tipos_distintos = {(t or p.perda_tipo or 'Quebra') for q, t, o in perdas}
+            tipo_perda_item = None
+            if perda_total > 0:
+                tipo_perda_item = next(iter(tipos_distintos)) if len(tipos_distintos) == 1 else 'Múltiplos'
             cur.execute("""INSERT INTO producao_diaria_itens
                           (producao_diaria_id, produto_estoque_id, quantidade, perda_quantidade, sobra_quantidade, tipo_perda)
                           VALUES (?, ?, ?, ?, ?, ?)""",
                        (prod_id, item.produto_estoque_id, item.quantidade or 0,
-                        item.perda_quantidade or 0, item.sobra_quantidade or 0, tipo_perda_item))
+                        perda_total, item.sobra_quantidade or 0, tipo_perda_item))
     else:
-        tipo_perda_header = p.perda_tipo if (p.perda_quantidade or 0) > 0 else None
+        perdas = _normalizar_perdas(p.perdas, p.perda_quantidade, p.perda_tipo, p.perda_observacao)
+        perda_total = sum(q for q, _, _ in perdas)
+        tipos_distintos = {(t or 'Quebra') for q, t, o in perdas}
+        tipo_perda_header = None
+        if perda_total > 0:
+            tipo_perda_header = next(iter(tipos_distintos)) if len(tipos_distintos) == 1 else 'Múltiplos'
         cur.execute("""INSERT INTO producao_diaria_itens
                       (producao_diaria_id, produto_estoque_id, quantidade, perda_quantidade, sobra_quantidade, tipo_perda)
                       VALUES (?, ?, ?, ?, ?, ?)""",
                    (prod_id, p.produto_estoque_id, p.producao,
-                    p.perda_quantidade or 0, p.sobra_quantidade or 0, tipo_perda_header))
+                    perda_total, p.sobra_quantidade or 0, tipo_perda_header))
 
 def _movimentar_estoque_item(c, prod_id: int, produto_id: int, quantidade: float,
-                              perda: float, sobra: float, tipo_perda: Optional[str],
-                              perda_observacao: Optional[str], col_nome: str, data: str):
-    """Dá baixa da produção, devolve a sobra ao saldo e registra a perda de UM
-    produto — todas as movimentações vinculadas ao lançamento via
-    producao_diaria_id. Usada tanto para lançamento de produto único quanto
-    para cada item de um lançamento multi-produto, para que a reversão
-    (editar/excluir) sempre encontre o vínculo exato e nunca precise recorrer
-    ao fallback por data+responsável, que podia atingir outros lançamentos do
-    mesmo colaborador no mesmo dia."""
+                              perdas: list, sobra: float, col_nome: str, data: str):
+    """Dá baixa da produção, devolve a sobra ao saldo e registra a(s) perda(s)
+    de UM produto — todas as movimentações vinculadas ao lançamento via
+    producao_diaria_id. `perdas` é uma lista de (quantidade, tipo_perda,
+    observacao): cada motivo de perda vira sua própria movimentação de
+    estoque, mas o desconto do saldo é sempre a SOMA de todas elas — o
+    resultado final no estoque é idêntico a antes, só o registro fica mais
+    detalhado. Usada tanto para lançamento de produto único quanto para cada
+    item de um lançamento multi-produto, para que a reversão (editar/excluir)
+    sempre encontre o vínculo exato e nunca precise recorrer ao fallback por
+    data+responsável, que podia atingir outros lançamentos do mesmo
+    colaborador no mesmo dia."""
     consumo = quantidade or 0
-    perda = perda or 0
     sobra = sobra or 0
+    perdas = [(q or 0, t, o) for (q, t, o) in (perdas or []) if (q or 0) > 0]
+    total_perda = sum(q for q, _, _ in perdas)
 
     saldo = c.execute("SELECT quantidade FROM estoque_saldo WHERE produto_id=?", (produto_id,)).fetchone()
     saldo_atual = saldo["quantidade"] if saldo else 0
-    total_baixa = consumo + perda
+    total_baixa = consumo + total_perda
     novo_saldo = max(0, saldo_atual - total_baixa)
 
     if consumo > 0:
@@ -92,13 +127,19 @@ def _movimentar_estoque_item(c, prod_id: int, produto_id: int, quantidade: float
                   (produto_id, sobra, saldo_apos_consumo, saldo_apos_consumo + sobra, col_nome, data, prod_id))
         novo_saldo = novo_saldo + sobra
 
-    if perda > 0:
+    # cada motivo de perda vira uma movimentação própria — dá pra ter quantas
+    # linhas forem necessárias no mesmo lançamento (ex: 5 quebradas + 3 com
+    # falta na embalagem), cada uma com seu tipo e observação
+    saldo_rodante = saldo_apos_consumo
+    for qtd, tipo, obs in perdas:
+        saldo_rodante_depois = saldo_rodante - qtd
         c.execute("""INSERT INTO estoque_movimentacoes
                      (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior,
                       motivo, tipo_perda, responsavel, observacao, data, producao_diaria_id)
                      VALUES (?, 'perda', ?, ?, ?, 'Perda na produção', ?, ?, ?, ?, ?)""",
-                  (produto_id, perda, saldo_apos_consumo, novo_saldo,
-                   tipo_perda or 'quebra', col_nome, perda_observacao, data, prod_id))
+                  (produto_id, qtd, saldo_rodante, saldo_rodante_depois,
+                   tipo or 'quebra', col_nome, obs, data, prod_id))
+        saldo_rodante = saldo_rodante_depois
 
     if saldo:
         c.execute("UPDATE estoque_saldo SET quantidade=?, ultima_atualizacao=datetime('now') WHERE produto_id=?",
@@ -163,29 +204,33 @@ def registrar(p: ProducaoIn, current_user = Depends(get_current_user)):
     col = conn.execute("SELECT nome FROM colaboradores WHERE id=?", (p.colaborador_id,)).fetchone()
     col_nome = col["nome"] if col else "Operador"
 
+    # Soma real da perda (lista de motivos, ou o campo antigo se vier no formato
+    # legado) — precisa ser calculada ANTES do INSERT, pra gravar o total certo
+    # na coluna de resumo (perda_quantidade), que outros relatórios ainda usam.
+    perdas_header = _normalizar_perdas(p.perdas, p.perda_quantidade, p.perda_tipo, p.perda_observacao)
+    perda = sum(q for q, _, _ in perdas_header)
+
     c.execute("""INSERT INTO producao_diaria 
                  (colaborador_id, maquina_id, data, mes_referencia, meta, producao, excedente, produto_estoque_id, perda_quantidade, sobra_quantidade, pedido_numero)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
               (p.colaborador_id, p.maquina_id, p.data, mes, p.meta, p.producao, excedente,
-               p.produto_estoque_id, p.perda_quantidade or 0, p.sobra_quantidade or 0, p.pedido_numero))
+               p.produto_estoque_id, perda, p.sobra_quantidade or 0, p.pedido_numero))
     prod_id = c.lastrowid
-    perda = p.perda_quantidade or 0
     _salvar_itens_detalhe(c, prod_id, p)
 
     # ── Baixa no estoque: um item por produto (multi-produto) ou o produto único do cabeçalho
     itens_estoque = [it for it in (p.itens or []) if it.produto_estoque_id
-                      and ((it.quantidade or 0) > 0 or (it.perda_quantidade or 0) > 0 or (it.sobra_quantidade or 0) > 0)]
+                      and ((it.quantidade or 0) > 0 or (it.perdas or it.perda_quantidade or 0) or (it.sobra_quantidade or 0) > 0)]
 
     if itens_estoque:
         for item in itens_estoque:
+            perdas_item = _normalizar_perdas(item.perdas, item.perda_quantidade, item.tipo_perda or p.perda_tipo, item.observacao or p.perda_observacao)
             _movimentar_estoque_item(c, prod_id, item.produto_estoque_id, item.quantidade or 0,
-                                      item.perda_quantidade or 0, item.sobra_quantidade or 0,
-                                      item.tipo_perda or p.perda_tipo, item.observacao or p.perda_observacao, col_nome, p.data)
+                                      perdas_item, item.sobra_quantidade or 0, col_nome, p.data)
 
     elif p.produto_estoque_id and p.producao > 0:
         _movimentar_estoque_item(c, prod_id, p.produto_estoque_id, p.producao,
-                                  perda, p.sobra_quantidade or 0,
-                                  p.perda_tipo, p.perda_observacao, col_nome, p.data)
+                                  perdas_header, p.sobra_quantidade or 0, col_nome, p.data)
 
     # ── Registrar perda mesmo sem estoque vinculado
     # (pulado quando o frontend já fez as movimentações manualmente por produto —
@@ -334,32 +379,36 @@ def atualizar(id: int, p: ProducaoIn, current_user = Depends(get_current_user)):
                 p.meta = float(_mr[0])
         excedente = (p.producao - p.meta) if p.producao > 0 else 0
         mes = p.data[:7]
+
+        # Soma real da perda ANTES do UPDATE, pelo mesmo motivo do POST: a
+        # coluna de resumo precisa do total certo, não do campo antigo vazio.
+        perdas_header = _normalizar_perdas(p.perdas, p.perda_quantidade, p.perda_tipo, p.perda_observacao)
+        perda = sum(q for q, _, _ in perdas_header)
+
         cur.execute("""UPDATE producao_diaria 
                         SET colaborador_id=?, maquina_id=?, data=?, mes_referencia=?, 
                             meta=?, producao=?, excedente=?, produto_estoque_id=?, perda_quantidade=?, sobra_quantidade=?, pedido_numero=?
                         WHERE id=?""",
                      (p.colaborador_id, p.maquina_id, p.data, mes, p.meta, p.producao, excedente,
-                      p.produto_estoque_id, p.perda_quantidade or 0, p.sobra_quantidade or 0, p.pedido_numero, id))
+                      p.produto_estoque_id, perda, p.sobra_quantidade or 0, p.pedido_numero, id))
         _salvar_itens_detalhe(cur, id, p)
                       
         # 3. Registrar novos movimentos de estoque
         col = cur.execute("SELECT nome FROM colaboradores WHERE id=?", (p.colaborador_id,)).fetchone()
         col_nome = col["nome"] if col else "Operador"
-        perda = p.perda_quantidade or 0
         
         itens_estoque = [it for it in (p.itens or []) if it.produto_estoque_id
-                          and ((it.quantidade or 0) > 0 or (it.perda_quantidade or 0) > 0 or (it.sobra_quantidade or 0) > 0)]
+                          and ((it.quantidade or 0) > 0 or (it.perdas or it.perda_quantidade or 0) or (it.sobra_quantidade or 0) > 0)]
 
         if itens_estoque:
             for item in itens_estoque:
+                perdas_item = _normalizar_perdas(item.perdas, item.perda_quantidade, item.tipo_perda or p.perda_tipo, item.observacao or p.perda_observacao)
                 _movimentar_estoque_item(cur, id, item.produto_estoque_id, item.quantidade or 0,
-                                          item.perda_quantidade or 0, item.sobra_quantidade or 0,
-                                          item.tipo_perda or p.perda_tipo, item.observacao or p.perda_observacao, col_nome, p.data)
+                                          perdas_item, item.sobra_quantidade or 0, col_nome, p.data)
 
         elif p.produto_estoque_id and p.producao > 0:
             _movimentar_estoque_item(cur, id, p.produto_estoque_id, p.producao,
-                                      perda, p.sobra_quantidade or 0,
-                                      p.perda_tipo, p.perda_observacao, col_nome, p.data)
+                                      perdas_header, p.sobra_quantidade or 0, col_nome, p.data)
 
         elif perda > 0 and not p.movimentacao_manual:
             primeiro_produto = cur.execute(
