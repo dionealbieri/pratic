@@ -10,6 +10,7 @@ class PerdaLinhaIn(BaseModel):
     quantidade: float = 0
     tipo_perda: Optional[str] = None
     observacao: Optional[str] = None
+    nao_baixar_estoque: Optional[bool] = False
 
 class ProducaoItemIn(BaseModel):
     produto_estoque_id: Optional[int] = None
@@ -42,11 +43,12 @@ def _normalizar_perdas(perdas_list, fallback_qtd, fallback_tipo, fallback_obs):
     """Um produto pode ter vários motivos de perda no mesmo lançamento (ex:
     5 unidades quebradas + 3 com falta na embalagem). Se o frontend já manda
     a lista nova (`perdas`), usa ela. Senão, cai no formato antigo de um
-    valor só — mantém lançamentos e integrações anteriores funcionando."""
+    valor só — mantém lançamentos e integrações anteriores funcionando.
+    Cada linha vira uma tupla (quantidade, tipo, observação, não_baixa_estoque)."""
     if perdas_list:
-        return [(pl.quantidade or 0, pl.tipo_perda, pl.observacao) for pl in perdas_list if (pl.quantidade or 0) > 0]
+        return [(pl.quantidade or 0, pl.tipo_perda, pl.observacao, bool(pl.nao_baixar_estoque)) for pl in perdas_list if (pl.quantidade or 0) > 0]
     if (fallback_qtd or 0) > 0:
-        return [(fallback_qtd, fallback_tipo, fallback_obs)]
+        return [(fallback_qtd, fallback_tipo, fallback_obs, False)]
     return []
 
 def _salvar_itens_detalhe(cur, prod_id: int, p: "ProducaoIn"):
@@ -63,10 +65,10 @@ def _salvar_itens_detalhe(cur, prod_id: int, p: "ProducaoIn"):
     if p.itens:
         for item in p.itens:
             perdas = _normalizar_perdas(item.perdas, item.perda_quantidade, item.tipo_perda, item.observacao)
-            perda_total = sum(q for q, _, _ in perdas)
+            perda_total = sum(q for q, _, _, _ in perdas)
             if (item.quantidade or 0) <= 0 and perda_total <= 0 and (item.sobra_quantidade or 0) <= 0:
                 continue
-            tipos_distintos = {(t or p.perda_tipo or 'Quebra') for q, t, o in perdas}
+            tipos_distintos = {(t or p.perda_tipo or 'Quebra') for q, t, o, nb in perdas}
             tipo_perda_item = None
             if perda_total > 0:
                 tipo_perda_item = next(iter(tipos_distintos)) if len(tipos_distintos) == 1 else 'Múltiplos'
@@ -77,8 +79,8 @@ def _salvar_itens_detalhe(cur, prod_id: int, p: "ProducaoIn"):
                         perda_total, item.sobra_quantidade or 0, tipo_perda_item))
     else:
         perdas = _normalizar_perdas(p.perdas, p.perda_quantidade, p.perda_tipo, p.perda_observacao)
-        perda_total = sum(q for q, _, _ in perdas)
-        tipos_distintos = {(t or 'Quebra') for q, t, o in perdas}
+        perda_total = sum(q for q, _, _, _ in perdas)
+        tipos_distintos = {(t or 'Quebra') for q, t, o, nb in perdas}
         tipo_perda_header = None
         if perda_total > 0:
             tipo_perda_header = next(iter(tipos_distintos)) if len(tipos_distintos) == 1 else 'Múltiplos'
@@ -103,8 +105,11 @@ def _movimentar_estoque_item(c, prod_id: int, produto_id: int, quantidade: float
     colaborador no mesmo dia."""
     consumo = quantidade or 0
     sobra = sobra or 0
-    perdas = [(q or 0, t, o) for (q, t, o) in (perdas or []) if (q or 0) > 0]
-    total_perda = sum(q for q, _, _ in perdas)
+    perdas = [(q or 0, t, o, nb) for (q, t, o, nb) in (perdas or []) if (q or 0) > 0]
+    # perda com "não baixar estoque" fica registrada (pra rastreio/relatório),
+    # mas não entra na conta do que sai do saldo — usada quando a reposição é
+    # resolvida com o cliente por fora (abatimento em fatura), não fisicamente.
+    total_perda = sum(q for q, _, _, nb in perdas if not nb)
 
     saldo = c.execute("SELECT quantidade FROM estoque_saldo WHERE produto_id=?", (produto_id,)).fetchone()
     saldo_atual = saldo["quantidade"] if saldo else 0
@@ -129,16 +134,23 @@ def _movimentar_estoque_item(c, prod_id: int, produto_id: int, quantidade: float
 
     # cada motivo de perda vira uma movimentação própria — dá pra ter quantas
     # linhas forem necessárias no mesmo lançamento (ex: 5 quebradas + 3 com
-    # falta na embalagem), cada uma com seu tipo e observação
+    # falta na embalagem), cada uma com seu tipo e observação. Se a linha
+    # estiver marcada "não baixar estoque", ela fica registrada do mesmo jeito
+    # (pro histórico), só que o saldo antes/depois não muda — não desconta.
     saldo_rodante = saldo_apos_consumo
-    for qtd, tipo, obs in perdas:
-        saldo_rodante_depois = saldo_rodante - qtd
+    for qtd, tipo, obs, nao_baixar in perdas:
+        if nao_baixar:
+            saldo_rodante_depois = saldo_rodante
+            motivo_mov = 'Perda na produção (sem baixa no estoque — resolvido com o cliente)'
+        else:
+            saldo_rodante_depois = saldo_rodante - qtd
+            motivo_mov = 'Perda na produção'
         c.execute("""INSERT INTO estoque_movimentacoes
                      (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior,
                       motivo, tipo_perda, responsavel, observacao, data, producao_diaria_id)
-                     VALUES (?, 'perda', ?, ?, ?, 'Perda na produção', ?, ?, ?, ?, ?)""",
+                     VALUES (?, 'perda', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                   (produto_id, qtd, saldo_rodante, saldo_rodante_depois,
-                   tipo or 'quebra', col_nome, obs, data, prod_id))
+                   motivo_mov, tipo or 'quebra', col_nome, obs, data, prod_id))
         saldo_rodante = saldo_rodante_depois
 
     if saldo:
@@ -208,7 +220,7 @@ def registrar(p: ProducaoIn, current_user = Depends(get_current_user)):
     # legado) — precisa ser calculada ANTES do INSERT, pra gravar o total certo
     # na coluna de resumo (perda_quantidade), que outros relatórios ainda usam.
     perdas_header = _normalizar_perdas(p.perdas, p.perda_quantidade, p.perda_tipo, p.perda_observacao)
-    perda = sum(q for q, _, _ in perdas_header)
+    perda = sum(q for q, _, _, _ in perdas_header)
 
     c.execute("""INSERT INTO producao_diaria 
                  (colaborador_id, maquina_id, data, mes_referencia, meta, producao, excedente, produto_estoque_id, perda_quantidade, sobra_quantidade, pedido_numero)
@@ -339,14 +351,19 @@ def _reverter_estoque_producao(conn, prod_id: int):
     for m in movs:
         m_id = m["id"]
         m_prod_id = m["produto_id"]
-        m_tipo = m["tipo"]
-        m_qtd = m["quantidade"]
-
-        diff = 0
-        if m_tipo in ("entrada", "sobra"):
-            diff = m_qtd
-        elif m_tipo in ("saida", "perda"):
-            diff = -m_qtd
+        # Usa o saldo antes/depois que já está gravado em cada movimentação —
+        # mais confiável que assumir pelo tipo, porque uma perda marcada como
+        # "não baixar estoque" (abatimento resolvido com o cliente, não
+        # fisicamente) é registrada com saldo_anterior == saldo_posterior:
+        # ela nunca descontou nada, então reverter não deve devolver nada.
+        saldo_anterior_mov = m["saldo_anterior"]
+        saldo_posterior_mov = m["saldo_posterior"]
+        if saldo_anterior_mov is not None and saldo_posterior_mov is not None:
+            diff = saldo_posterior_mov - saldo_anterior_mov
+        else:
+            m_tipo = m["tipo"]
+            m_qtd = m["quantidade"]
+            diff = m_qtd if m_tipo in ("entrada", "sobra") else (-m_qtd if m_tipo in ("saida", "perda") else 0)
 
         saldo_row = conn.execute("SELECT quantidade FROM estoque_saldo WHERE produto_id = ?", (m_prod_id,)).fetchone()
         saldo_atual = saldo_row["quantidade"] if saldo_row else 0
@@ -383,7 +400,7 @@ def atualizar(id: int, p: ProducaoIn, current_user = Depends(get_current_user)):
         # Soma real da perda ANTES do UPDATE, pelo mesmo motivo do POST: a
         # coluna de resumo precisa do total certo, não do campo antigo vazio.
         perdas_header = _normalizar_perdas(p.perdas, p.perda_quantidade, p.perda_tipo, p.perda_observacao)
-        perda = sum(q for q, _, _ in perdas_header)
+        perda = sum(q for q, _, _, _ in perdas_header)
 
         cur.execute("""UPDATE producao_diaria 
                         SET colaborador_id=?, maquina_id=?, data=?, mes_referencia=?, 

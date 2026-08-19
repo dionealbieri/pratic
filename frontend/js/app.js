@@ -2457,6 +2457,13 @@ function renderProdItens() {
                      ${item.concluido ? 'disabled' : ''}
                      style="font-size:13px;padding:8px 10px;width:100%;margin-top:6px">
             ` : ''}
+            <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;color:var(--muted);cursor:pointer">
+              <input type="checkbox" ${linha.nao_baixar_estoque ? 'checked' : ''}
+                     onchange="prodItens[${idx}].perdas[${li}].nao_baixar_estoque=this.checked"
+                     ${item.concluido ? 'disabled' : ''}
+                     style="margin:0;width:14px;height:14px;cursor:pointer">
+              Não baixar do estoque (resolvido com o cliente, ex: abatimento em fatura)
+            </label>
           </div>
           <button class="btn btn-sm btn-danger" onclick="removePerdaLinha(${idx}, ${li})" ${item.concluido ? 'disabled' : ''} style="padding:6px 8px" title="Remover este motivo">✕</button>
         </div>
@@ -2896,7 +2903,7 @@ async function executarSalvarProducao() {
         colaborador_id: colId, maquina_id: maqId, data, meta,
         producao: item.producao || 0,
         produto_estoque_id: item.produto_id,
-        perdas: (item.perdas || []).map(pl => ({ quantidade: pl.quantidade || 0, tipo_perda: pl.tipo_perda, observacao: pl.observacao || null })),
+        perdas: (item.perdas || []).map(pl => ({ quantidade: pl.quantidade || 0, tipo_perda: pl.tipo_perda, observacao: pl.observacao || null, nao_baixar_estoque: !!pl.nao_baixar_estoque })),
         sobra_quantidade: item.sobra || 0,
         pedido_numero: pedidoManual || null
       });
@@ -2914,7 +2921,7 @@ async function executarSalvarProducao() {
           colaborador_id: colId, maquina_id: maqId, data, meta,
           producao: totalProducao,
           produto_estoque_id: primItem.produto_id,
-          perdas: (primItem.perdas || []).map(pl => ({ quantidade: pl.quantidade || 0, tipo_perda: pl.tipo_perda, observacao: pl.observacao || null })),
+          perdas: (primItem.perdas || []).map(pl => ({ quantidade: pl.quantidade || 0, tipo_perda: pl.tipo_perda, observacao: pl.observacao || null, nao_baixar_estoque: !!pl.nao_baixar_estoque })),
           sobra_quantidade: primItem.sobra || 0,
           pedido_numero: pedidoManual || null
         });
@@ -2941,7 +2948,7 @@ async function executarSalvarProducao() {
             produto_estoque_id: i.produto_id,
             quantidade: i.producao || 0,
             sobra_quantidade: i.sobra || 0,
-            perdas: (i.perdas || []).map(pl => ({ quantidade: pl.quantidade || 0, tipo_perda: pl.tipo_perda, observacao: pl.observacao || null }))
+            perdas: (i.perdas || []).map(pl => ({ quantidade: pl.quantidade || 0, tipo_perda: pl.tipo_perda, observacao: pl.observacao || null, nao_baixar_estoque: !!pl.nao_baixar_estoque }))
           }))
         });
       }
@@ -9817,7 +9824,9 @@ function gerarSolicitacaoAvulsa() {
   const win = window.open('', '_blank');
   win.document.write(`<html><head><title>${tituloRelatorio} PRATIC</title>
     <style>@page{size:A4;margin:15mm 15mm 15mm 15mm}
-    body{font-family:Arial,sans-serif;margin:0;font-size:13px;color:#111}</style></head><body>
+    body{font-family:Arial,sans-serif;margin:0;font-size:13px;color:#111}
+    @media screen{body{padding:20mm 15mm;max-width:210mm;margin:0 auto;box-sizing:border-box}}
+    @media print{body{padding:0}}</style></head><body>
     ${_getEmpresaHeader(tituloRelatorio)}
     <div style="font-size:10px;color:#777;margin-bottom:16px">Emitido em: ${new Date().toLocaleString('pt-BR')}</div>
     ${corpo}
@@ -10070,7 +10079,9 @@ function gerarPedidoCompra() {
   const win = window.open('', '_blank');
   win.document.write(`<html><head><title>${tituloRelatorio} PRATIC</title>
     <style>@page{size:A4;margin:15mm 15mm 15mm 15mm}
-    body{font-family:Arial,sans-serif;margin:0;font-size:13px;color:#111}</style></head><body>
+    body{font-family:Arial,sans-serif;margin:0;font-size:13px;color:#111}
+    @media screen{body{padding:20mm 15mm;max-width:210mm;margin:0 auto;box-sizing:border-box}}
+    @media print{body{padding:0}}</style></head><body>
     ${_getEmpresaHeader(tituloRelatorio)}
     <div style="font-size:10px;color:#777;margin-bottom:16px">Emitido em: ${new Date().toLocaleString('pt-BR')}</div>
     ${corpo}
@@ -10112,7 +10123,9 @@ function imprimirListaCompras() {
   const win = window.open('', '_blank');
   win.document.write(`<html><head><title>Lista de Compras PRATIC</title>
     <style>@page{size:A4;margin:15mm 15mm 15mm 15mm}
-    body{font-family:Arial,sans-serif;margin:0;font-size:13px;color:#111}</style></head><body>
+    body{font-family:Arial,sans-serif;margin:0;font-size:13px;color:#111}
+    @media screen{body{padding:20mm 15mm;max-width:210mm;margin:0 auto;box-sizing:border-box}}
+    @media print{body{padding:0}}</style></head><body>
     ${_getEmpresaHeader('Lista de Compras')}
     <div style="font-size:10px;color:#777;margin-bottom:12px">Emitido em: ${new Date().toLocaleString('pt-BR')}</div>
     <div style="max-width:460px">${corpo}</div>
