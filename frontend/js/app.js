@@ -2457,12 +2457,12 @@ function renderProdItens() {
                      ${item.concluido ? 'disabled' : ''}
                      style="font-size:13px;padding:8px 10px;width:100%;margin-top:6px">
             ` : ''}
-            <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;color:var(--muted);cursor:pointer">
+            <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;color:var(--warn);font-weight:600;cursor:pointer">
               <input type="checkbox" ${linha.nao_baixar_estoque ? 'checked' : ''}
                      onchange="prodItens[${idx}].perdas[${li}].nao_baixar_estoque=this.checked"
                      ${item.concluido ? 'disabled' : ''}
-                     style="margin:0;width:14px;height:14px;cursor:pointer">
-              Não baixar do estoque (resolvido com o cliente, ex: abatimento em fatura)
+                     style="margin:0;width:14px;height:14px;cursor:pointer;accent-color:var(--warn)">
+              ⚠️ Não baixar do estoque (resolvido com o cliente, ex: abatimento em fatura)
             </label>
           </div>
           <button class="btn btn-sm btn-danger" onclick="removePerdaLinha(${idx}, ${li})" ${item.concluido ? 'disabled' : ''} style="padding:6px 8px" title="Remover este motivo">✕</button>
