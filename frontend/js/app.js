@@ -5608,8 +5608,6 @@ async function marcarRevendaSeparado(pedidoId, itemId, qtd, marcar) {
     const r = await api('/pedidos/itens/'+itemId+'/separar-revenda','POST',{ marcar: !!marcar });
     if (marcar && r.sem_vinculo) {
       showAlert('Marcado, mas SEM baixa de estoque: vincule o item a um produto de revenda primeiro.', 'warn');
-    } else if (marcar && r.saldo_insuficiente) {
-      showAlert('Separado com baixa — atenção: faltaram '+fmtNum(r.faltou)+' un no estoque (saldo ficou '+fmtNum(r.saldo_atual)+').', 'warn');
     } else {
       showAlert(marcar ? 'Separado/Entregue — baixa registrada no estoque' : 'Desfeito — estoque estornado');
     }

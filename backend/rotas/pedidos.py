@@ -1824,18 +1824,22 @@ def separar_revenda_item(id: int, body: SepararRevendaIn):
     indo_entregue = marcar and item["status"] != "entregue"
     voltando = (not marcar) and item["status"] == "entregue"
 
-    saldo_insuficiente = False
-    faltou = 0
     sem_vinculo = False
     saldo_atual = None
 
     if indo_entregue:
         if produto_id:
+            # Bloqueia de verdade: não deixa separar mais do que existe em
+            # estoque (antes disso era permitido e só avisava depois — o
+            # aviso passava despercebido e o saldo ficava negativo sem
+            # ninguém perceber o motivo).
+            saldo_row = cur.execute("SELECT quantidade FROM estoque_saldo WHERE produto_id=?", (produto_id,)).fetchone()
+            saldo_disponivel = saldo_row["quantidade"] if saldo_row else 0
+            if qtd > saldo_disponivel:
+                conn.close()
+                raise HTTPException(400, f"Saldo insuficiente para separar este item. Precisa de {qtd:g}, mas só tem {saldo_disponivel:g} em estoque.")
             saldo, novo = _mov("saida", f"Separação pedido {numero}")
             saldo_atual = novo
-            if qtd > saldo:
-                saldo_insuficiente = True
-                faltou = qtd - saldo
         else:
             sem_vinculo = True
         cur.execute("UPDATE pedidos_itens SET status='entregue', qtd_produzida=? WHERE id=?", (qtd, id))
@@ -1856,8 +1860,6 @@ def separar_revenda_item(id: int, body: SepararRevendaIn):
     conn.close()
     return {
         "mensagem": "Item separado/entregue" if marcar else "Marcação desfeita",
-        "saldo_insuficiente": saldo_insuficiente,
-        "faltou": faltou,
         "sem_vinculo": sem_vinculo,
         "saldo_atual": saldo_atual,
     }
