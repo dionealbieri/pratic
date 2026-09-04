@@ -482,6 +482,45 @@ def init_db():
     cols_mov = [r[1] for r in conn.execute("PRAGMA table_info(estoque_movimentacoes)").fetchall()]
     if "producao_diaria_id" not in cols_mov:
         conn.execute("ALTER TABLE estoque_movimentacoes ADD COLUMN producao_diaria_id INTEGER")
+    if "pedido_numero" not in cols_mov:
+        # coluna própria pro número do pedido — antes só existia escondido
+        # dentro do texto do motivo ("Separação pedido X"), sem dar pra
+        # filtrar/consultar as saídas de um pedido específico
+        conn.execute("ALTER TABLE estoque_movimentacoes ADD COLUMN pedido_numero TEXT")
+
+    # Preenchimento retroativo (idempotente, roda sem custo depois da primeira
+    # vez): movimentações antigas ligadas a um lançamento de produção
+    # (producao_diaria_id) já tinham o número do pedido gravado ali — só não
+    # existia essa coluna própria ainda. Recupera de lá, sem precisar mexer
+    # em nenhum lançamento manualmente.
+    conn.execute("""
+        UPDATE estoque_movimentacoes
+        SET pedido_numero = (
+            SELECT p.pedido_numero FROM producao_diaria p WHERE p.id = estoque_movimentacoes.producao_diaria_id
+        )
+        WHERE producao_diaria_id IS NOT NULL
+          AND (pedido_numero IS NULL OR pedido_numero = '')
+          AND EXISTS (
+              SELECT 1 FROM producao_diaria p WHERE p.id = estoque_movimentacoes.producao_diaria_id
+              AND p.pedido_numero IS NOT NULL AND p.pedido_numero != ''
+          )
+    """)
+
+    # Segundo caso de preenchimento retroativo: movimentações de separação de
+    # revenda (não passam por producao_diaria_id) guardavam o número do
+    # pedido só no texto do motivo — "Separação pedido X" / "Estorno
+    # separação pedido X". SQLite não tem regex embutida, então extrai em
+    # Python mesmo (é um laço pequeno, roda uma vez só por movimentação).
+    rows_sep = conn.execute("""
+        SELECT id, motivo FROM estoque_movimentacoes
+        WHERE (pedido_numero IS NULL OR pedido_numero = '')
+          AND (motivo LIKE 'Separação pedido %' OR motivo LIKE 'Estorno separação pedido %')
+    """).fetchall()
+    for row in rows_sep:
+        motivo = (row["motivo"] or "").strip()
+        numero = motivo.rsplit(" ", 1)[-1].strip() if motivo else ""
+        if numero:
+            conn.execute("UPDATE estoque_movimentacoes SET pedido_numero=? WHERE id=?", (numero, row["id"]))
 
     cols_ped = [r[1] for r in conn.execute("PRAGMA table_info(pedidos)").fetchall()]
     if "acrescimo" not in cols_ped:
