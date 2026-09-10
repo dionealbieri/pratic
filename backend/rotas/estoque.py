@@ -71,6 +71,9 @@ class CategoriaIn(BaseModel):
     tipo: Optional[str] = "producao"  # 'producao' (fabricado) ou 'revenda' (comprado pronto)
     parent_id: Optional[int] = None
 
+class UnidadeIn(BaseModel):
+    nome: str
+
 class ProdutoIn(BaseModel):
     codigo: Optional[str] = None
     categoria_id: Optional[int] = None
@@ -153,6 +156,32 @@ def deletar_categoria(id: int):
     finally:
         conn.close()
     return {"mensagem": "Categoria removida"}
+
+# ─── UNIDADES DE MEDIDA ────────────────────────────────────────────────────────
+
+@router.get("/unidades")
+def listar_unidades():
+    conn = get_conn()
+    rows = conn.execute("SELECT id, nome FROM estoque_unidades ORDER BY nome").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+@router.post("/unidades")
+def criar_unidade(u: UnidadeIn):
+    nome = (u.nome or "").strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Informe o nome da unidade")
+    conn = get_conn()
+    existente = conn.execute("SELECT id, nome FROM estoque_unidades WHERE LOWER(nome)=LOWER(?)", (nome,)).fetchone()
+    if existente:
+        conn.close()
+        return {"id": existente["id"], "nome": existente["nome"], "mensagem": "Essa unidade já existia"}
+    cur = conn.cursor()
+    cur.execute("INSERT INTO estoque_unidades (nome) VALUES (?)", (nome,))
+    conn.commit()
+    id = cur.lastrowid
+    conn.close()
+    return {"id": id, "nome": nome, "mensagem": "Unidade criada"}
 
 # ─── PRODUTOS ─────────────────────────────────────────────────────────────────
 

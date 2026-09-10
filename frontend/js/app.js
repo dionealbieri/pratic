@@ -6331,10 +6331,52 @@ window.importarPedidoArquivo = importarPedidoArquivo;
 
 let pedidoItens=[];
 let produtosEstoque=[];
+let unidadesEstoqueCache = ['unidade','und','milheiro','kg','litro','metro','caixa','pacote','par'];
+
+// Busca a lista de unidades cadastradas (Produtos > Cadastrar Produto > + Nova unidade).
+// Mantém a lista padrão acima como fallback caso a API falhe.
+async function carregarUnidadesEstoque() {
+  try {
+    const lista = await api('/estoque/unidades');
+    if (Array.isArray(lista) && lista.length) {
+      unidadesEstoqueCache = lista.map(u => u.nome);
+    }
+  } catch(e) { /* mantém a lista padrão em caso de falha */ }
+  return unidadesEstoqueCache;
+}
+window.carregarUnidadesEstoque = carregarUnidadesEstoque;
+
+// Preenche o select de unidade do modal "Cadastrar/Editar Produto", com a
+// opção "+ Nova unidade..." ao final para cadastrar uma unidade nova na hora.
+function renderSelectUnidadesProduto(valorAtual) {
+  const sel = document.getElementById('est-prod-unidade');
+  if (!sel) return;
+  const atual = valorAtual !== undefined ? valorAtual : sel.value;
+  sel.innerHTML = unidadesEstoqueCache.map(u => `<option value="${u}" ${u===atual?'selected':''}>${u}</option>`).join('')
+    + `<option value="__nova_unidade__">+ Nova unidade...</option>`;
+}
+window.renderSelectUnidadesProduto = renderSelectUnidadesProduto;
+
+async function onChangeUnidadeProduto(sel) {
+  if (sel.value !== '__nova_unidade__') return;
+  const nome = prompt('Nome da nova unidade (ex: par, dz, kit):');
+  if (!nome || !nome.trim()) { renderSelectUnidadesProduto('unidade'); return; }
+  try {
+    const criada = await api('/estoque/unidades', 'POST', { nome: nome.trim() });
+    await carregarUnidadesEstoque();
+    renderSelectUnidadesProduto(criada.nome);
+    showAlert('Unidade criada!');
+  } catch (e) {
+    showAlert(e.message || 'Erro ao criar unidade', 'danger');
+    renderSelectUnidadesProduto('unidade');
+  }
+}
+window.onChangeUnidadeProduto = onChangeUnidadeProduto;
 
 async function carregarProdutosEstoque() {
   try { produtosEstoque = await api('/estoque/produtos'); }
   catch(e) { produtosEstoque = []; }
+  await carregarUnidadesEstoque();
   let dl = document.getElementById('produtos-datalist');
   if (!dl) { dl = document.createElement('datalist'); dl.id = 'produtos-datalist'; document.body.appendChild(dl); }
   const esc = s => String(s||'').replace(/"/g,'&quot;');
@@ -6352,7 +6394,7 @@ function selecionarProdutoPedidoItem(idx, valor) {
   if (matches.length === 1) {
     pedidoItens[idx].produto_id = matches[0].id;
     const u = matches[0].unidade;
-    const opts = ['unidade','und','milheiro','kg','litro','metro','caixa','pacote'];
+    const opts = unidadesEstoqueCache;
     if (u && opts.includes(u)) { pedidoItens[idx].unidade = u; renderItensPedido(); }
   } else {
     pedidoItens[idx].produto_id = null;
@@ -6457,7 +6499,7 @@ function fecharProdCombo(idx) {
     if (matches.length === 1) {
       pedidoItens[idx].produto_id = matches[0].id;
       const u = matches[0].unidade;
-      const opts = ['unidade','und','milheiro','kg','litro','metro','caixa','pacote'];
+      const opts = unidadesEstoqueCache;
       if (u && opts.includes(u)) {
         pedidoItens[idx].unidade = u;
       }
@@ -6468,7 +6510,7 @@ function fecharProdCombo(idx) {
         pedidoItens[idx].produto_id = bestId;
         const matchedProd = (produtosEstoque || []).find(p => p.id === bestId);
         if (matchedProd && matchedProd.unidade) {
-          const opts = ['unidade','und','milheiro','kg','litro','metro','caixa','pacote'];
+          const opts = unidadesEstoqueCache;
           if (opts.includes(matchedProd.unidade)) {
             pedidoItens[idx].unidade = matchedProd.unidade;
           }
@@ -6487,7 +6529,7 @@ function selecionarProdComboItem(idx, prodId) {
   if (!p || !pedidoItens[idx]) return;
   pedidoItens[idx].descricao = p.nome;
   pedidoItens[idx].produto_id = p.id;
-  const opts = ['unidade', 'und', 'milheiro', 'kg', 'litro', 'metro', 'caixa', 'pacote'];
+  const opts = unidadesEstoqueCache;
   if (p.unidade && opts.includes(p.unidade)) pedidoItens[idx].unidade = p.unidade;
   // sincroniza o texto da caixa com o produto escolhido e fecha o combo
   // (NAO chamar fecharProdCombo aqui: ele relê o texto antigo e zera o produto_id)
@@ -6517,7 +6559,7 @@ function renderItensPedido() {
         if (matches.length === 1) {
           item.produto_id = matches[0].id;
           const u = matches[0].unidade;
-          const opts = ['unidade','und','milheiro','kg','litro','metro','caixa','pacote'];
+          const opts = unidadesEstoqueCache;
           if (u && opts.includes(u)) {
             item.unidade = u;
           }
@@ -6528,7 +6570,7 @@ function renderItensPedido() {
             item.produto_id = bestId;
             const matchedProd = produtosEstoque.find(p => p.id === bestId);
             if (matchedProd && matchedProd.unidade) {
-              const opts = ['unidade','und','milheiro','kg','litro','metro','caixa','pacote'];
+              const opts = unidadesEstoqueCache;
               if (opts.includes(matchedProd.unidade)) {
                 item.unidade = matchedProd.unidade;
               }
@@ -6562,7 +6604,7 @@ function renderItensPedido() {
       </div>
       <input type="number" value="${item.quantidade}" min="1" placeholder="Qtd" oninput="pedidoItens[${idx}].quantidade=+this.value" style="width:80px;font-size:13px;${isUnregistered ? 'align-self: flex-start; margin-top: 1px;' : ''}">
       <select onchange="pedidoItens[${idx}].unidade=this.value" style="font-size:13px;${isUnregistered ? 'align-self: flex-start; margin-top: 1px;' : ''}">
-        ${['unidade','und','milheiro','kg','litro','metro','caixa','pacote'].map(u=>`<option value="${u}" ${item.unidade===u?'selected':''}>${u}</option>`).join('')}
+        ${unidadesEstoqueCache.map(u=>`<option value="${u}" ${item.unidade===u?'selected':''}>${u}</option>`).join('')}
       </select>
       <button class="btn btn-sm btn-danger" onclick="pedidoItens.splice(${idx},1);renderItensPedido()" style="${isUnregistered ? 'align-self: flex-start; margin-top: 1px;' : ''}">✕</button>
     </div>`;
@@ -8202,12 +8244,13 @@ async function loadProdutos() {
 
 async function openModalProduto() {
   await loadCategoriasFiltro();
+  await carregarUnidadesEstoque();
   _setVal('est-prod-id', '');
   _setVal('est-prod-codigo', '');
   _setVal('est-prod-nome', '');
   _setVal('est-prod-cat', '');
   _setVal('est-prod-marca', '');
-  _setVal('est-prod-unidade', 'unidade');
+  renderSelectUnidadesProduto('unidade');
   _setVal('est-prod-minimo', '0');
   _setVal('est-prod-custo', '0');
   _setVal('est-prod-preco', '0');
@@ -8222,12 +8265,13 @@ async function openModalProduto() {
 async function editProduto(id) {
   const p = await api('/estoque/produtos/' + id);
   await loadCategoriasFiltro();
+  await carregarUnidadesEstoque();
   _setVal('est-prod-id', p.id);
   _setVal('est-prod-codigo', p.codigo || '');
   _setVal('est-prod-nome', p.nome);
   _setVal('est-prod-cat', p.categoria_id || '');
   _setVal('est-prod-marca', p.marca || '');
-  _setVal('est-prod-unidade', p.unidade || 'unidade');
+  renderSelectUnidadesProduto(p.unidade || 'unidade');
   _setVal('est-prod-minimo', p.estoque_minimo || 0);
   _setVal('est-prod-custo', p.custo || 0);
   _setVal('est-prod-preco', p.preco || 0);

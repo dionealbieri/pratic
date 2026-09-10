@@ -219,7 +219,7 @@ def _parse_pedido_text(texto: str) -> dict:
         obs = _clean_line(m.group(1))[:1000]
 
     itens = []
-    unidade_pat = r"(?:und|unid|un|kg|g|litro|lt|l|metro|mt|m|caixa|cx|pacote|pct|pc|pç)"
+    unidade_pat = r"(?:und|unid|un|kg|g|litro|lt|l|metro|mt|m|caixa|cx|pacote|pct|pc|pç|par|pares)"
     stop_words = re.compile(r"^(Parcela|Forma de Pagamento|SubTotal|Acr[eé]scimo|Frete|Desconto|Valor Total|Quantidade Itens|Peso dos Produtos|Observa[çc][aã]o)", re.I)
     for line in lines:
         if stop_words.search(line):
@@ -273,7 +273,7 @@ def _parse_pedido_text(texto: str) -> dict:
 
 _UNIDADES_SAC = {"und", "unid", "un", "kg", "g", "litro", "lt", "l", "metro", "mt",
                  "m", "caixa", "cx", "pacote", "pct", "pc", "pç", "pçs", "milheiro",
-                 "mil", "cento", "ct", "rolo", "fardo", "fd"}
+                 "mil", "cento", "ct", "rolo", "fardo", "fd", "par", "pares"}
 
 def _is_pedido_sac(texto: str) -> bool:
     t = (texto or "")

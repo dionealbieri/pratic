@@ -413,6 +413,20 @@ def init_db():
     for row in conn.execute("SELECT DISTINCT tipo FROM colaboradores WHERE COALESCE(tipo,'')<>''").fetchall():
         conn.execute("INSERT OR IGNORE INTO colaborador_tipos (nome, ativo) VALUES (?, 1)", (row[0],))
 
+    # Unidades de medida configuráveis: cadastradas pela tela de Produtos (opção
+    # "+ Nova unidade") e reaproveitadas em Pedidos e Movimentações.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS estoque_unidades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT UNIQUE NOT NULL,
+            criado_em TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    for unidade_padrao in ("unidade", "und", "milheiro", "kg", "litro", "metro", "caixa", "pacote", "par"):
+        conn.execute("INSERT OR IGNORE INTO estoque_unidades (nome) VALUES (?)", (unidade_padrao,))
+    for row in conn.execute("SELECT DISTINCT unidade FROM estoque_produtos WHERE COALESCE(unidade,'')<>''").fetchall():
+        conn.execute("INSERT OR IGNORE INTO estoque_unidades (nome) VALUES (?)", (row[0],))
+
     # Migração: controle por tipo de colaborador
     #   aparece_producao = aparece na seleção da Produção Diária e conta nos totais/ranking
     #   concorre_premio  = concorre ao prêmio de operador
