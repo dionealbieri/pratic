@@ -47,6 +47,7 @@ class ItemPedidoIn(BaseModel):
     unidade: Optional[str] = "unidade"
     valor_unitario: Optional[float] = 0.0
     desconto: Optional[float] = 0.0
+    insumo_vinculado_id: Optional[int] = None  # ex.: palmilha escolhida para este item, quando a categoria do produto exige
 
 class ParcelaPedidoIn(BaseModel):
     forma_pagamento: Optional[str] = ""
@@ -1484,9 +1485,9 @@ def criar_pedido(p: PedidoIn):
             if p_info:
                 vunit = p_info["preco"] or 0.0
         cur.execute("""INSERT INTO pedidos_itens
-            (pedido_id, produto_id, descricao, quantidade, unidade, valor_unitario, desconto, qtd_produzida, status)
-            VALUES (?,?,?,?,?,?,?,0,'aberto')""",
-            (pedido_id, item.produto_id, item.descricao, item.quantidade, item.unidade, vunit, item.desconto or 0))
+            (pedido_id, produto_id, descricao, quantidade, unidade, valor_unitario, desconto, insumo_vinculado_id, qtd_produzida, status)
+            VALUES (?,?,?,?,?,?,?,?,0,'aberto')""",
+            (pedido_id, item.produto_id, item.descricao, item.quantidade, item.unidade, vunit, item.desconto or 0, item.insumo_vinculado_id))
     if p.parcelas:
         for parc in p.parcelas:
             cur.execute("""INSERT INTO pedidos_parcelas
@@ -1547,9 +1548,9 @@ def atualizar_pedido(id: int, p: PedidoIn):
             if p_info:
                 vunit = p_info["preco"] or 0.0
         cur.execute("""INSERT INTO pedidos_itens
-            (pedido_id, produto_id, descricao, quantidade, unidade, valor_unitario, desconto, qtd_produzida, status)
-            VALUES (?,?,?,?,?,?,?,?,?)""",
-            (id, item.produto_id, item.descricao, item.quantidade, item.unidade, vunit, item.desconto or 0, qtd_produzida, status))
+            (pedido_id, produto_id, descricao, quantidade, unidade, valor_unitario, desconto, insumo_vinculado_id, qtd_produzida, status)
+            VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (id, item.produto_id, item.descricao, item.quantidade, item.unidade, vunit, item.desconto or 0, item.insumo_vinculado_id, qtd_produzida, status))
             
     cur.execute("DELETE FROM pedidos_parcelas WHERE pedido_id=?", (id,))
     if p.parcelas:

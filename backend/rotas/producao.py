@@ -160,6 +160,50 @@ def _movimentar_estoque_item(c, prod_id: int, produto_id: int, quantidade: float
         c.execute("INSERT INTO estoque_saldo (produto_id, quantidade) VALUES (?, ?)",
                      (produto_id, novo_saldo))
 
+def _baixar_insumo_vinculado(c, prod_id: int, produto_id: int, quantidade: float,
+                             pedido_numero, col_nome: str, data: str):
+    """Se a categoria do produto exige um insumo vinculado (ex.: Chinelos exige
+    Palmilha) e o item do pedido já tem esse insumo escolhido (a cor definida
+    na hora da venda), dá baixa dele também, na mesma quantidade (1 par de
+    insumo por par produzido) e vinculada ao MESMO lançamento (producao_diaria_id)
+    — assim, editar ou excluir a produção reverte os dois juntos automaticamente,
+    reaproveitando o _reverter_estoque_producao que já existe."""
+    if (quantidade or 0) <= 0 or not produto_id:
+        return
+    cat = c.execute("""
+        SELECT ec.categoria_vinculada_id
+        FROM estoque_produtos ep
+        JOIN estoque_categorias ec ON ep.categoria_id = ec.id
+        WHERE ep.id = ?
+    """, (produto_id,)).fetchone()
+    if not cat or not cat["categoria_vinculada_id"]:
+        return
+    if not pedido_numero:
+        return
+    item_pedido = c.execute("""
+        SELECT pi.insumo_vinculado_id
+        FROM pedidos_itens pi
+        JOIN pedidos pe ON pi.pedido_id = pe.id
+        WHERE pe.numero_pedido = ? AND pi.produto_id = ? AND pi.insumo_vinculado_id IS NOT NULL
+        LIMIT 1
+    """, (str(pedido_numero), produto_id)).fetchone()
+    if not item_pedido:
+        return
+    insumo_id = item_pedido["insumo_vinculado_id"]
+
+    saldo = c.execute("SELECT quantidade FROM estoque_saldo WHERE produto_id=?", (insumo_id,)).fetchone()
+    saldo_atual = saldo["quantidade"] if saldo else 0
+    novo_saldo = max(0, saldo_atual - quantidade)
+    c.execute("""INSERT INTO estoque_movimentacoes
+                 (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior, motivo, responsavel, data, producao_diaria_id)
+                 VALUES (?, 'saida', ?, ?, ?, 'Baixa automática — insumo vinculado à produção', ?, ?, ?)""",
+              (insumo_id, quantidade, saldo_atual, novo_saldo, col_nome, data, prod_id))
+    if saldo:
+        c.execute("UPDATE estoque_saldo SET quantidade=?, ultima_atualizacao=datetime('now') WHERE produto_id=?",
+                  (novo_saldo, insumo_id))
+    else:
+        c.execute("INSERT INTO estoque_saldo (produto_id, quantidade) VALUES (?, ?)", (insumo_id, novo_saldo))
+
 @router.get("/")
 def listar(mes: Optional[str] = None, colaborador_id: Optional[int] = None):
     conn = get_conn()
@@ -239,10 +283,14 @@ def registrar(p: ProducaoIn, current_user = Depends(get_current_user)):
             perdas_item = _normalizar_perdas(item.perdas, item.perda_quantidade, item.tipo_perda or p.perda_tipo, item.observacao or p.perda_observacao)
             _movimentar_estoque_item(c, prod_id, item.produto_estoque_id, item.quantidade or 0,
                                       perdas_item, item.sobra_quantidade or 0, col_nome, p.data)
+            _baixar_insumo_vinculado(c, prod_id, item.produto_estoque_id, item.quantidade or 0,
+                                      p.pedido_numero, col_nome, p.data)
 
     elif p.produto_estoque_id and p.producao > 0:
         _movimentar_estoque_item(c, prod_id, p.produto_estoque_id, p.producao,
                                   perdas_header, p.sobra_quantidade or 0, col_nome, p.data)
+        _baixar_insumo_vinculado(c, prod_id, p.produto_estoque_id, p.producao,
+                                  p.pedido_numero, col_nome, p.data)
 
     # ── Registrar perda mesmo sem estoque vinculado
     # (pulado quando o frontend já fez as movimentações manualmente por produto —
@@ -422,10 +470,14 @@ def atualizar(id: int, p: ProducaoIn, current_user = Depends(get_current_user)):
                 perdas_item = _normalizar_perdas(item.perdas, item.perda_quantidade, item.tipo_perda or p.perda_tipo, item.observacao or p.perda_observacao)
                 _movimentar_estoque_item(cur, id, item.produto_estoque_id, item.quantidade or 0,
                                           perdas_item, item.sobra_quantidade or 0, col_nome, p.data)
+                _baixar_insumo_vinculado(cur, id, item.produto_estoque_id, item.quantidade or 0,
+                                          p.pedido_numero, col_nome, p.data)
 
         elif p.produto_estoque_id and p.producao > 0:
             _movimentar_estoque_item(cur, id, p.produto_estoque_id, p.producao,
                                       perdas_header, p.sobra_quantidade or 0, col_nome, p.data)
+            _baixar_insumo_vinculado(cur, id, p.produto_estoque_id, p.producao,
+                                      p.pedido_numero, col_nome, p.data)
 
         elif perda > 0 and not p.movimentacao_manual:
             primeiro_produto = cur.execute(

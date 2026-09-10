@@ -6377,6 +6377,7 @@ async function carregarProdutosEstoque() {
   try { produtosEstoque = await api('/estoque/produtos'); }
   catch(e) { produtosEstoque = []; }
   await carregarUnidadesEstoque();
+  await loadCategoriasFiltro();
   let dl = document.getElementById('produtos-datalist');
   if (!dl) { dl = document.createElement('datalist'); dl.id = 'produtos-datalist'; document.body.appendChild(dl); }
   const esc = s => String(s||'').replace(/"/g,'&quot;');
@@ -6544,6 +6545,29 @@ window.toggleProdCombo = toggleProdCombo;
 window.fecharProdComboDelayed = fecharProdComboDelayed;
 window.selecionarProdComboItem = selecionarProdComboItem;
 
+// Se o produto do item pertence a uma categoria que exige outra (ex.: Chinelos
+// exige Palmilha), retorna a lista de opções (já filtrada pela numeração do
+// produto quando possível) para o seletor "Palmilha desta venda".
+function _opcoesInsumoVinculado(item) {
+  if (!item.produto_id) return null;
+  const produto = (produtosEstoque || []).find(p => p.id === item.produto_id);
+  if (!produto) return null;
+  const vinculo = categoriasVinculoMap[produto.categoria_id];
+  if (!vinculo || !vinculo.vinculada_id) return null;
+  const candidatos = (produtosEstoque || []).filter(p => p.categoria_id === vinculo.vinculada_id);
+  const numMatch = (produto.nome || '').match(/(\d{2}\/\d{2})/);
+  let opcoes = candidatos;
+  if (numMatch) {
+    const filtrados = candidatos.filter(p => (p.nome || '').includes(numMatch[1]));
+    if (filtrados.length) opcoes = filtrados;
+  }
+  return { categoriaNome: vinculo.vinculada_nome, opcoes };
+}
+function onChangeInsumoVinculado(idx, valor) {
+  pedidoItens[idx].insumo_vinculado_id = valor ? +valor : null;
+}
+window.onChangeInsumoVinculado = onChangeInsumoVinculado;
+
 function renderItensPedido() {
   const el=document.getElementById('ped-itens-list');
   if(!el) return;
@@ -6586,6 +6610,18 @@ function renderItensPedido() {
     const isUnregistered = item.descricao && !item.produto_id;
     const borderStyle = isUnregistered ? 'border:1px solid #ef4444 !important;' : '';
     const warningMsg = isUnregistered ? '<div style="color:#ef4444;font-size:11px;margin-top:3px;font-weight:600">⚠️ Produto não cadastrado no estoque</div>' : '';
+    const vinculoInfo = _opcoesInsumoVinculado(item);
+    const vinculoRow = vinculoInfo ? `
+    <div style="margin:2px 0 8px;padding:8px 10px;background:var(--surface2);border-radius:6px">
+      <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px">
+        ${vinculoInfo.categoriaNome} desta venda
+        <span style="background:#f59e0b22;color:#f59e0b;font-size:10px;padding:1px 6px;border-radius:4px">obrigatório</span>
+      </label>
+      <select onchange="onChangeInsumoVinculado(${idx}, this.value)" style="margin-top:4px;font-size:13px;width:100%">
+        <option value="">Selecione</option>
+        ${vinculoInfo.opcoes.map(o=>`<option value="${o.id}" ${item.insumo_vinculado_id===o.id?'selected':''}>${o.codigo?o.codigo+' — ':''}${o.nome}</option>`).join('')}
+      </select>
+    </div>` : '';
     
     return `
     <div style="display:grid;grid-template-columns:1fr auto auto auto;gap:8px;align-items:center;margin-bottom:8px">
@@ -6607,7 +6643,8 @@ function renderItensPedido() {
         ${unidadesEstoqueCache.map(u=>`<option value="${u}" ${item.unidade===u?'selected':''}>${u}</option>`).join('')}
       </select>
       <button class="btn btn-sm btn-danger" onclick="pedidoItens.splice(${idx},1);renderItensPedido()" style="${isUnregistered ? 'align-self: flex-start; margin-top: 1px;' : ''}">✕</button>
-    </div>`;
+    </div>
+    ${vinculoRow}`;
   }).join('');
 }
 
@@ -6632,7 +6669,8 @@ async function editPedido(id) {
     descricao: i.descricao,
     quantidade: i.quantidade,
     unidade: i.unidade || 'unidade',
-    produto_id: i.produto_id
+    produto_id: i.produto_id,
+    insumo_vinculado_id: i.insumo_vinculado_id || null
   }));
   
   await carregarProdutosEstoque();
@@ -8086,9 +8124,15 @@ async function loadEstoque() {
   switchEstoqueTab(estoqueTabAtual || 'produtos');
 }
 
+let categoriasVinculoMap = {}; // categoria_id -> { vinculada_id, vinculada_nome }
+
 async function loadCategoriasFiltro() {
   try {
     const cats = await api('/estoque/categorias');
+    categoriasVinculoMap = {};
+    cats.forEach(c => {
+      categoriasVinculoMap[c.id] = { vinculada_id: c.categoria_vinculada_id || null, vinculada_nome: c.categoria_vinculada_nome || null };
+    });
     const filtro = document.getElementById('est-filtro-cat');
     const produtoSel = document.getElementById('est-prod-cat');
     const filtroVal = filtro?.value || '';
@@ -8744,7 +8788,8 @@ async function openModalCategoria() {
   _popularCatPai(_catsNova, '');
   _setVal('est-cat-pai', '');
   _popularCatVinculo(_catsNova, '');
-  _setVal('est-cat-vinculo-chk', false);
+  const _chkNovo = document.getElementById('est-cat-vinculo-chk');
+  if (_chkNovo) _chkNovo.checked = false;
   toggleCatVinculoSelect();
   const ti = document.getElementById('modal-cat-title'); if (ti) ti.textContent = 'Nova Categoria';
   openModal('modal-categoria');
@@ -8764,7 +8809,8 @@ async function editCategoria(id) {
   _popularCatPai(cats, c.id);
   _setVal('est-cat-pai', c.parent_id || '');
   _popularCatVinculo(cats, c.id);
-  _setVal('est-cat-vinculo-chk', !!c.categoria_vinculada_id);
+  const _chkEdit = document.getElementById('est-cat-vinculo-chk');
+  if (_chkEdit) _chkEdit.checked = !!c.categoria_vinculada_id;
   if (c.categoria_vinculada_id) _setVal('est-cat-vinculo-id', c.categoria_vinculada_id);
   toggleCatVinculoSelect();
   const ti = document.getElementById('modal-cat-title'); if (ti) ti.textContent = 'Editar Categoria';

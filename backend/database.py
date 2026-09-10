@@ -1075,6 +1075,8 @@ def init_db():
         conn.execute("ALTER TABLE pedidos_itens ADD COLUMN desconto REAL DEFAULT 0")
     if "status_separacao" not in cols_pi:
         conn.execute("ALTER TABLE pedidos_itens ADD COLUMN status_separacao TEXT")
+    if "insumo_vinculado_id" not in cols_pi:
+        conn.execute("ALTER TABLE pedidos_itens ADD COLUMN insumo_vinculado_id INTEGER")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS producao_programada (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
