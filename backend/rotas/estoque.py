@@ -1,20 +1,78 @@
 from fastapi import APIRouter, HTTPException
 import sqlite3
+import re
+import unicodedata
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from database import get_conn
 
 router = APIRouter()
+
+
+
+def _prefixo_categoria(conn, categoria_id: Optional[int]) -> str:
+    """Retorna 3 letras limpas da categoria em MAIÚSCULO. Ex.: Matéria Prima -> MAT."""
+    nome = None
+    if categoria_id:
+        row = conn.execute("SELECT nome FROM estoque_categorias WHERE id=?", (categoria_id,)).fetchone()
+        if row:
+            nome = row["nome"]
+    base = nome or "GERAL"
+    sem_acento = unicodedata.normalize("NFD", str(base))
+    sem_acento = "".join(ch for ch in sem_acento if unicodedata.category(ch) != "Mn")
+    letras = re.sub(r"[^A-Za-z0-9]", "", sem_acento).upper()
+    return (letras[:3] or "GER").ljust(3, "X")
+
+
+def _proximo_codigo_automatico(conn, categoria_id: Optional[int], excluir_id: Optional[int] = None) -> str:
+    """Gera código sequencial por categoria: CAT-001, CAT-002, CAT-003...
+
+    A leitura considera códigos antigos e novos como COP001, cop-001, COP_002 ou COP 001
+    para continuar a sequência sem reiniciar a contagem.
+    """
+    prefixo = _prefixo_categoria(conn, categoria_id)
+    params = [f"{prefixo}%"]
+    query = "SELECT id, codigo FROM estoque_produtos WHERE UPPER(COALESCE(codigo,'')) LIKE UPPER(?)"
+    if excluir_id:
+        query += " AND id<>?"
+        params.append(excluir_id)
+    rows = conn.execute(query, params).fetchall()
+
+    maior = 0
+    # Aceita formatos antigos e novos: COP001, COP-001-AL, COP_001, COP 001.
+    padrao = re.compile(rf"^{re.escape(prefixo)}[^0-9]*(\d+)", re.IGNORECASE)
+    for row in rows:
+        codigo_existente = str(row["codigo"] or "").strip().upper()
+        m = padrao.match(codigo_existente)
+        if m:
+            maior = max(maior, int(m.group(1)))
+
+    proximo = maior + 1
+    while True:
+        codigo = f"{prefixo}-{proximo:03d}"
+        params_check = [codigo]
+        query_check = "SELECT id FROM estoque_produtos WHERE UPPER(COALESCE(codigo,'')) = UPPER(?)"
+        if excluir_id:
+            query_check += " AND id<>?"
+            params_check.append(excluir_id)
+        if not conn.execute(query_check, params_check).fetchone():
+            return codigo
+        proximo += 1
 
 def _normalizar_codigo(codigo: Optional[str]) -> Optional[str]:
     if codigo is None:
         return None
     codigo = str(codigo).strip()
-    return codigo or None
+    return codigo.upper() or None
 
 class CategoriaIn(BaseModel):
     nome: str
     descricao: Optional[str] = None
+    tipo: Optional[str] = "producao"  # 'producao' (fabricado) ou 'revenda' (comprado pronto)
+    parent_id: Optional[int] = None
+
+class UnidadeIn(BaseModel):
+    nome: str
 
 class ProdutoIn(BaseModel):
     codigo: Optional[str] = None
@@ -23,6 +81,12 @@ class ProdutoIn(BaseModel):
     marca: Optional[str] = None
     unidade: Optional[str] = "unidade"
     estoque_minimo: Optional[float] = 0
+    preco: Optional[float] = 0
+    custo: Optional[float] = 0
+    embalagem_comprimento: Optional[float] = 0
+    embalagem_largura: Optional[float] = 0
+    embalagem_altura: Optional[float] = 0
+    embalagem_peso: Optional[float] = 0
 
 class MovimentacaoIn(BaseModel):
     produto_id: int
@@ -35,13 +99,20 @@ class MovimentacaoIn(BaseModel):
     custo_unitario: Optional[float] = None
     observacao: Optional[str] = None
     data: Optional[str] = None
+    nota_fiscal: Optional[str] = ""
+    pedido_numero: Optional[str] = None
 
 # ─── CATEGORIAS ───────────────────────────────────────────────────────────────
 
 @router.get("/categorias")
 def listar_categorias():
     conn = get_conn()
-    rows = conn.execute("SELECT * FROM estoque_categorias ORDER BY nome").fetchall()
+    rows = conn.execute("""
+        SELECT c.*, pai.nome as parent_nome
+        FROM estoque_categorias c
+        LEFT JOIN estoque_categorias pai ON c.parent_id = pai.id
+        ORDER BY COALESCE(pai.nome, c.nome), c.nome
+    """).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -49,7 +120,7 @@ def listar_categorias():
 def criar_categoria(c: CategoriaIn):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("INSERT INTO estoque_categorias (nome, descricao) VALUES (?, ?)", (c.nome, c.descricao))
+    cur.execute("INSERT INTO estoque_categorias (nome, descricao, tipo, parent_id) VALUES (?, ?, ?, ?)", (c.nome, c.descricao, (c.tipo or "producao"), c.parent_id))
     conn.commit()
     id = cur.lastrowid
     conn.close()
@@ -58,18 +129,60 @@ def criar_categoria(c: CategoriaIn):
 @router.put("/categorias/{id}")
 def atualizar_categoria(id: int, c: CategoriaIn):
     conn = get_conn()
-    conn.execute("UPDATE estoque_categorias SET nome=?, descricao=? WHERE id=?", (c.nome, c.descricao, id))
+    conn.execute("UPDATE estoque_categorias SET nome=?, descricao=?, tipo=?, parent_id=? WHERE id=?", (c.nome, c.descricao, (c.tipo or "producao"), c.parent_id, id))
     conn.commit()
     conn.close()
     return {"mensagem": "Categoria atualizada"}
 
+class OcultarCategoriaIn(BaseModel):
+    oculta: bool = True
+
+@router.post("/categorias/{id}/ocultar")
+def ocultar_categoria(id: int, d: OcultarCategoriaIn):
+    """Mostra/oculta uma categoria no PDV sem excluí-la."""
+    conn = get_conn()
+    conn.execute("UPDATE estoque_categorias SET oculta_pdv=? WHERE id=?", (1 if d.oculta else 0, id))
+    conn.commit()
+    conn.close()
+    return {"id": id, "oculta_pdv": 1 if d.oculta else 0}
+
 @router.delete("/categorias/{id}")
 def deletar_categoria(id: int):
     conn = get_conn()
-    conn.execute("DELETE FROM estoque_categorias WHERE id=?", (id,))
-    conn.commit()
-    conn.close()
+    try:
+        conn.execute("DELETE FROM estoque_categorias WHERE id=?", (id,))
+        conn.commit()
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=400, detail="Não é possível remover esta categoria, pois existem produtos vinculados a ela.")
+    finally:
+        conn.close()
     return {"mensagem": "Categoria removida"}
+
+# ─── UNIDADES DE MEDIDA ────────────────────────────────────────────────────────
+
+@router.get("/unidades")
+def listar_unidades():
+    conn = get_conn()
+    rows = conn.execute("SELECT id, nome FROM estoque_unidades ORDER BY nome").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+@router.post("/unidades")
+def criar_unidade(u: UnidadeIn):
+    nome = (u.nome or "").strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Informe o nome da unidade")
+    conn = get_conn()
+    existente = conn.execute("SELECT id, nome FROM estoque_unidades WHERE LOWER(nome)=LOWER(?)", (nome,)).fetchone()
+    if existente:
+        conn.close()
+        return {"id": existente["id"], "nome": existente["nome"], "mensagem": "Essa unidade já existia"}
+    cur = conn.cursor()
+    cur.execute("INSERT INTO estoque_unidades (nome) VALUES (?)", (nome,))
+    conn.commit()
+    id = cur.lastrowid
+    conn.close()
+    return {"id": id, "nome": nome, "mensagem": "Unidade criada"}
 
 # ─── PRODUTOS ─────────────────────────────────────────────────────────────────
 
@@ -77,7 +190,7 @@ def deletar_categoria(id: int):
 def listar_produtos(categoria_id: Optional[int] = None):
     conn = get_conn()
     query = """
-        SELECT p.*, c.nome as categoria_nome,
+        SELECT p.*, c.nome as categoria_nome, c.tipo as categoria_tipo,
                COALESCE(e.quantidade, 0) as quantidade_atual
         FROM estoque_produtos p
         LEFT JOIN estoque_categorias c ON p.categoria_id = c.id
@@ -94,7 +207,7 @@ def listar_produtos(categoria_id: Optional[int] = None):
     result = []
     for r in rows:
         d = dict(r)
-        d["alerta"] = d["quantidade_atual"] <= d["estoque_minimo"]
+        d["alerta"] = d["estoque_minimo"] > 0 and d["quantidade_atual"] <= d["estoque_minimo"]
         result.append(d)
     return result
 
@@ -104,17 +217,20 @@ def criar_produto(p: ProdutoIn):
     try:
         cur = conn.cursor()
         codigo = _normalizar_codigo(p.codigo)
-        if codigo:
-            existente = conn.execute("SELECT id FROM estoque_produtos WHERE codigo=? AND ativo=1", (codigo,)).fetchone()
-            if existente:
-                raise HTTPException(400, "Já existe um produto ativo com este Código/ID")
-        cur.execute("""INSERT INTO estoque_produtos (codigo, categoria_id, nome, marca, unidade, estoque_minimo)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    (codigo, p.categoria_id, p.nome, p.marca, p.unidade, p.estoque_minimo))
+        if not codigo:
+            codigo = _proximo_codigo_automatico(conn, p.categoria_id)
+        existente = conn.execute("SELECT id FROM estoque_produtos WHERE codigo=? AND ativo=1", (codigo,)).fetchone()
+        if existente:
+            raise HTTPException(400, "Já existe um produto ativo com este Código/ID")
+        cur.execute("""INSERT INTO estoque_produtos (codigo, categoria_id, nome, marca, unidade, estoque_minimo, preco, custo,
+                       embalagem_comprimento, embalagem_largura, embalagem_altura, embalagem_peso)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (codigo, p.categoria_id, p.nome, p.marca, p.unidade, p.estoque_minimo, p.preco or 0, p.custo or 0,
+                     p.embalagem_comprimento or 0, p.embalagem_largura or 0, p.embalagem_altura or 0, p.embalagem_peso or 0))
         produto_id = cur.lastrowid
         cur.execute("INSERT INTO estoque_saldo (produto_id, quantidade) VALUES (?, 0)", (produto_id,))
         conn.commit()
-        return {"id": produto_id, "mensagem": "Produto criado"}
+        return {"id": produto_id, "codigo": codigo, "mensagem": "Produto criado"}
     except HTTPException:
         conn.rollback()
         raise
@@ -124,11 +240,53 @@ def criar_produto(p: ProdutoIn):
     finally:
         conn.close()
 
+class AtribuirCategoriaIn(BaseModel):
+    produto_ids: List[int] = []
+    categoria_id: Optional[int] = None
+
+@router.post("/produtos/atribuir-categoria")
+def atribuir_categoria(d: AtribuirCategoriaIn):
+    """Define (ou remove) a categoria de uma lista de produtos já cadastrados."""
+    if not d.produto_ids:
+        return {"atualizados": 0}
+    conn = get_conn()
+    try:
+        qmarks = ",".join("?" * len(d.produto_ids))
+        cur = conn.execute(
+            f"UPDATE estoque_produtos SET categoria_id=? WHERE id IN ({qmarks})",
+            [d.categoria_id, *d.produto_ids],
+        )
+        conn.commit()
+        return {"atualizados": cur.rowcount}
+    finally:
+        conn.close()
+
+class VisibilidadeProdutoIn(BaseModel):
+    produto_ids: List[int] = []
+    oculta: bool = True
+
+@router.post("/produtos/visibilidade-pdv")
+def visibilidade_produto_pdv(d: VisibilidadeProdutoIn):
+    """Oculta/mostra produtos no PDV sem alterar cadastro nem categoria."""
+    if not d.produto_ids:
+        return {"atualizados": 0}
+    conn = get_conn()
+    try:
+        qmarks = ",".join("?" * len(d.produto_ids))
+        cur = conn.execute(
+            f"UPDATE estoque_produtos SET oculta_pdv=? WHERE id IN ({qmarks})",
+            [1 if d.oculta else 0, *d.produto_ids],
+        )
+        conn.commit()
+        return {"atualizados": cur.rowcount}
+    finally:
+        conn.close()
+
 @router.get("/produtos/{id}")
 def obter_produto(id: int):
     conn = get_conn()
     row = conn.execute("""
-        SELECT p.*, c.nome as categoria_nome, COALESCE(e.quantidade, 0) as quantidade_atual
+        SELECT p.*, c.nome as categoria_nome, c.tipo as categoria_tipo, COALESCE(e.quantidade, 0) as quantidade_atual
         FROM estoque_produtos p
         LEFT JOIN estoque_categorias c ON p.categoria_id = c.id
         LEFT JOIN estoque_saldo e ON e.produto_id = p.id
@@ -138,7 +296,7 @@ def obter_produto(id: int):
     if not row:
         raise HTTPException(404, "Produto não encontrado")
     d = dict(row)
-    d["alerta"] = d["quantidade_atual"] <= d["estoque_minimo"]
+    d["alerta"] = d["estoque_minimo"] > 0 and d["quantidade_atual"] <= d["estoque_minimo"]
     return d
 
 @router.put("/produtos/{id}")
@@ -150,17 +308,20 @@ def atualizar_produto(id: int, p: ProdutoIn):
             raise HTTPException(404, "Produto não encontrado")
 
         codigo = _normalizar_codigo(p.codigo)
-        if codigo:
-            existente = conn.execute("SELECT id FROM estoque_produtos WHERE codigo=? AND id<>? AND ativo=1", (codigo, id)).fetchone()
-            if existente:
-                raise HTTPException(400, "Já existe outro produto ativo com este Código/ID")
+        if not codigo:
+            codigo = _proximo_codigo_automatico(conn, p.categoria_id, excluir_id=id)
+        existente = conn.execute("SELECT id FROM estoque_produtos WHERE codigo=? AND id<>? AND ativo=1", (codigo, id)).fetchone()
+        if existente:
+            raise HTTPException(400, "Já existe outro produto ativo com este Código/ID")
 
-        cur = conn.execute("""UPDATE estoque_produtos SET codigo=?, categoria_id=?, nome=?, marca=?, unidade=?, estoque_minimo=?
-                            WHERE id=?""", (codigo, p.categoria_id, p.nome, p.marca, p.unidade, p.estoque_minimo, id))
+        cur = conn.execute("""UPDATE estoque_produtos SET codigo=?, categoria_id=?, nome=?, marca=?, unidade=?, estoque_minimo=?, preco=?, custo=?,
+                            embalagem_comprimento=?, embalagem_largura=?, embalagem_altura=?, embalagem_peso=?
+                            WHERE id=?""", (codigo, p.categoria_id, p.nome, p.marca, p.unidade, p.estoque_minimo, p.preco or 0, p.custo or 0,
+                            p.embalagem_comprimento or 0, p.embalagem_largura or 0, p.embalagem_altura or 0, p.embalagem_peso or 0, id))
         if cur.rowcount == 0:
             raise HTTPException(404, "Produto não encontrado")
         conn.commit()
-        return {"mensagem": "Produto atualizado"}
+        return {"codigo": codigo, "mensagem": "Produto atualizado"}
     except HTTPException:
         conn.rollback()
         raise
@@ -181,11 +342,11 @@ def deletar_produto(id: int):
 # ─── MOVIMENTAÇÕES ────────────────────────────────────────────────────────────
 
 @router.get("/movimentacoes")
-def listar_movimentacoes(produto_id: Optional[int] = None, tipo: Optional[str] = None, data_inicio: Optional[str] = None, data_fim: Optional[str] = None):
+def listar_movimentacoes(produto_id: Optional[int] = None, tipo: Optional[str] = None, data_inicio: Optional[str] = None, data_fim: Optional[str] = None, categoria_id: Optional[int] = None, pedido_numero: Optional[str] = None, marca: Optional[str] = None):
     conn = get_conn()
     query = """
-        SELECT m.*, p.codigo as produto_codigo, p.nome as produto_nome, p.unidade,
-               cat.nome as categoria_nome
+        SELECT m.*, p.codigo as produto_codigo, p.nome as produto_nome, p.unidade, p.marca as marca,
+               p.categoria_id as produto_categoria_id, cat.nome as categoria_nome
         FROM estoque_movimentacoes m
         JOIN estoque_produtos p ON m.produto_id = p.id
         LEFT JOIN estoque_categorias cat ON p.categoria_id = cat.id
@@ -198,16 +359,42 @@ def listar_movimentacoes(produto_id: Optional[int] = None, tipo: Optional[str] =
     if tipo:
         query += " AND m.tipo = ?"
         params.append(tipo)
+    if categoria_id:
+        query += " AND p.categoria_id = ?"
+        params.append(categoria_id)
+    if marca:
+        query += " AND p.marca = ?"
+        params.append(marca)
     if data_inicio:
         query += " AND m.data >= ?"
         params.append(data_inicio)
     if data_fim:
         query += " AND m.data <= ?"
         params.append(data_fim)
+    if pedido_numero:
+        # busca parcial — "15110" encontra tanto uma movimentação com esse
+        # número exato quanto o texto antigo "Separação pedido 15110" salvo
+        # no motivo de lançamentos anteriores a essa coluna existir
+        query += " AND (m.pedido_numero LIKE ? OR m.motivo LIKE ?)"
+        termo = f"%{pedido_numero}%"
+        params.extend([termo, termo])
     query += " ORDER BY m.data DESC, m.criado_em DESC LIMIT 200"
     rows = conn.execute(query, params).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+@router.get("/movimentacoes/marcas")
+def listar_marcas_movimentacoes():
+    """Marcas de produtos que já tiveram alguma movimentação — alimenta o filtro por marca da tela de Movimentações."""
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT DISTINCT p.marca FROM estoque_movimentacoes m
+        JOIN estoque_produtos p ON m.produto_id = p.id
+        WHERE p.marca IS NOT NULL AND p.marca != ''
+        ORDER BY p.marca ASC
+    """).fetchall()
+    conn.close()
+    return [r["marca"] for r in rows]
 
 @router.post("/movimentacoes")
 def registrar_movimentacao(m: MovimentacaoIn):
@@ -236,11 +423,11 @@ def registrar_movimentacao(m: MovimentacaoIn):
     cur = conn.cursor()
     cur.execute("""INSERT INTO estoque_movimentacoes
                    (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior,
-                    motivo, tipo_perda, responsavel, fornecedor, custo_unitario, observacao, data)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    motivo, tipo_perda, responsavel, fornecedor, custo_unitario, observacao, data, nota_fiscal, pedido_numero)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (m.produto_id, m.tipo, m.quantidade, saldo_atual, novo_saldo,
                  m.motivo, m.tipo_perda, m.responsavel, m.fornecedor,
-                 m.custo_unitario, m.observacao, data))
+                 m.custo_unitario, m.observacao, data, m.nota_fiscal, m.pedido_numero))
 
     if saldo_row:
         conn.execute("UPDATE estoque_saldo SET quantidade=?, ultima_atualizacao=datetime('now') WHERE produto_id=?",
@@ -299,6 +486,7 @@ def listar_alertas():
         LEFT JOIN estoque_categorias cat ON p.categoria_id = cat.id
         LEFT JOIN estoque_saldo e ON e.produto_id = p.id
         WHERE p.ativo = 1
+          AND p.estoque_minimo > 0
           AND COALESCE(e.quantidade, 0) <= p.estoque_minimo
         ORDER BY (COALESCE(e.quantidade, 0) - p.estoque_minimo) ASC
     """).fetchall()
@@ -314,7 +502,7 @@ def resumo_estoque():
     alertas = conn.execute("""
         SELECT COUNT(*) FROM estoque_produtos p
         LEFT JOIN estoque_saldo e ON e.produto_id = p.id
-        WHERE p.ativo=1 AND COALESCE(e.quantidade,0) <= p.estoque_minimo
+        WHERE p.ativo=1 AND p.estoque_minimo > 0 AND COALESCE(e.quantidade,0) <= p.estoque_minimo
     """).fetchone()[0]
     movs_hoje = conn.execute("""
         SELECT COUNT(*) FROM estoque_movimentacoes WHERE date(data) = date('now')
@@ -350,5 +538,204 @@ def relatorio_perdas(mes: Optional[str] = None):
         params.append(mes)
     query += " ORDER BY m.data DESC"
     rows = conn.execute(query, params).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+# ─── SALDO VS DEMANDA ────────────────────────────────────────────────────────
+
+@router.get("/saldo-vs-demanda")
+def saldo_vs_demanda(categoria_id: Optional[int] = None):
+    conn = get_conn()
+    # Buscar todos os produtos ativos com saldo
+    query = """
+        SELECT 
+            ep.id, ep.codigo, ep.nome, ep.marca, ep.unidade,
+            ep.estoque_minimo, ec.nome as categoria_nome, ec.tipo as categoria_tipo,
+            ep.categoria_id,
+            COALESCE(es.quantidade, 0) as saldo_atual
+        FROM estoque_produtos ep
+        LEFT JOIN estoque_categorias ec ON ep.categoria_id = ec.id
+        LEFT JOIN estoque_saldo es ON es.produto_id = ep.id
+        WHERE ep.ativo = 1
+    """
+    params = []
+    if categoria_id:
+        query += " AND ep.categoria_id = ?"
+        params.append(categoria_id)
+    query += " ORDER BY ec.nome, ep.nome"
+    produtos = conn.execute(query, params).fetchall()
+
+    resultado = []
+    for p in produtos:
+        pid = p["id"]
+        # Demanda: qualquer item ainda pendente (quantidade > qtd_produzida) de pedido
+        # que não esteja finalizado. Não usamos apenas status IN ('aberto','em_producao')
+        # porque _recalc_status_pedido avança o pedido para 'produzido' com base só nos
+        # itens de produção — itens de revenda (tampas etc.) ainda pendentes de separação
+        # ficariam de fora da demanda mesmo o pedido "devendo" fisicamente esse item.
+        demanda = conn.execute("""
+            SELECT 
+                COALESCE(SUM(CASE WHEN ped.status = 'aberto' THEN pi.quantidade - pi.qtd_produzida ELSE 0 END), 0) as qtd_aberto,
+                COALESCE(SUM(CASE WHEN ped.status = 'em_producao' THEN pi.quantidade - pi.qtd_produzida ELSE 0 END), 0) as qtd_em_producao,
+                COALESCE(SUM(CASE WHEN ped.status IN ('produzido','enviado') THEN pi.quantidade - pi.qtd_produzida ELSE 0 END), 0) as qtd_aguardando_separacao,
+                COALESCE(SUM(pi.quantidade - pi.qtd_produzida), 0) as total_demanda
+            FROM pedidos_itens pi
+            JOIN pedidos ped ON pi.pedido_id = ped.id
+            WHERE pi.produto_id = ? AND ped.status != 'entregue'
+              AND pi.quantidade > pi.qtd_produzida
+        """, (pid,)).fetchone()
+
+        # Prazo mais urgente
+        prazo_urgente = conn.execute("""
+            SELECT 
+                MIN(ped.prazo_entrega) as prazo_mais_urgente,
+                CAST(MIN(julianday(ped.prazo_entrega) - julianday('now')) AS INTEGER) as dias_restantes
+            FROM pedidos_itens pi
+            JOIN pedidos ped ON pi.pedido_id = ped.id
+            WHERE pi.produto_id = ? AND ped.status != 'entregue'
+              AND pi.quantidade > pi.qtd_produzida
+        """, (pid,)).fetchone()
+
+        saldo = p["saldo_atual"]
+        total_demanda = demanda["total_demanda"] or 0
+        saldo_projetado = saldo - total_demanda
+        cobertura = round((saldo / total_demanda * 100), 1) if total_demanda > 0 else 100
+
+        if total_demanda == 0:
+            situacao = "sem_demanda"
+        elif saldo_projetado < 0 or cobertura < 20:
+            situacao = "critico"
+        elif cobertura < 50:
+            situacao = "atencao"
+        else:
+            situacao = "ok"
+
+        resultado.append({
+            "id": pid,
+            "codigo": p["codigo"],
+            "nome": p["nome"],
+            "marca": p["marca"],
+            "unidade": p["unidade"],
+            "categoria": p["categoria_nome"] or "—",
+            "categoria_id": p["categoria_id"],
+            "categoria_tipo": p["categoria_tipo"] or "producao",
+            "estoque_minimo": p["estoque_minimo"],
+            "saldo_atual": saldo,
+            "qtd_aberto": demanda["qtd_aberto"] or 0,
+            "qtd_em_producao": demanda["qtd_em_producao"] or 0,
+            "qtd_aguardando_separacao": demanda["qtd_aguardando_separacao"] or 0,
+            "total_demanda": total_demanda,
+            "saldo_projetado": saldo_projetado,
+            "cobertura": cobertura,
+            "situacao": situacao,
+            "prazo_urgente": prazo_urgente["prazo_mais_urgente"],
+            "dias_urgente": int(prazo_urgente["dias_restantes"]) if prazo_urgente["dias_restantes"] is not None else None,
+        })
+
+    conn.close()
+    return resultado
+
+@router.get("/consumo-medio")
+def consumo_medio(meses: int = 6, categoria_id: Optional[int] = None):
+    """Consumo médio por produto com base no histórico de saídas e perdas do
+    estoque (produção diária, separação de pedido, perdas). Usado para estimar
+    ruptura futura por ritmo de consumo, complementar ao saldo x demanda
+    (que olha só pedidos já registrados)."""
+    if meses <= 0:
+        meses = 6
+    conn = get_conn()
+
+    query = """
+        SELECT 
+            ep.id, ep.codigo, ep.nome, ep.marca, ep.unidade,
+            ep.estoque_minimo, ec.nome as categoria_nome, ec.tipo as categoria_tipo,
+            ep.categoria_id,
+            COALESCE(es.quantidade, 0) as saldo_atual
+        FROM estoque_produtos ep
+        LEFT JOIN estoque_categorias ec ON ep.categoria_id = ec.id
+        LEFT JOIN estoque_saldo es ON es.produto_id = ep.id
+        WHERE ep.ativo = 1
+    """
+    params = []
+    if categoria_id:
+        query += " AND ep.categoria_id = ?"
+        params.append(categoria_id)
+    query += " ORDER BY ec.nome, ep.marca, ep.nome"
+    produtos = conn.execute(query, params).fetchall()
+
+    resultado = []
+    for p in produtos:
+        pid = p["id"]
+        # Consumo no período pedido, e a data do primeiro movimento dentro dele —
+        # usamos essa data (não a janela nominal em meses) pra calcular a média,
+        # porque se o histórico real disponível for menor que a janela (ex.: produto
+        # cadastrado há 6 semanas mas o usuário escolheu "últimos 12 meses"), dividir
+        # pelos 12 meses cheios dilui a média pra bem menos do que o consumo real.
+        linha = conn.execute("""
+            SELECT COALESCE(SUM(quantidade), 0) as total, MIN(data) as primeira_data
+            FROM estoque_movimentacoes
+            WHERE produto_id = ? AND tipo IN ('saida','perda')
+              AND data >= date('now', ? || ' months')
+        """, (pid, f"-{meses}")).fetchone()
+
+        consumo_periodo = linha["total"] or 0
+        dias_reais = None
+        if linha["primeira_data"]:
+            dias_row = conn.execute(
+                "SELECT CAST(julianday('now') - julianday(?) AS INTEGER) as dias",
+                (linha["primeira_data"],)
+            ).fetchone()
+            dias_reais = max(dias_row["dias"] or 0, 1)
+        dias_janela = min(dias_reais, meses * 30) if dias_reais else meses * 30
+
+        media_diaria = consumo_periodo / dias_janela if dias_janela > 0 else 0
+        media_mensal = media_diaria * 30
+        media_quinzenal = media_diaria * 15
+        media_anual = media_diaria * 365
+
+        saldo = p["saldo_atual"] or 0
+        cobertura_dias = int(saldo / media_diaria) if media_diaria > 0 else None
+        historico_curto = dias_reais is not None and dias_reais < (meses * 30)
+
+        resultado.append({
+            "id": pid,
+            "codigo": p["codigo"],
+            "nome": p["nome"],
+            "marca": p["marca"],
+            "unidade": p["unidade"],
+            "categoria": p["categoria_nome"] or "—",
+            "categoria_id": p["categoria_id"],
+            "categoria_tipo": p["categoria_tipo"] or "producao",
+            "saldo_atual": saldo,
+            "consumo_periodo": round(consumo_periodo, 2),
+            "media_mensal": round(media_mensal, 2),
+            "media_quinzenal": round(media_quinzenal, 2),
+            "media_anual": round(media_anual, 2),
+            "cobertura_dias": cobertura_dias,
+            "meses_janela": meses,
+            "dias_historico": dias_reais,
+            "historico_curto": historico_curto,
+        })
+
+    conn.close()
+    return resultado
+
+@router.get("/saldo-vs-demanda/{produto_id}/pedidos")
+def detalhe_produto_pedidos(produto_id: int):
+    conn = get_conn()
+    rows = conn.execute("""
+        SELECT 
+            ped.numero_pedido, ped.prazo_entrega, ped.status,
+            pc.razao_social as cliente,
+            pi.descricao, pi.quantidade, pi.qtd_produzida, pi.unidade,
+            pi.quantidade - pi.qtd_produzida as saldo_item,
+            CAST(julianday(ped.prazo_entrega) - julianday('now') AS INTEGER) as dias_restantes
+        FROM pedidos_itens pi
+        JOIN pedidos ped ON pi.pedido_id = ped.id
+        LEFT JOIN pedidos_clientes pc ON ped.cliente_id = pc.id
+        WHERE pi.produto_id = ? AND ped.status != 'entregue'
+          AND pi.quantidade > pi.qtd_produzida
+        ORDER BY ped.prazo_entrega ASC
+    """, (produto_id,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]

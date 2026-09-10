@@ -1,11 +1,50 @@
 import sqlite3
 import os
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "banco", "pratic.db")
 
+def _pascoa(ano: int) -> date:
+    """Calcula a data da Páscoa (algoritmo de Gauss/computus gregoriano)."""
+    a = ano % 19
+    b = ano // 100
+    c = ano % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    mes = (h + l - 7 * m + 114) // 31
+    dia = ((h + l - 7 * m + 114) % 31) + 1
+    return date(ano, mes, dia)
+
+def _feriados_nacionais(ano: int):
+    """Feriados nacionais fixos + móveis (calculados a partir da Páscoa) de um
+    ano qualquer. Feriados estaduais/municipais não entram aqui — são
+    cadastrados manualmente pelo usuário."""
+    pascoa = _pascoa(ano)
+    return [
+        (f"{ano}-01-01", "Confraternização Universal"),
+        ((pascoa - timedelta(days=48)).isoformat(), "Carnaval (segunda-feira)"),
+        ((pascoa - timedelta(days=47)).isoformat(), "Carnaval (terça-feira)"),
+        ((pascoa - timedelta(days=2)).isoformat(), "Sexta-feira Santa"),
+        (f"{ano}-04-21", "Tiradentes"),
+        (f"{ano}-05-01", "Dia do Trabalho"),
+        ((pascoa + timedelta(days=60)).isoformat(), "Corpus Christi"),
+        (f"{ano}-09-07", "Independência do Brasil"),
+        (f"{ano}-10-12", "Nossa Senhora Aparecida"),
+        (f"{ano}-11-02", "Finados"),
+        (f"{ano}-11-15", "Proclamação da República"),
+        (f"{ano}-11-20", "Dia Nacional de Zumbi e da Consciência Negra"),
+        (f"{ano}-12-25", "Natal"),
+    ]
+
 def get_conn():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
@@ -25,10 +64,29 @@ def init_db():
             criado_em TEXT DEFAULT (datetime('now'))
         );
 
+        CREATE TABLE IF NOT EXISTS comunicacao_recados (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            texto TEXT NOT NULL,
+            autor_id INTEGER,
+            autor_nome TEXT,
+            autor_setor TEXT,
+            criado_em TEXT DEFAULT (datetime('now')),
+            resolvido INTEGER DEFAULT 0,
+            resolvido_por TEXT,
+            resolvido_em TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS colaborador_tipos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT UNIQUE NOT NULL,
+            ativo INTEGER DEFAULT 1,
+            criado_em TEXT DEFAULT (datetime('now'))
+        );
+
         CREATE TABLE IF NOT EXISTS colaboradores (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             nome TEXT NOT NULL,
-            tipo TEXT NOT NULL CHECK(tipo IN ('operador','auxiliar')),
+            tipo TEXT NOT NULL,
             maquina_id INTEGER,
             ativo INTEGER DEFAULT 1,
             criado_em TEXT DEFAULT (datetime('now')),
@@ -51,6 +109,28 @@ def init_db():
             criado_em TEXT DEFAULT (datetime('now')),
             FOREIGN KEY (colaborador_id) REFERENCES colaboradores(id),
             FOREIGN KEY (maquina_id) REFERENCES maquinas(id)
+        );
+
+        -- Etapa de pintura, anterior a impressao (producao_diaria). Registro de
+        -- produtividade/perdas/sobras apenas — NAO mexe em estoque_saldo nem
+        -- em meta/premiacao, por definicao (a baixa de estoque continua
+        -- acontecendo so na impressao, como ja era).
+        CREATE TABLE IF NOT EXISTS producao_pintura (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            colaborador_id INTEGER NOT NULL,
+            data TEXT NOT NULL,
+            mes_referencia TEXT NOT NULL,
+            pedido_numero TEXT,
+            produto_estoque_id INTEGER DEFAULT NULL,
+            quantidade_cores INTEGER NOT NULL DEFAULT 1,
+            quantidade_pintada REAL NOT NULL DEFAULT 0,
+            perda_quantidade REAL DEFAULT 0,
+            perda_tipo TEXT,
+            perda_observacao TEXT,
+            sobra_quantidade REAL DEFAULT 0,
+            criado_em TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (colaborador_id) REFERENCES colaboradores(id),
+            FOREIGN KEY (produto_estoque_id) REFERENCES estoque_produtos(id)
         );
 
         CREATE TABLE IF NOT EXISTS premiacao_operador (
@@ -118,6 +198,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             nome TEXT NOT NULL,
             descricao TEXT,
+            tipo TEXT DEFAULT 'producao',
             criado_em TEXT DEFAULT (datetime('now'))
         );
 
@@ -156,9 +237,13 @@ def init_db():
             custo_unitario REAL,
             observacao TEXT,
             data TEXT NOT NULL,
+            nota_fiscal TEXT,
             criado_em TEXT DEFAULT (datetime('now')),
             FOREIGN KEY (produto_id) REFERENCES estoque_produtos(id)
         );
+        -- producao_diaria_id: adicionada via migracao abaixo (precisa existir a
+        -- tabela producao_diaria primeiro, entao o ALTER TABLE fica fora do
+        -- bloco executescript, junto das outras migracoes idempotentes)
 
         CREATE TABLE IF NOT EXISTS configuracoes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -243,6 +328,7 @@ def init_db():
             role TEXT NOT NULL CHECK(role IN ('gestor', 'producao', 'comercial', 'estoque')),
             nome TEXT NOT NULL,
             ativo INTEGER DEFAULT 1,
+            deve_alterar_senha INTEGER DEFAULT 1,
             criado_em TEXT DEFAULT (datetime('now', 'localtime'))
         );
 
@@ -254,6 +340,39 @@ def init_db():
             FOREIGN KEY (usuario_id) REFERENCES usuarios(id) ON DELETE CASCADE
         );
     """)
+
+    # Adicionar coluna deve_alterar_senha se não existir para bancos de dados já criados
+    try:
+        c.execute("ALTER TABLE usuarios ADD COLUMN deve_alterar_senha INTEGER DEFAULT 1")
+        # Como o banco de dados já existia, definimos deve_alterar_senha = 0 para todos os usuários atuais
+        # para que o acesso deles não seja interrompido abruptamente. Novos usuários criados herdarão 1.
+        c.execute("UPDATE usuarios SET deve_alterar_senha = 0")
+    except sqlite3.OperationalError:
+        pass
+
+    # Liberação da Comunicação por usuário (0 = não participa, 1 = participa)
+    try:
+        c.execute("ALTER TABLE usuarios ADD COLUMN comunicacao_ativa INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
+
+    # Liberação de canais por usuário (lista separada por vírgulas, ex: 'geral,producao')
+    try:
+        c.execute("ALTER TABLE usuarios ADD COLUMN canais_permitidos TEXT DEFAULT 'geral'")
+        # Para usuários antigos (não gestores), liberamos também o canal do próprio setor (role)
+        c.execute("""
+            UPDATE usuarios 
+            SET canais_permitidos = 'geral,' || role 
+            WHERE role != 'gestor' AND role IS NOT NULL
+        """)
+        # Para gestores, liberamos todos os canais por padrão
+        c.execute("""
+            UPDATE usuarios 
+            SET canais_permitidos = 'geral,producao,comercial,estoque' 
+            WHERE role = 'gestor'
+        """)
+    except sqlite3.OperationalError:
+        pass
 
     # Seed de usuários padrão se a tabela de usuários estiver vazia
     c.execute("SELECT COUNT(*) FROM usuarios")
@@ -267,25 +386,299 @@ def init_db():
             return salt.hex() + "." + key.hex()
             
         default_users = [
-            ("admin", _hash_pass("admin"), "gestor", "Administrador"),
-            ("producao", _hash_pass("producao123"), "producao", "Produção"),
-            ("comercial", _hash_pass("comercial123"), "comercial", "Comercial"),
-            ("estoque", _hash_pass("estoque123"), "estoque", "Almoxarifado")
+            ("admin", _hash_pass("admin"), "gestor", "Administrador", 0),
+            ("producao", _hash_pass("producao123"), "producao", "Produção", 0),
+            ("comercial", _hash_pass("comercial123"), "comercial", "Comercial", 0),
+            ("estoque", _hash_pass("estoque123"), "estoque", "Almoxarifado", 0)
         ]
         c.executemany("""
-            INSERT INTO usuarios (username, password_hash, role, nome)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO usuarios (username, password_hash, role, nome, deve_alterar_senha)
+            VALUES (?, ?, ?, ?, ?)
         """, default_users)
 
 
     # Migrações leves para bancos já existentes
+    # Tipos de colaboradores configuráveis: remove a trava antiga que aceitava somente operador/auxiliar
+    # e cria uma tabela simples para o usuário cadastrar novas funções/tipos pela tela.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS colaborador_tipos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT UNIQUE NOT NULL,
+            ativo INTEGER DEFAULT 1,
+            criado_em TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    for tipo_padrao in ("operador", "auxiliar"):
+        conn.execute("INSERT OR IGNORE INTO colaborador_tipos (nome, ativo) VALUES (?, 1)", (tipo_padrao,))
+    for row in conn.execute("SELECT DISTINCT tipo FROM colaboradores WHERE COALESCE(tipo,'')<>''").fetchall():
+        conn.execute("INSERT OR IGNORE INTO colaborador_tipos (nome, ativo) VALUES (?, 1)", (row[0],))
+
+    # Unidades de medida configuráveis: cadastradas pela tela de Produtos (opção
+    # "+ Nova unidade") e reaproveitadas em Pedidos e Movimentações.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS estoque_unidades (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT UNIQUE NOT NULL,
+            criado_em TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    for unidade_padrao in ("unidade", "und", "milheiro", "kg", "litro", "metro", "caixa", "pacote", "par"):
+        conn.execute("INSERT OR IGNORE INTO estoque_unidades (nome) VALUES (?)", (unidade_padrao,))
+    for row in conn.execute("SELECT DISTINCT unidade FROM estoque_produtos WHERE COALESCE(unidade,'')<>''").fetchall():
+        conn.execute("INSERT OR IGNORE INTO estoque_unidades (nome) VALUES (?)", (row[0],))
+
+    # Migração: controle por tipo de colaborador
+    #   aparece_producao = aparece na seleção da Produção Diária e conta nos totais/ranking
+    #   concorre_premio  = concorre ao prêmio de operador
+    cols_tipos = [r[1] for r in conn.execute("PRAGMA table_info(colaborador_tipos)").fetchall()]
+    primeira_migracao_flags = "aparece_producao" not in cols_tipos
+    if "aparece_producao" not in cols_tipos:
+        conn.execute("ALTER TABLE colaborador_tipos ADD COLUMN aparece_producao INTEGER DEFAULT 0")
+    if "concorre_premio" not in cols_tipos:
+        conn.execute("ALTER TABLE colaborador_tipos ADD COLUMN concorre_premio INTEGER DEFAULT 1")
+    if primeira_migracao_flags:
+        # Defaults aplicados só na primeira migração (não sobrescreve escolhas futuras do gestor)
+        conn.execute("UPDATE colaborador_tipos SET aparece_producao=1, concorre_premio=1 WHERE LOWER(nome)='operador'")
+        conn.execute("UPDATE colaborador_tipos SET aparece_producao=0 WHERE LOWER(nome)='auxiliar'")
+        # Tipos de liderança (lider, líder, operador lider, operador líder, etc.):
+        # produzem como operador, mas não concorrem ao prêmio.
+        conn.execute("""
+            UPDATE colaborador_tipos
+               SET aparece_producao=1, concorre_premio=0
+             WHERE nome LIKE '%lider%' OR nome LIKE '%líder%'
+        """)
+
+    # Migração: módulo de vendas (preço no produto, valores no item, totais e parcelas do pedido)
+    cols_prod = [r[1] for r in conn.execute("PRAGMA table_info(estoque_produtos)").fetchall()]
+    if "preco" not in cols_prod:
+        conn.execute("ALTER TABLE estoque_produtos ADD COLUMN preco REAL DEFAULT 0")
+    if "custo" not in cols_prod:
+        conn.execute("ALTER TABLE estoque_produtos ADD COLUMN custo REAL DEFAULT 0")
+    if "oculta_pdv" not in cols_prod:
+        conn.execute("ALTER TABLE estoque_produtos ADD COLUMN oculta_pdv INTEGER DEFAULT 0")
+    # Migração: dados da embalagem (dimensões e peso) no produto
+    if "embalagem_comprimento" not in cols_prod:
+        conn.execute("ALTER TABLE estoque_produtos ADD COLUMN embalagem_comprimento REAL DEFAULT 0")
+    if "embalagem_largura" not in cols_prod:
+        conn.execute("ALTER TABLE estoque_produtos ADD COLUMN embalagem_largura REAL DEFAULT 0")
+    if "embalagem_altura" not in cols_prod:
+        conn.execute("ALTER TABLE estoque_produtos ADD COLUMN embalagem_altura REAL DEFAULT 0")
+    if "embalagem_peso" not in cols_prod:
+        conn.execute("ALTER TABLE estoque_produtos ADD COLUMN embalagem_peso REAL DEFAULT 0")
+    cols_cat = [r[1] for r in conn.execute("PRAGMA table_info(estoque_categorias)").fetchall()]
+    if "parent_id" not in cols_cat:
+        conn.execute("ALTER TABLE estoque_categorias ADD COLUMN parent_id INTEGER")
+    if "oculta_pdv" not in cols_cat:
+        conn.execute("ALTER TABLE estoque_categorias ADD COLUMN oculta_pdv INTEGER DEFAULT 0")
+    cols_pi = [r[1] for r in conn.execute("PRAGMA table_info(pedidos_itens)").fetchall()]
+    if "valor_unitario" not in cols_pi:
+        conn.execute("ALTER TABLE pedidos_itens ADD COLUMN valor_unitario REAL DEFAULT 0")
+    if "desconto" not in cols_pi:
+        conn.execute("ALTER TABLE pedidos_itens ADD COLUMN desconto REAL DEFAULT 0")
+    if "status_separacao" not in cols_pi:
+        conn.execute("ALTER TABLE pedidos_itens ADD COLUMN status_separacao TEXT")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS producao_programada (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pedido_item_id INTEGER NOT NULL,
+            data_programada TEXT NOT NULL,
+            quantidade_programada REAL NOT NULL,
+            criado_em TEXT DEFAULT (datetime('now')),
+            FOREIGN KEY (pedido_item_id) REFERENCES pedidos_itens(id)
+        )
+    """)
+    # Vincula cada movimentacao de estoque ao lancamento de producao que a
+    # gerou, com precisao (id exato) em vez de tentar re-identificar por
+    # operador+data+produto+texto do motivo — essa combinacao "fuzzy" e
+    # ambigua quando o mesmo operador tem mais de um lancamento do mesmo
+    # produto no mesmo dia (comum na pratica), fazendo editar/excluir UM
+    # lancamento reverter/apagar por engano a movimentacao de OUTRO.
+    cols_mov = [r[1] for r in conn.execute("PRAGMA table_info(estoque_movimentacoes)").fetchall()]
+    if "producao_diaria_id" not in cols_mov:
+        conn.execute("ALTER TABLE estoque_movimentacoes ADD COLUMN producao_diaria_id INTEGER")
+    if "pedido_numero" not in cols_mov:
+        # coluna própria pro número do pedido — antes só existia escondido
+        # dentro do texto do motivo ("Separação pedido X"), sem dar pra
+        # filtrar/consultar as saídas de um pedido específico
+        conn.execute("ALTER TABLE estoque_movimentacoes ADD COLUMN pedido_numero TEXT")
+
+    # Preenchimento retroativo (idempotente, roda sem custo depois da primeira
+    # vez): movimentações antigas ligadas a um lançamento de produção
+    # (producao_diaria_id) já tinham o número do pedido gravado ali — só não
+    # existia essa coluna própria ainda. Recupera de lá, sem precisar mexer
+    # em nenhum lançamento manualmente.
+    conn.execute("""
+        UPDATE estoque_movimentacoes
+        SET pedido_numero = (
+            SELECT p.pedido_numero FROM producao_diaria p WHERE p.id = estoque_movimentacoes.producao_diaria_id
+        )
+        WHERE producao_diaria_id IS NOT NULL
+          AND (pedido_numero IS NULL OR pedido_numero = '')
+          AND EXISTS (
+              SELECT 1 FROM producao_diaria p WHERE p.id = estoque_movimentacoes.producao_diaria_id
+              AND p.pedido_numero IS NOT NULL AND p.pedido_numero != ''
+          )
+    """)
+
+    # Segundo caso de preenchimento retroativo: movimentações de separação de
+    # revenda (não passam por producao_diaria_id) guardavam o número do
+    # pedido só no texto do motivo — "Separação pedido X" / "Estorno
+    # separação pedido X". SQLite não tem regex embutida, então extrai em
+    # Python mesmo (é um laço pequeno, roda uma vez só por movimentação).
+    rows_sep = conn.execute("""
+        SELECT id, motivo FROM estoque_movimentacoes
+        WHERE (pedido_numero IS NULL OR pedido_numero = '')
+          AND (motivo LIKE 'Separação pedido %' OR motivo LIKE 'Estorno separação pedido %')
+    """).fetchall()
+    for row in rows_sep:
+        motivo = (row["motivo"] or "").strip()
+        numero = motivo.rsplit(" ", 1)[-1].strip() if motivo else ""
+        if numero:
+            conn.execute("UPDATE estoque_movimentacoes SET pedido_numero=? WHERE id=?", (numero, row["id"]))
+
+    cols_ped = [r[1] for r in conn.execute("PRAGMA table_info(pedidos)").fetchall()]
+    if "acrescimo" not in cols_ped:
+        conn.execute("ALTER TABLE pedidos ADD COLUMN acrescimo REAL DEFAULT 0")
+    if "frete" not in cols_ped:
+        conn.execute("ALTER TABLE pedidos ADD COLUMN frete REAL DEFAULT 0")
+    if "desconto_global" not in cols_ped:
+        conn.execute("ALTER TABLE pedidos ADD COLUMN desconto_global REAL DEFAULT 0")
+    for _c, _t in [("transportadora","TEXT"),("nota_fiscal","TEXT"),("rastreio","TEXT"),
+                   ("volumes","INTEGER"),("previsao_entrega","TEXT"),("obs_envio","TEXT"),
+                   ("data_despacho","TEXT"),("data_entrega","TEXT"),("frete_pago","REAL DEFAULT 0"),
+                   ("precisa_pintura","INTEGER DEFAULT 0")]:
+        if _c not in cols_ped:
+            conn.execute(f"ALTER TABLE pedidos ADD COLUMN {_c} {_t}")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS pedidos_parcelas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pedido_id INTEGER NOT NULL,
+            forma_pagamento TEXT,
+            vencimento TEXT,
+            valor REAL DEFAULT 0,
+            FOREIGN KEY (pedido_id) REFERENCES pedidos(id)
+        )
+    """)
+
+    colaboradores_sql = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='colaboradores'").fetchone()
+    if colaboradores_sql and "CHECK(tipo IN" in (colaboradores_sql[0] or ""):
+        # A recriação precisa ocorrer fora de transação e com legacy_alter_table ligado,
+        # para as FKs das tabelas de produção/EPIs continuarem apontando para colaboradores.
+        conn.commit()
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("PRAGMA legacy_alter_table=ON")
+        conn.execute("ALTER TABLE colaboradores RENAME TO colaboradores_old")
+        conn.execute("""
+            CREATE TABLE colaboradores (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nome TEXT NOT NULL,
+                tipo TEXT NOT NULL,
+                maquina_id INTEGER,
+                ativo INTEGER DEFAULT 1,
+                criado_em TEXT DEFAULT (datetime('now')),
+                FOREIGN KEY (maquina_id) REFERENCES maquinas(id)
+            )
+        """)
+        conn.execute("""
+            INSERT INTO colaboradores (id, nome, tipo, maquina_id, ativo, criado_em)
+            SELECT id, nome, tipo, maquina_id, ativo, criado_em FROM colaboradores_old
+        """)
+        conn.execute("DROP TABLE colaboradores_old")
+        conn.execute("PRAGMA legacy_alter_table=OFF")
+        conn.execute("PRAGMA foreign_keys=ON")
+
     cols = [row[1] for row in conn.execute("PRAGMA table_info(estoque_produtos)").fetchall()]
     if "codigo" not in cols:
         conn.execute("ALTER TABLE estoque_produtos ADD COLUMN codigo TEXT")
 
+    # pedidos_clientes: garante colunas de contato/endereco em bancos antigos
+    # (tabela usa CREATE IF NOT EXISTS, entao tabelas antigas nao recebem colunas novas)
+    cols_cli = [row[1] for row in conn.execute("PRAGMA table_info(pedidos_clientes)").fetchall()]
+    for _col in ("cnpj", "nome_fantasia", "ie", "email", "telefone",
+                 "cep", "logradouro", "numero", "complemento",
+                 "bairro", "cidade", "uf", "observacoes"):
+        if _col not in cols_cli:
+            conn.execute(f"ALTER TABLE pedidos_clientes ADD COLUMN {_col} TEXT")
+
     cols_prod = [row[1] for row in conn.execute("PRAGMA table_info(producao_diaria)").fetchall()]
     if "pedido_numero" not in cols_prod:
         conn.execute("ALTER TABLE producao_diaria ADD COLUMN pedido_numero TEXT")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS producao_diaria_itens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            producao_diaria_id INTEGER NOT NULL,
+            produto_estoque_id INTEGER,
+            quantidade REAL NOT NULL DEFAULT 0,
+            perda_quantidade REAL DEFAULT 0,
+            sobra_quantidade REAL DEFAULT 0,
+            FOREIGN KEY (producao_diaria_id) REFERENCES producao_diaria(id),
+            FOREIGN KEY (produto_estoque_id) REFERENCES estoque_produtos(id)
+        )
+    """)
+    # tipo_perda por item: permite saber qual foi o motivo da perda de CADA
+    # produto num lançamento multi-produto (antes só existia em
+    # estoque_movimentacoes, sem ligação direta com o item/produto do dia).
+    cols_pdi = [row[1] for row in conn.execute("PRAGMA table_info(producao_diaria_itens)").fetchall()]
+    if "tipo_perda" not in cols_pdi:
+        conn.execute("ALTER TABLE producao_diaria_itens ADD COLUMN tipo_perda TEXT")
+    # Migração única: lançamentos antigos de produto único (já têm produto vinculado
+    # no cabeçalho) ganham a linha de detalhe correspondente, se ainda não existir.
+    # Lançamentos multi-produto antigos não têm como recuperar o detalhe por
+    # produto (só o total ficou salvo) e ficam de fora dessa migração.
+    conn.execute("""
+        INSERT INTO producao_diaria_itens (producao_diaria_id, produto_estoque_id, quantidade, perda_quantidade, sobra_quantidade)
+        SELECT p.id, p.produto_estoque_id, p.producao, p.perda_quantidade, p.sobra_quantidade
+        FROM producao_diaria p
+        WHERE p.produto_estoque_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM producao_diaria_itens pdi WHERE pdi.producao_diaria_id = p.id)
+    """)
+
+    cols_cat = [row[1] for row in conn.execute("PRAGMA table_info(estoque_categorias)").fetchall()]
+    if "tipo" not in cols_cat:
+        conn.execute("ALTER TABLE estoque_categorias ADD COLUMN tipo TEXT DEFAULT 'producao'")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS feriados (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            data TEXT NOT NULL UNIQUE,
+            descricao TEXT,
+            criado_em TEXT DEFAULT (datetime('now'))
+        )
+    """)
+    # Gera automaticamente os feriados nacionais do ano atual e do próximo
+    # (fixos + móveis calculados a partir da Páscoa), toda vez que o sistema
+    # sobe — assim nunca fica desatualizado quando o ano vira. Feriados
+    # estaduais/municipais continuam por conta do cadastro manual.
+    for _ano in (datetime.now().year, datetime.now().year + 1):
+        for _data, _desc in _feriados_nacionais(_ano):
+            conn.execute("INSERT OR IGNORE INTO feriados (data, descricao) VALUES (?, ?)", (_data, _desc))
+
+    # Anexos na comunicação (foto/documento por recado)
+    cols_com = [row[1] for row in conn.execute("PRAGMA table_info(comunicacao_recados)").fetchall()]
+    if "anexo_nome" not in cols_com:
+        conn.execute("ALTER TABLE comunicacao_recados ADD COLUMN anexo_nome TEXT")
+    if "anexo_tipo" not in cols_com:
+        conn.execute("ALTER TABLE comunicacao_recados ADD COLUMN anexo_tipo TEXT")
+    if "anexo_arquivo" not in cols_com:
+        conn.execute("ALTER TABLE comunicacao_recados ADD COLUMN anexo_arquivo TEXT")
+    if "conversa_setor" not in cols_com:
+        conn.execute("ALTER TABLE comunicacao_recados ADD COLUMN conversa_setor TEXT")
+        # Legado: cada recado vai para a conversa do setor de quem escreveu (menos gestor)
+        conn.execute("""UPDATE comunicacao_recados SET conversa_setor = autor_setor
+                        WHERE conversa_setor IS NULL AND autor_setor IS NOT NULL
+                          AND autor_setor != 'gestor'""")
+    if "conversa_usuario_id" not in cols_com:
+        conn.execute("ALTER TABLE comunicacao_recados ADD COLUMN conversa_usuario_id INTEGER")
+        # Legado: cada recado vai para a conversa do próprio autor (menos gestor)
+        conn.execute("""UPDATE comunicacao_recados SET conversa_usuario_id = autor_id
+                        WHERE conversa_usuario_id IS NULL AND autor_setor IS NOT NULL
+                          AND autor_setor != 'gestor'""")
+
+    # Migração para adicionar campo nota_fiscal em estoque_movimentacoes
+    cols_mov = [row[1] for row in conn.execute("PRAGMA table_info(estoque_movimentacoes)").fetchall()]
+    if "nota_fiscal" not in cols_mov:
+        conn.execute("ALTER TABLE estoque_movimentacoes ADD COLUMN nota_fiscal TEXT")
 
     # Migração do campo Código/ID:
     # A versão anterior criou um índice UNIQUE apenas em codigo. Isso gerava erro 500
@@ -309,16 +702,50 @@ def init_db():
         ("empresa_cidade", "", "Cidade da empresa"),
         ("empresa_uf", "", "UF da empresa"),
         ("empresa_logo", "", "Logo da empresa em base64"),
-        ("perm_gestor", "dashboard,producao,premiacao,colaboradores,maquinas,pedidos,estoque,epi,graficos,relatorios,configuracoes,backup,permissoes,empresa,mobile,estoque_mobile", "Permissões do perfil Gestor"),
-        ("perm_producao", "dashboard,producao,premiacao,colaboradores,maquinas,epi,relatorios", "Permissões do perfil Produção"),
+        ("perm_gestor", "dashboard,producao,premiacao,pintura,colaboradores,maquinas,pedidos,estoque,epi,saldo-demanda,consumo-medio,gerencial,graficos,relatorios,configuracoes,backup,perm-usuarios,permissoes,empresa,mobile,estoque_mobile", "Permissões do perfil Gestor"),
+        ("perm_producao", "dashboard,producao,premiacao,pintura,colaboradores,maquinas,epi,relatorios", "Permissões do perfil Produção"),
         ("perm_comercial", "dashboard,pedidos,relatorios", "Permissões do perfil Comercial"),
-        ("perm_estoque", "dashboard,estoque,relatorios,estoque_mobile", "Permissões do perfil Estoque"),
+        ("perm_estoque", "dashboard,estoque,consumo-medio,relatorios,estoque_mobile", "Permissões do perfil Estoque"),
+        ("chat_p2p_permitido", "0", "Permitir chat 1:1 privado entre colaboradores"),
+        ("exigir_pedido_producao_perfis", "", "Perfis que são obrigados a informar número do pedido em todo lançamento de Produção Diária (lista separada por vírgula, ex: producao,comercial)"),
     ]
     for chave, valor, descricao in default_configs:
         conn.execute(
             "INSERT OR IGNORE INTO configuracoes (chave, valor, descricao) VALUES (?, ?, ?)",
             (chave, valor, descricao)
         )
+
+    # Migração: adiciona novas páginas às permissões de perfis já existentes no banco.
+    # INSERT OR IGNORE acima só cria a linha se ela ainda não existir — em bancos que já
+    # tinham perm_gestor/perm_estoque salvos, uma página nova (ex.: consumo-medio) nunca
+    # entraria na string sem isso, e sumiria do menu mesmo para o gestor.
+    _paginas_novas_por_perfil = {
+        "perm_gestor": ["consumo-medio", "gerencial", "pintura"],
+        "perm_estoque": ["consumo-medio"],
+        "perm_producao": ["pintura"],
+    }
+    for _chave, _paginas in _paginas_novas_por_perfil.items():
+        _row = conn.execute("SELECT valor FROM configuracoes WHERE chave = ?", (_chave,)).fetchone()
+        if _row:
+            _atuais = [p.strip() for p in (_row["valor"] or "").split(",") if p.strip()]
+            _faltando = [p for p in _paginas if p not in _atuais]
+            if _faltando:
+                conn.execute(
+                    "UPDATE configuracoes SET valor = ? WHERE chave = ?",
+                    (",".join(_atuais + _faltando), _chave)
+                )
+
+    # Tabela de permissões por usuário (separada por causa do UNIQUE constraint)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS usuario_permissoes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            usuario_id INTEGER NOT NULL,
+            modulo TEXT NOT NULL,
+            acao TEXT NOT NULL,
+            permitido INTEGER DEFAULT 1,
+            UNIQUE(usuario_id, modulo, acao)
+        )
+    """)
 
     conn.commit()
     conn.close()
