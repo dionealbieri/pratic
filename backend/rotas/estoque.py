@@ -70,6 +70,7 @@ class CategoriaIn(BaseModel):
     descricao: Optional[str] = None
     tipo: Optional[str] = "producao"  # 'producao' (fabricado) ou 'revenda' (comprado pronto)
     parent_id: Optional[int] = None
+    categoria_vinculada_id: Optional[int] = None  # produtos desta categoria exigem um item da categoria apontada aqui (ex.: Chinelos -> Palmilha)
 
 class UnidadeIn(BaseModel):
     nome: str
@@ -107,9 +108,10 @@ class MovimentacaoIn(BaseModel):
 def listar_categorias():
     conn = get_conn()
     rows = conn.execute("""
-        SELECT c.*, pai.nome as parent_nome
+        SELECT c.*, pai.nome as parent_nome, vinc.nome as categoria_vinculada_nome
         FROM estoque_categorias c
         LEFT JOIN estoque_categorias pai ON c.parent_id = pai.id
+        LEFT JOIN estoque_categorias vinc ON c.categoria_vinculada_id = vinc.id
         ORDER BY COALESCE(pai.nome, c.nome), c.nome
     """).fetchall()
     conn.close()
@@ -119,7 +121,10 @@ def listar_categorias():
 def criar_categoria(c: CategoriaIn):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("INSERT INTO estoque_categorias (nome, descricao, tipo, parent_id) VALUES (?, ?, ?, ?)", (c.nome, c.descricao, (c.tipo or "producao"), c.parent_id))
+    cur.execute(
+        "INSERT INTO estoque_categorias (nome, descricao, tipo, parent_id, categoria_vinculada_id) VALUES (?, ?, ?, ?, ?)",
+        (c.nome, c.descricao, (c.tipo or "producao"), c.parent_id, c.categoria_vinculada_id)
+    )
     conn.commit()
     id = cur.lastrowid
     conn.close()
@@ -128,7 +133,10 @@ def criar_categoria(c: CategoriaIn):
 @router.put("/categorias/{id}")
 def atualizar_categoria(id: int, c: CategoriaIn):
     conn = get_conn()
-    conn.execute("UPDATE estoque_categorias SET nome=?, descricao=?, tipo=?, parent_id=? WHERE id=?", (c.nome, c.descricao, (c.tipo or "producao"), c.parent_id, id))
+    conn.execute(
+        "UPDATE estoque_categorias SET nome=?, descricao=?, tipo=?, parent_id=?, categoria_vinculada_id=? WHERE id=?",
+        (c.nome, c.descricao, (c.tipo or "producao"), c.parent_id, c.categoria_vinculada_id, id)
+    )
     conn.commit()
     conn.close()
     return {"mensagem": "Categoria atualizada"}

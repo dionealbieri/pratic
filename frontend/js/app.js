@@ -8660,7 +8660,7 @@ async function loadCategoriasEstoque() {
   }
   tbody.innerHTML = cats.map(c => `
     <tr>
-      <td>${c.parent_nome ? '<span style="color:var(--muted);font-weight:600">'+c.parent_nome+' \u203a </span>':''}<strong>${c.nome || ''}</strong> ${c.tipo === 'revenda' ? '<span style="margin-left:8px;font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(59,130,246,.15);color:#3b82f6">🛒 Revenda</span>' : '<span style="margin-left:8px;font-size:11px;padding:2px 8px;border-radius:10px;background:var(--surface2);color:var(--muted)">Produção</span>'}</td>
+      <td>${c.parent_nome ? '<span style="color:var(--muted);font-weight:600">'+c.parent_nome+' \u203a </span>':''}<strong>${c.nome || ''}</strong> ${c.tipo === 'revenda' ? '<span style="margin-left:8px;font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(59,130,246,.15);color:#3b82f6">🛒 Revenda</span>' : '<span style="margin-left:8px;font-size:11px;padding:2px 8px;border-radius:10px;background:var(--surface2);color:var(--muted)">Produção</span>'} ${c.categoria_vinculada_nome ? '<span style="margin-left:8px;font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(234,179,8,.15);color:#eab308">🔗 Exige '+c.categoria_vinculada_nome+'</span>' : ''}</td>
       <td>${c.descricao || '—'}</td>
       <td class="flex gap-2">
         ${temPermissao('estoque', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="editCategoria(${c.id})">✏️</button>` : ''}
@@ -8703,16 +8703,49 @@ function _popularCatPai(cats, excluirId) {
     .map(c => '<option value="'+c.id+'">'+(c.parent_nome ? c.parent_nome+' \u203a ' : '')+c.nome+'</option>').join('');
   sel.innerHTML = '<option value="">\u2014 Nenhuma (categoria principal) \u2014</option>' + opts;
 }
+function _ensureCatVinculoField() {
+  if (document.getElementById('est-cat-vinculo-chk')) return;
+  const grid = document.querySelector('#modal-categoria .form-grid');
+  if (!grid) return;
+  const g = document.createElement('div');
+  g.className = 'form-group';
+  g.style.gridColumn = '1/-1';
+  g.innerHTML = '<label style="display:flex;align-items:center;gap:8px;font-weight:400">'
+    + '<input type="checkbox" id="est-cat-vinculo-chk" onchange="toggleCatVinculoSelect()" style="width:16px;height:16px">'
+    + 'Produtos desta categoria exigem outro item na venda</label>'
+    + '<div id="est-cat-vinculo-wrap" style="display:none;margin-top:8px">'
+    + '<label>Categoria exigida</label>'
+    + '<select id="est-cat-vinculo-id"></select>'
+    + '</div>';
+  grid.appendChild(g);
+}
+function toggleCatVinculoSelect() {
+  const chk = document.getElementById('est-cat-vinculo-chk');
+  const wrap = document.getElementById('est-cat-vinculo-wrap');
+  if (wrap) wrap.style.display = (chk && chk.checked) ? '' : 'none';
+}
+function _popularCatVinculo(cats, excluirId) {
+  const sel = document.getElementById('est-cat-vinculo-id');
+  if (!sel) return;
+  const opts = (cats || []).filter(c => Number(c.id) !== Number(excluirId))
+    .map(c => '<option value="' + c.id + '">' + (c.parent_nome ? c.parent_nome + ' \u203a ' : '') + c.nome + '</option>').join('');
+  sel.innerHTML = opts;
+}
+
 async function openModalCategoria() {
   _setVal('est-cat-id', '');
   _setVal('est-cat-nome', '');
   _setVal('est-cat-desc', '');
   _ensureCatTipoField();
   _ensureCatPaiField();
+  _ensureCatVinculoField();
   _setVal('est-cat-tipo', 'producao');
   const _catsNova = await api('/estoque/categorias').catch(()=>[]);
   _popularCatPai(_catsNova, '');
   _setVal('est-cat-pai', '');
+  _popularCatVinculo(_catsNova, '');
+  _setVal('est-cat-vinculo-chk', false);
+  toggleCatVinculoSelect();
   const ti = document.getElementById('modal-cat-title'); if (ti) ti.textContent = 'Nova Categoria';
   openModal('modal-categoria');
 }
@@ -8726,9 +8759,14 @@ async function editCategoria(id) {
   _setVal('est-cat-desc', c.descricao || '');
   _ensureCatTipoField();
   _ensureCatPaiField();
+  _ensureCatVinculoField();
   _setVal('est-cat-tipo', c.tipo || 'producao');
   _popularCatPai(cats, c.id);
   _setVal('est-cat-pai', c.parent_id || '');
+  _popularCatVinculo(cats, c.id);
+  _setVal('est-cat-vinculo-chk', !!c.categoria_vinculada_id);
+  if (c.categoria_vinculada_id) _setVal('est-cat-vinculo-id', c.categoria_vinculada_id);
+  toggleCatVinculoSelect();
   const ti = document.getElementById('modal-cat-title'); if (ti) ti.textContent = 'Editar Categoria';
   openModal('modal-categoria');
 }
@@ -8736,7 +8774,15 @@ async function editCategoria(id) {
 async function salvarCategoria() {
   const id = _getVal('est-cat-id');
   const _pai = _getVal('est-cat-pai');
-  const body = { nome: _getVal('est-cat-nome').trim(), descricao: _getVal('est-cat-desc').trim(), tipo: _getVal('est-cat-tipo') || 'producao', parent_id: _pai ? Number(_pai) : null };
+  const _vinculoAtivo = document.getElementById('est-cat-vinculo-chk')?.checked;
+  const _vinculoId = _vinculoAtivo ? _getVal('est-cat-vinculo-id') : '';
+  const body = {
+    nome: _getVal('est-cat-nome').trim(),
+    descricao: _getVal('est-cat-desc').trim(),
+    tipo: _getVal('est-cat-tipo') || 'producao',
+    parent_id: _pai ? Number(_pai) : null,
+    categoria_vinculada_id: _vinculoId ? Number(_vinculoId) : null
+  };
   if (!body.nome) { showAlert('Informe o nome da categoria', 'danger'); return; }
   try {
     if (id) await api('/estoque/categorias/' + id, 'PUT', body);

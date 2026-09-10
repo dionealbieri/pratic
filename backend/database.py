@@ -1066,6 +1066,8 @@ def init_db():
         conn.execute("ALTER TABLE estoque_categorias ADD COLUMN parent_id INTEGER")
     if "oculta_pdv" not in cols_cat:
         conn.execute("ALTER TABLE estoque_categorias ADD COLUMN oculta_pdv INTEGER DEFAULT 0")
+    if "categoria_vinculada_id" not in cols_cat:
+        conn.execute("ALTER TABLE estoque_categorias ADD COLUMN categoria_vinculada_id INTEGER")
     cols_pi = [r[1] for r in conn.execute("PRAGMA table_info(pedidos_itens)").fetchall()]
     if "valor_unitario" not in cols_pi:
         conn.execute("ALTER TABLE pedidos_itens ADD COLUMN valor_unitario REAL DEFAULT 0")
