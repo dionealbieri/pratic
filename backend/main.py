@@ -158,6 +158,11 @@ async def restaurar_backup(file: UploadFile = File(...)):
         if os.path.exists(temp_db_path):
             os.remove(temp_db_path)
             
+    # Reaplica as migrações do banco (colunas/tabelas novas) sobre o arquivo
+    # recém-restaurado — sem isso, um backup mais antigo que o código atual
+    # ficaria sem colunas adicionadas depois, até o próximo restart manual.
+    init_db()
+
     return {"mensagem": "Banco de dados restaurado com sucesso!"}
 
 @app.post("/api/empresa/logo", dependencies=[Depends(get_current_user)])
