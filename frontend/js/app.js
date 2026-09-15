@@ -8206,8 +8206,8 @@ function _filtrarProdutosEstoque(prods) {
   });
 }
 
-function _popularFiltroMarcasEstoque(prods) {
-  const sel = document.getElementById('est-filtro-marca');
+function _popularFiltroMarcasEstoque(prods, seletorId) {
+  const sel = document.getElementById(seletorId || 'est-filtro-marca');
   if (!sel) return;
   const atual = sel.value || '';
   const marcas = new Set();
@@ -8389,6 +8389,9 @@ async function openModalMovimentacao(prodId) {
   _setVal('est-mov-fornecedor', '');
   _setVal('est-mov-custo', '');
   _setVal('est-mov-nf', '');
+  _setVal('est-mov-nf-chave', '');
+  const _erroChave = document.getElementById('est-mov-nf-chave-erro');
+  if (_erroChave) _erroChave.style.display = 'none';
   _setVal('est-mov-motivo', '');
   toggleMovTipo();
   openModal('modal-movimentacao');
@@ -8398,14 +8401,46 @@ function toggleMovTipo() {
   const tipo = _getVal('est-mov-tipo');
   const fornecedor = document.getElementById('est-mov-fornecedor-group');
   const custo = document.getElementById('est-mov-custo-group');
-  const nf = document.getElementById('est-mov-nf-group');
+  const nfCaixa = document.getElementById('est-mov-nf-destaque');
   const show = tipo === 'entrada';
   if (fornecedor) fornecedor.style.display = show ? '' : 'none';
   if (custo) custo.style.display = show ? '' : 'none';
-  if (nf) nf.style.display = show ? '' : 'none';
+  if (nfCaixa) nfCaixa.style.display = show ? 'grid' : 'none';
+  onDigitaNumeroNF();
 }
 
+// Mostra o campo da chave só depois que o número da NF for preenchido; some e
+// limpa a chave de novo se o número for apagado, pra não deixar lixo salvo.
+function onDigitaNumeroNF() {
+  const tipo = _getVal('est-mov-tipo');
+  const numero = _getVal('est-mov-nf').trim();
+  const grupoChave = document.getElementById('est-mov-nf-chave-group');
+  if (!grupoChave) return;
+  const mostrar = tipo === 'entrada' && numero.length > 0;
+  grupoChave.style.display = mostrar ? '' : 'none';
+  if (!mostrar) {
+    _setVal('est-mov-nf-chave', '');
+    const erro = document.getElementById('est-mov-nf-chave-erro');
+    if (erro) erro.style.display = 'none';
+  }
+}
+window.onDigitaNumeroNF = onDigitaNumeroNF;
+
+// Valida a chave da NF-e (44 dígitos). Retorna true se estiver ok (ou vazia —
+// campo opcional). Mostra o aviso embaixo do campo quando inválida.
+function validarChaveNF() {
+  const el = document.getElementById('est-mov-nf-chave');
+  const erro = document.getElementById('est-mov-nf-chave-erro');
+  if (!el) return true;
+  const valor = el.value.replace(/\D/g, '');
+  const valida = valor.length === 0 || valor.length === 44;
+  if (erro) erro.style.display = valida ? 'none' : '';
+  return valida;
+}
+window.validarChaveNF = validarChaveNF;
+
 async function salvarMovimentacao() {
+  if (!validarChaveNF()) { showAlert('A chave da nota fiscal precisa ter 44 dígitos', 'danger'); return; }
   const body = {
     produto_id: +_getVal('est-mov-produto'),
     tipo: _getVal('est-mov-tipo') || 'entrada',
@@ -8414,6 +8449,7 @@ async function salvarMovimentacao() {
     fornecedor: _getVal('est-mov-fornecedor').trim(),
     custo_unitario: _numVal('est-mov-custo'),
     nota_fiscal: _getVal('est-mov-nf').trim(),
+    nota_fiscal_chave: _getVal('est-mov-nf-chave').trim(),
     observacao: _getVal('est-mov-motivo').trim(),
     motivo: _getVal('est-mov-motivo').trim(),
     data: _getVal('est-mov-data') || new Date().toISOString().slice(0,10)
@@ -8455,6 +8491,8 @@ async function loadMovimentacoes() {
   const tipo = _getVal('est-filtro-tipo');
   const categoriaId = _getVal('est-filtro-mov-categoria');
   const produtoId = _getVal('est-filtro-mov-produto');
+  const marca = _getVal('est-filtro-mov-marca');
+  const notaFiscal = _getVal('est-filtro-mov-nf').trim();
   const dataInicio = _getVal('est-filtro-data-ini');
   const dataFim = _getVal('est-filtro-data-fim');
 
@@ -8471,11 +8509,22 @@ async function loadMovimentacoes() {
     } catch (e) {}
   }
 
+  const selMarca = document.getElementById('est-filtro-mov-marca');
+  if (selMarca && selMarca.options.length <= 1) {
+    try {
+      const todosProdutos = (produtosEstoque && produtosEstoque.length) ? produtosEstoque : await api('/estoque/produtos');
+      _popularFiltroMarcasEstoque(todosProdutos, 'est-filtro-mov-marca');
+      selMarca.value = marca || '';
+    } catch (e) {}
+  }
+
   let url = '/estoque/movimentacoes';
   const params = [];
   if (tipo) params.push('tipo=' + encodeURIComponent(tipo));
   if (categoriaId) params.push('categoria_id=' + encodeURIComponent(categoriaId));
   if (produtoId) params.push('produto_id=' + encodeURIComponent(produtoId));
+  if (marca) params.push('marca=' + encodeURIComponent(marca));
+  if (notaFiscal) params.push('nota_fiscal=' + encodeURIComponent(notaFiscal));
   if (dataInicio) params.push('data_inicio=' + encodeURIComponent(dataInicio));
   if (dataFim) params.push('data_fim=' + encodeURIComponent(dataFim));
   
@@ -8499,6 +8548,7 @@ async function loadMovimentacoes() {
       <td>
         <span class="pill">${labels[m.tipo] || m.tipo}</span>
         ${m.nota_fiscal ? `<small style="display:block;color:var(--muted);margin-top:2px">NF: ${m.nota_fiscal}</small>` : ''}
+        ${m.nota_fiscal_chave ? `<small style="display:block;color:var(--muted);margin-top:2px" title="${m.nota_fiscal_chave}">Chave: ${m.nota_fiscal_chave.slice(0,8)}...${m.nota_fiscal_chave.slice(-6)}</small>` : ''}
       </td>
       <td>${fmtNum(m.quantidade || 0)} ${m.unidade || ''}</td>
       <td>${fmtNum(m.saldo_anterior || 0)}</td>
@@ -8507,6 +8557,13 @@ async function loadMovimentacoes() {
       <td>${temPermissao('estoque', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="deletarMovimentacao(${m.id})">✕</button>` : ''}</td>
     </tr>`).join('');
 }
+
+let _movNfBuscaTimer = null;
+function onBuscaMovNF() {
+  clearTimeout(_movNfBuscaTimer);
+  _movNfBuscaTimer = setTimeout(loadMovimentacoes, 350);
+}
+window.onBuscaMovNF = onBuscaMovNF;
 
 function onMudaPeriodoMov() {
   const periodo = _getVal('est-filtro-mov-periodo');

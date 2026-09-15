@@ -1279,6 +1279,8 @@ def init_db():
     cols_mov = [row[1] for row in conn.execute("PRAGMA table_info(estoque_movimentacoes)").fetchall()]
     if "nota_fiscal" not in cols_mov:
         conn.execute("ALTER TABLE estoque_movimentacoes ADD COLUMN nota_fiscal TEXT")
+    if "nota_fiscal_chave" not in cols_mov:
+        conn.execute("ALTER TABLE estoque_movimentacoes ADD COLUMN nota_fiscal_chave TEXT")
 
     # Migração do campo Código/ID:
     # A versão anterior criou um índice UNIQUE apenas em codigo. Isso gerava erro 500

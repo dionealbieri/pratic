@@ -101,6 +101,7 @@ class MovimentacaoIn(BaseModel):
     observacao: Optional[str] = None
     data: Optional[str] = None
     nota_fiscal: Optional[str] = ""
+    nota_fiscal_chave: Optional[str] = ""
 
 # ─── CATEGORIAS ───────────────────────────────────────────────────────────────
 
@@ -349,10 +350,10 @@ def deletar_produto(id: int):
 # ─── MOVIMENTAÇÕES ────────────────────────────────────────────────────────────
 
 @router.get("/movimentacoes")
-def listar_movimentacoes(produto_id: Optional[int] = None, tipo: Optional[str] = None, data_inicio: Optional[str] = None, data_fim: Optional[str] = None, categoria_id: Optional[int] = None):
+def listar_movimentacoes(produto_id: Optional[int] = None, tipo: Optional[str] = None, data_inicio: Optional[str] = None, data_fim: Optional[str] = None, categoria_id: Optional[int] = None, marca: Optional[str] = None, nota_fiscal: Optional[str] = None):
     conn = get_conn()
     query = """
-        SELECT m.*, p.codigo as produto_codigo, p.nome as produto_nome, p.unidade,
+        SELECT m.*, p.codigo as produto_codigo, p.nome as produto_nome, p.unidade, p.marca as produto_marca,
                p.categoria_id as produto_categoria_id, cat.nome as categoria_nome
         FROM estoque_movimentacoes m
         JOIN estoque_produtos p ON m.produto_id = p.id
@@ -369,6 +370,13 @@ def listar_movimentacoes(produto_id: Optional[int] = None, tipo: Optional[str] =
     if categoria_id:
         query += " AND p.categoria_id = ?"
         params.append(categoria_id)
+    if marca:
+        query += " AND p.marca = ?"
+        params.append(marca)
+    if nota_fiscal:
+        query += " AND (m.nota_fiscal LIKE ? OR m.nota_fiscal_chave LIKE ?)"
+        params.append(f"%{nota_fiscal}%")
+        params.append(f"%{nota_fiscal}%")
     if data_inicio:
         query += " AND m.data >= ?"
         params.append(data_inicio)
@@ -383,8 +391,15 @@ def listar_movimentacoes(produto_id: Optional[int] = None, tipo: Optional[str] =
 @router.post("/movimentacoes")
 def registrar_movimentacao(m: MovimentacaoIn):
     from datetime import date
+    import re as _re
     if m.tipo not in ("entrada", "saida", "perda", "ajuste", "sobra"):
         raise HTTPException(400, "Tipo inválido")
+    chave = (m.nota_fiscal_chave or "").strip()
+    if chave:
+        chave_digitos = _re.sub(r"\D", "", chave)
+        if len(chave_digitos) != 44:
+            raise HTTPException(400, "A chave da nota fiscal deve ter 44 dígitos")
+        chave = chave_digitos
     conn = get_conn()
 
     saldo_row = conn.execute("SELECT quantidade FROM estoque_saldo WHERE produto_id=?", (m.produto_id,)).fetchone()
@@ -407,11 +422,11 @@ def registrar_movimentacao(m: MovimentacaoIn):
     cur = conn.cursor()
     cur.execute("""INSERT INTO estoque_movimentacoes
                    (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior,
-                    motivo, tipo_perda, responsavel, fornecedor, custo_unitario, observacao, data, nota_fiscal)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    motivo, tipo_perda, responsavel, fornecedor, custo_unitario, observacao, data, nota_fiscal, nota_fiscal_chave)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (m.produto_id, m.tipo, m.quantidade, saldo_atual, novo_saldo,
                  m.motivo, m.tipo_perda, m.responsavel, m.fornecedor,
-                 m.custo_unitario, m.observacao, data, m.nota_fiscal))
+                 m.custo_unitario, m.observacao, data, m.nota_fiscal, chave))
 
     if saldo_row:
         conn.execute("UPDATE estoque_saldo SET quantidade=?, ultima_atualizacao=datetime('now') WHERE produto_id=?",

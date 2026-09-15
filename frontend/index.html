@@ -841,6 +841,20 @@
           </div>
 
           <div class="flex items-center gap-1">
+            <label style="font-size:12px;color:var(--muted)">Marca:</label>
+            <select id="est-filtro-mov-marca" onchange="loadMovimentacoes()" style="min-width:150px;height:36px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-card);color:var(--text)">
+              <option value="">Todas as marcas</option>
+            </select>
+          </div>
+
+          <div class="flex items-center gap-1" style="background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.45);border-radius:8px;padding:4px 10px 4px 8px">
+            <span style="font-size:14px">🧾</span>
+            <label style="font-size:12px;color:#f59e0b;font-weight:600">Nota Fiscal:</label>
+            <input type="text" id="est-filtro-mov-nf" placeholder="Número ou chave" oninput="onBuscaMovNF()"
+              style="min-width:170px;height:36px;padding:6px 12px;border:1px solid rgba(245,158,11,0.5);border-radius:6px;background:var(--bg-card);color:var(--text)">
+          </div>
+
+          <div class="flex items-center gap-1">
             <label style="font-size:12px;color:var(--muted)">Produto:</label>
             <select id="est-filtro-mov-produto" onchange="loadMovimentacoes()" style="min-width:200px;height:36px;padding:6px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg-card);color:var(--text)">
               <option value="">Todos os produtos</option>
@@ -2331,9 +2345,17 @@
         <label>Custo Unitário (R$)</label>
         <input type="number" id="est-mov-custo" min="0" step="0.01">
       </div>
-      <div class="form-group" id="est-mov-nf-group">
-        <label>Nota Fiscal (NF-e)</label>
-        <input type="text" id="est-mov-nf">
+      <div id="est-mov-nf-destaque" style="grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:16px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.4);border-radius:8px;padding:12px">
+        <div class="form-group" id="est-mov-nf-group" style="margin:0">
+          <label style="color:#f59e0b;font-weight:600">🧾 Nota Fiscal (NF-e)</label>
+          <input type="text" id="est-mov-nf" oninput="onDigitaNumeroNF()" style="border-color:rgba(245,158,11,0.5)">
+        </div>
+        <div class="form-group" id="est-mov-nf-chave-group" style="display:none;margin:0">
+          <label style="color:#f59e0b;font-weight:600">🔑 Chave da NF-e (44 dígitos)</label>
+          <input type="text" id="est-mov-nf-chave" maxlength="60" placeholder="Cole a chave de acesso da nota" style="border-color:rgba(245,158,11,0.5)"
+            oninput="this.value=this.value.replace(/\D/g,'')" onblur="validarChaveNF()">
+          <small id="est-mov-nf-chave-erro" style="color:#ef4444;display:none">A chave precisa ter exatamente 44 números</small>
+        </div>
       </div>
       <div class="form-group" style="grid-column:1/-1">
         <label>Motivo / Observação</label>
