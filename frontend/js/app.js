@@ -6053,10 +6053,10 @@ async function _carregarHistoricoProducaoPedido(id) {
     const resumoHtml = resumo.length ? `
       <div class="table-head"><span class="table-head-title">Conferência por produto</span></div>
       <table>
-        <thead><tr><th>Produto</th><th>Marca</th><th>Pedido</th><th>Produzido</th><th>Perda</th><th>Falta</th><th>Situação</th></tr></thead>
+        <thead><tr><th>ML</th><th>Marca</th><th>Pedido</th><th>Produzido</th><th>Perda</th><th>Falta</th><th>Situação</th></tr></thead>
         <tbody>${resumo.map(r => `
           <tr>
-            <td>${r.produto_nome || '—'}</td>
+            <td title="${r.produto_nome || ''}">${r.produto_tamanho || r.produto_nome || '—'}</td>
             <td>${r.produto_marca || '—'}</td>
             <td>${fmtNum(r.pedido)}</td>
             <td>${fmtNum(r.produzido)}</td>
@@ -6070,13 +6070,13 @@ async function _carregarHistoricoProducaoPedido(id) {
       ${resumoHtml}
       <div class="table-head"><span class="table-head-title">Histórico de Produção</span></div>
       <table>
-        <thead><tr><th>Data</th><th>Operador</th><th>Máquina</th><th>Produto</th><th>Marca</th><th>Qtd Produzida</th><th>Perda</th><th>Sobra</th></tr></thead>
+        <thead><tr><th>Data</th><th>Operador</th><th>Máquina</th><th>ML</th><th>Marca</th><th>Qtd Produzida</th><th>Perda</th><th>Sobra</th></tr></thead>
         <tbody>${lancamentos.map(l => `
           <tr>
             <td>${fmtDate(l.data)}</td>
             <td>${l.colaborador_nome}</td>
             <td>${l.maquina_nome}</td>
-            <td>${l.produto_nome || '—'}</td>
+            <td title="${l.produto_nome || ''}">${l.produto_tamanho || l.produto_nome || '—'}</td>
             <td>${l.produto_marca || '—'}</td>
             <td>${fmtNum(l.producao)}</td>
             <td style="color:${l.perda_quantidade > 0 ? 'var(--danger)' : 'inherit'}">${fmtNum(l.perda_quantidade)}</td>
