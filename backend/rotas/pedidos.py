@@ -41,6 +41,7 @@ class ClienteIn(BaseModel):
     observacoes: Optional[str] = None
 
 class ItemPedidoIn(BaseModel):
+    id: Optional[int] = None  # id do item já existente (edição): permite atualizar em vez de recriar
     produto_id: Optional[int] = None
     descricao: str
     quantidade: float
@@ -61,10 +62,11 @@ class PedidoIn(BaseModel):
     vendedor: Optional[str] = None
     observacoes: Optional[str] = None
     itens: List[ItemPedidoIn] = []
-    acrescimo: Optional[float] = 0.0
-    frete: Optional[float] = 0.0
-    desconto_global: Optional[float] = 0.0
-    parcelas: Optional[List[ParcelaPedidoIn]] = []
+    # None = "não enviado": na edição (PUT) o valor atual é preservado em vez de zerado
+    acrescimo: Optional[float] = None
+    frete: Optional[float] = None
+    desconto_global: Optional[float] = None
+    parcelas: Optional[List[ParcelaPedidoIn]] = None
     precisa_pintura: Optional[bool] = False
 
 class StatusItemIn(BaseModel):
@@ -1435,29 +1437,84 @@ def buscar_pedido(id: int):
     result["parcelas"] = [dict(pa) for pa in parcelas]
     return result
 
+_RE_TAMANHO_COPO = _re.compile(r"(\d+(?:[.,]\d+)?)\s*(ml|oz)\b", _re.IGNORECASE)
+
+def _tamanho_do_nome(nome: str) -> str:
+    """Extrai o tamanho do copo (ex.: '300 ml') do nome do produto."""
+    m = _RE_TAMANHO_COPO.search(nome or "")
+    return f"{m.group(1)} {m.group(2).lower()}" if m else ""
+
 @router.get("/{id}/historico-producao")
 def historico_producao_pedido(id: int):
     """Lançamentos de produção vinculados a este pedido (pelo número), com
-    operador, máquina e data — pra saber quem produziu e quando, já que um
-    pedido pode ser atendido em vários dias/operadores diferentes."""
+    operador, máquina, data e PRODUTO (nome, marca e tamanho extraído do nome) —
+    mais um resumo por produto (pedido x produzido x falta) para conferência.
+    Lançamentos multi-produto (producao_diaria_itens) viram uma linha por produto."""
     conn = get_conn()
     pedido = conn.execute("SELECT numero_pedido FROM pedidos WHERE id=?", (id,)).fetchone()
     if not pedido:
         conn.close()
         raise HTTPException(404, "Pedido não encontrado")
     lancamentos = conn.execute("""
-        SELECT p.id, p.data, p.producao, p.perda_quantidade, p.sobra_quantidade,
-               c.nome as colaborador_nome, m.nome as maquina_nome
+        SELECT p.id, p.data,
+               COALESCE(pdi.produto_estoque_id, p.produto_estoque_id) as produto_id,
+               CASE WHEN pdi.id IS NULL THEN p.producao ELSE pdi.quantidade END as producao,
+               CASE WHEN pdi.id IS NULL THEN p.perda_quantidade ELSE pdi.perda_quantidade END as perda_quantidade,
+               CASE WHEN pdi.id IS NULL THEN p.sobra_quantidade ELSE pdi.sobra_quantidade END as sobra_quantidade,
+               c.nome as colaborador_nome, m.nome as maquina_nome,
+               ep.nome as produto_nome, ep.marca as produto_marca
         FROM producao_diaria p
         JOIN colaboradores c ON c.id = p.colaborador_id
         JOIN maquinas m ON m.id = p.maquina_id
+        LEFT JOIN producao_diaria_itens pdi ON pdi.producao_diaria_id = p.id
+        LEFT JOIN estoque_produtos ep ON ep.id = COALESCE(pdi.produto_estoque_id, p.produto_estoque_id)
         WHERE p.pedido_numero = ?
-        ORDER BY p.data ASC, p.id ASC
+        ORDER BY p.data ASC, p.id ASC, pdi.id ASC
     """, (pedido["numero_pedido"],)).fetchall()
+    itens = conn.execute("""
+        SELECT i.produto_id, SUM(i.quantidade) as pedido, ep.nome as produto_nome, ep.marca as produto_marca
+        FROM pedidos_itens i
+        LEFT JOIN estoque_produtos ep ON ep.id = i.produto_id
+        WHERE i.pedido_id = ?
+        GROUP BY i.produto_id
+        ORDER BY MIN(i.id)
+    """, (id,)).fetchall()
     conn.close()
-    resultado = [dict(l) for l in lancamentos]
+
+    resultado = []
+    for l in lancamentos:
+        d = dict(l)
+        d["produto_tamanho"] = _tamanho_do_nome(d.get("produto_nome"))
+        resultado.append(d)
+
+    # Resumo por produto: o que foi pedido x o que já foi produzido (e perdido)
+    resumo = {}
+    for it in itens:
+        resumo[it["produto_id"]] = {
+            "produto_id": it["produto_id"], "produto_nome": it["produto_nome"],
+            "produto_marca": it["produto_marca"], "produto_tamanho": _tamanho_do_nome(it["produto_nome"]),
+            "pedido": it["pedido"] or 0, "produzido": 0, "perda": 0, "sobra": 0, "fora_do_pedido": False,
+        }
+    for l in resultado:
+        r = resumo.get(l["produto_id"])
+        if r is None:  # produziu um produto que não está no pedido: destaca pra conferência
+            r = resumo[l["produto_id"]] = {
+                "produto_id": l["produto_id"], "produto_nome": l["produto_nome"],
+                "produto_marca": l["produto_marca"], "produto_tamanho": l["produto_tamanho"],
+                "pedido": 0, "produzido": 0, "perda": 0, "sobra": 0, "fora_do_pedido": True,
+            }
+        r["produzido"] += l["producao"] or 0
+        r["perda"] += l["perda_quantidade"] or 0
+        r["sobra"] += l["sobra_quantidade"] or 0
+    resumo_lista = []
+    for r in resumo.values():
+        r["falta"] = max((r["pedido"] or 0) - r["produzido"], 0)
+        r["excedente"] = max(r["produzido"] - (r["pedido"] or 0), 0) if r["pedido"] else 0
+        resumo_lista.append(r)
+
     total_produzido = sum((l["producao"] or 0) for l in resultado)
-    return {"numero_pedido": pedido["numero_pedido"], "lancamentos": resultado, "total_produzido": total_produzido}
+    return {"numero_pedido": pedido["numero_pedido"], "lancamentos": resultado,
+            "resumo": resumo_lista, "total_produzido": total_produzido}
 
 @router.post("/")
 def criar_pedido(p: PedidoIn):
@@ -1504,62 +1561,91 @@ def criar_pedido(p: PedidoIn):
 def atualizar_pedido(id: int, p: PedidoIn):
     conn = get_conn()
     cur = conn.cursor()
+    atual = cur.execute("SELECT * FROM pedidos WHERE id=?", (id,)).fetchone()
+    if not atual:
+        conn.close()
+        raise HTTPException(404, "Pedido não encontrado")
+    numero_antigo = atual["numero_pedido"]
     if not p.numero_pedido or not str(p.numero_pedido).strip():
         last = cur.execute("SELECT numero_pedido FROM pedidos WHERE numero_pedido GLOB '[0-9]*' AND id<>? ORDER BY CAST(numero_pedido AS INTEGER) DESC LIMIT 1", (id,)).fetchone()
         if last and last[0].isdigit():
             p.numero_pedido = str(int(last[0]) + 1)
         else:
             p.numero_pedido = "1"
-    dup = cur.execute("SELECT id FROM pedidos WHERE numero_pedido=? AND id<>?", (str(p.numero_pedido), id)).fetchone()
+    p.numero_pedido = str(p.numero_pedido).strip()
+    dup = cur.execute("SELECT id FROM pedidos WHERE numero_pedido=? AND id<>?", (p.numero_pedido, id)).fetchone()
     if dup:
         conn.close()
         raise HTTPException(400, f"Pedido número {p.numero_pedido} já existe (pedido #{dup['id']}).")
+
+    # Campos financeiros não enviados (None) mantêm o valor atual — antes eram zerados.
+    acrescimo = atual["acrescimo"] if p.acrescimo is None else p.acrescimo
+    frete = atual["frete"] if p.frete is None else p.frete
+    desconto_global = atual["desconto_global"] if p.desconto_global is None else p.desconto_global
     cur.execute("""UPDATE pedidos SET
         numero_pedido=?, cliente_id=?, prazo_entrega=?, vendedor=?, observacoes=?, acrescimo=?, frete=?, desconto_global=?, precisa_pintura=?
         WHERE id=?""",
-        (p.numero_pedido, p.cliente_id, (p.prazo_entrega or ""), p.vendedor, p.observacoes, p.acrescimo or 0, p.frete or 0, p.desconto_global or 0, 1 if p.precisa_pintura else 0, id))
-    
-    # Mapear status e quantidade produzida dos itens atuais pela descrição (para preservar o progresso)
-    progresso_itens = {}
-    for row in cur.execute("SELECT descricao, status, qtd_produzida FROM pedidos_itens WHERE pedido_id=?", (id,)).fetchall():
-        progresso_itens[row["descricao"].upper()] = (row["status"], row["qtd_produzida"])
+        (p.numero_pedido, p.cliente_id, (p.prazo_entrega or ""), p.vendedor, p.observacoes, acrescimo or 0, frete or 0, desconto_global or 0, 1 if p.precisa_pintura else 0, id))
 
-    # Como os itens serão apagados e recriados do zero (ids novos), qualquer
-    # programação de separação (producao_programada) que apontava pra eles
-    # ficaria orfã e o DELETE abaixo falharia com FOREIGN KEY constraint
-    # failed (producao_programada.pedido_item_id -> pedidos_itens.id, sem
-    # CASCADE). Removemos essas programações antes — quem estava reprogramado
-    # precisa reprogramar a separação depois de editar o pedido.
-    cur.execute("""
-        DELETE FROM producao_programada
-        WHERE pedido_item_id IN (SELECT id FROM pedidos_itens WHERE pedido_id=?)
-    """, (id,))
+    # Produção, pintura e movimentações de estoque se ligam ao pedido pelo NÚMERO:
+    # se o número mudou, migra os vínculos para não deixar histórico órfão.
+    if numero_antigo and numero_antigo != p.numero_pedido:
+        for tabela in ("producao_diaria", "producao_pintura", "estoque_movimentacoes"):
+            cur.execute(f"UPDATE {tabela} SET pedido_numero=? WHERE pedido_numero=?", (p.numero_pedido, numero_antigo))
 
-    cur.execute("DELETE FROM pedidos_itens WHERE pedido_id=?", (id,))
+    # Itens: atualiza os existentes NO LUGAR (preserva id, status, qtd_produzida,
+    # status_separacao e programação de separação), insere os novos e remove só os
+    # que saíram do pedido. Antes tudo era apagado e recriado.
+    existentes = {r["id"]: r for r in cur.execute("SELECT * FROM pedidos_itens WHERE pedido_id=?", (id,)).fetchall()}
+    usados = set()
+
+    def _achar_existente(item):
+        if item.id and item.id in existentes and item.id not in usados:
+            return item.id
+        # Cliente que não enviou o id: casa por descrição, na ordem (aguenta itens repetidos)
+        chave = (item.descricao or "").strip().upper()
+        for eid, r in existentes.items():
+            if eid not in usados and (r["descricao"] or "").strip().upper() == chave:
+                return eid
+        return None
+
     for item in p.itens:
-        status = "aberto"
-        qtd_produzida = 0.0
-        key = item.descricao.upper()
-        if key in progresso_itens:
-            status, qtd_produzida = progresso_itens[key]
+        eid = _achar_existente(item)
         vunit = item.valor_unitario or 0.0
+        if eid is not None:
+            usados.add(eid)
+            if vunit == 0.0:
+                vunit = existentes[eid]["valor_unitario"] or 0.0
         if vunit == 0.0 and item.produto_id:
             p_info = cur.execute("SELECT preco FROM estoque_produtos WHERE id=?", (item.produto_id,)).fetchone()
             if p_info:
                 vunit = p_info["preco"] or 0.0
-        cur.execute("""INSERT INTO pedidos_itens
-            (pedido_id, produto_id, descricao, quantidade, unidade, valor_unitario, desconto, insumo_vinculado_id, qtd_produzida, status)
-            VALUES (?,?,?,?,?,?,?,?,?,?)""",
-            (id, item.produto_id, item.descricao, item.quantidade, item.unidade, vunit, item.desconto or 0, item.insumo_vinculado_id, qtd_produzida, status))
-            
-    cur.execute("DELETE FROM pedidos_parcelas WHERE pedido_id=?", (id,))
-    if p.parcelas:
+        if eid is not None:
+            cur.execute("""UPDATE pedidos_itens SET
+                produto_id=?, descricao=?, quantidade=?, unidade=?, valor_unitario=?, desconto=?, insumo_vinculado_id=?
+                WHERE id=?""",
+                (item.produto_id, item.descricao, item.quantidade, item.unidade, vunit, item.desconto or 0, item.insumo_vinculado_id, eid))
+        else:
+            cur.execute("""INSERT INTO pedidos_itens
+                (pedido_id, produto_id, descricao, quantidade, unidade, valor_unitario, desconto, insumo_vinculado_id, qtd_produzida, status)
+                VALUES (?,?,?,?,?,?,?,?,0,'aberto')""",
+                (id, item.produto_id, item.descricao, item.quantidade, item.unidade, vunit, item.desconto or 0, item.insumo_vinculado_id))
+
+    removidos = [eid for eid in existentes if eid not in usados]
+    for eid in removidos:
+        # programação de separação aponta pro item (FK sem CASCADE): sai junto com ele
+        cur.execute("DELETE FROM producao_programada WHERE pedido_item_id=?", (eid,))
+        cur.execute("DELETE FROM pedidos_itens WHERE id=?", (eid,))
+
+    # Parcelas: só substitui se vieram no payload.
+    if p.parcelas is not None:
+        cur.execute("DELETE FROM pedidos_parcelas WHERE pedido_id=?", (id,))
         for parc in p.parcelas:
             cur.execute("""INSERT INTO pedidos_parcelas
                 (pedido_id, forma_pagamento, vencimento, valor)
                 VALUES (?,?,?,?)""",
                 (id, (parc.forma_pagamento or ""), (parc.vencimento or ""), parc.valor or 0))
-                
+
     _auto_vincular_itens(conn)
     _recalc_status_pedido(cur, id)
     conn.commit()
