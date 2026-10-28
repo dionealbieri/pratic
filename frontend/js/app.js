@@ -6042,15 +6042,42 @@ async function _carregarHistoricoProducaoPedido(id) {
       wrap.innerHTML = '<div class="table-head"><span class="table-head-title">Histórico de Produção</span></div><div style="padding:12px;color:var(--muted);font-size:13px">Nenhum lançamento de produção vinculado a este pedido ainda.</div>';
       return;
     }
+    const resumo = hist.resumo || [];
+    const situacao = r => {
+      if (r.fora_do_pedido) return '<span style="color:var(--danger);font-weight:600">⚠ Fora do pedido</span>';
+      if (r.excedente > 0) return `<span style="color:var(--warn);font-weight:600">Excedeu +${fmtNum(r.excedente)}</span>`;
+      if (r.produzido >= r.pedido && r.pedido > 0) return '<span style="color:var(--success);font-weight:600">✔ Completo</span>';
+      if (r.produzido > 0) return '<span style="color:var(--warn);font-weight:600">Parcial</span>';
+      return '<span style="color:var(--muted)">Não iniciado</span>';
+    };
+    const resumoHtml = resumo.length ? `
+      <div class="table-head"><span class="table-head-title">Conferência por produto</span></div>
+      <table>
+        <thead><tr><th>Produto</th><th>Marca</th><th>Pedido</th><th>Produzido</th><th>Perda</th><th>Falta</th><th>Situação</th></tr></thead>
+        <tbody>${resumo.map(r => `
+          <tr>
+            <td>${r.produto_nome || '—'}</td>
+            <td>${r.produto_marca || '—'}</td>
+            <td>${fmtNum(r.pedido)}</td>
+            <td>${fmtNum(r.produzido)}</td>
+            <td style="color:${r.perda > 0 ? 'var(--danger)' : 'inherit'}">${fmtNum(r.perda)}</td>
+            <td>${fmtNum(r.falta)}</td>
+            <td>${situacao(r)}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>` : '';
     wrap.innerHTML = `
+      ${resumoHtml}
       <div class="table-head"><span class="table-head-title">Histórico de Produção</span></div>
       <table>
-        <thead><tr><th>Data</th><th>Operador</th><th>Máquina</th><th>Qtd Produzida</th><th>Perda</th><th>Sobra</th></tr></thead>
+        <thead><tr><th>Data</th><th>Operador</th><th>Máquina</th><th>Produto</th><th>Marca</th><th>Qtd Produzida</th><th>Perda</th><th>Sobra</th></tr></thead>
         <tbody>${lancamentos.map(l => `
           <tr>
             <td>${fmtDate(l.data)}</td>
             <td>${l.colaborador_nome}</td>
             <td>${l.maquina_nome}</td>
+            <td>${l.produto_nome || '—'}</td>
+            <td>${l.produto_marca || '—'}</td>
             <td>${fmtNum(l.producao)}</td>
             <td style="color:${l.perda_quantidade > 0 ? 'var(--danger)' : 'inherit'}">${fmtNum(l.perda_quantidade)}</td>
             <td style="color:${l.sobra_quantidade > 0 ? 'var(--success)' : 'inherit'}">${fmtNum(l.sobra_quantidade)}</td>
@@ -6330,6 +6357,7 @@ window.importarPedidoArquivo = importarPedidoArquivo;
 
 
 let pedidoItens=[];
+let pedidoItensOriginais = [];
 let produtosEstoque=[];
 let unidadesEstoqueCache = ['unidade','und','milheiro','kg','litro','metro','caixa','pacote','par'];
 
@@ -6665,13 +6693,21 @@ async function editPedido(id) {
   document.getElementById('ped-precisa-pintura').checked = !!p.precisa_pintura;
   document.getElementById('ped-precisa-pintura').dataset.original = p.precisa_pintura ? '1' : '0';
   
+  // Carrega também id, valor e desconto do item: o backend atualiza o item no lugar
+  // (preservando progresso/separação) em vez de apagar e recriar.
   pedidoItens = p.itens.map(i => ({
+    id: i.id,
     descricao: i.descricao,
     quantidade: i.quantidade,
     unidade: i.unidade || 'unidade',
+    valor_unitario: i.valor_unitario || 0,
+    desconto: i.desconto || 0,
     produto_id: i.produto_id,
-    insumo_vinculado_id: i.insumo_vinculado_id || null
+    insumo_vinculado_id: i.insumo_vinculado_id || null,
+    qtd_produzida: i.qtd_produzida || 0
   }));
+  // Fotografia do estado original pra avisar se a edição descarta progresso de produção
+  pedidoItensOriginais = p.itens.map(i => ({ id: i.id, descricao: i.descricao, produto_id: i.produto_id, qtd_produzida: i.qtd_produzida || 0 }));
   
   await carregarProdutosEstoque();
   renderItensPedido();
@@ -6719,6 +6755,16 @@ async function salvarPedido() {
   if (itemNaoCadastrado) {
     showPopup('⚠️ Produto não cadastrado', `O produto "${itemNaoCadastrado.descricao}" não está cadastrado no estoque. Cadastre-o antes de salvar, ou corrija a descrição pra bater com um produto existente.`);
     return;
+  }
+  if (id) {
+    const perdas = [];
+    (pedidoItensOriginais || []).forEach(o => {
+      if (!(o.qtd_produzida > 0)) return;
+      const atual = body.itens.find(i => i.id === o.id);
+      if (!atual) perdas.push(`"${o.descricao}" foi removido (já tinha ${fmtNum(o.qtd_produzida)} produzidos)`);
+      else if (atual.produto_id !== o.produto_id) perdas.push(`"${o.descricao}" mudou de produto (já tinha ${fmtNum(o.qtd_produzida)} produzidos do produto anterior)`);
+    });
+    if (perdas.length && !confirm('Atenção: esta edição mexe em itens que já têm produção lançada:\n\n• ' + perdas.join('\n• ') + '\n\nDeseja salvar mesmo assim?')) return;
   }
   try {
     if(id) {
