@@ -2216,7 +2216,14 @@ function atualizarSimplificadoData() {
 }
 
 function findBestStockMatch(desc, stockProducts) {
-  if (!desc || !stockProducts || stockProducts.length === 0) return null;
+  // Só vincula sozinho quando existe UM único produto compatível; se houver empate
+  // (ex.: o PDF não traz a marca e há várias marcas no estoque), deixa para o usuário.
+  const r = findStockCandidates(desc, stockProducts);
+  return r.length === 1 ? r[0].id : null;
+}
+
+function findStockCandidates(desc, stockProducts) {
+  if (!desc || !stockProducts || stockProducts.length === 0) return [];
   
   const cleanDesc = desc.toUpperCase();
   
@@ -2226,16 +2233,38 @@ function findBestStockMatch(desc, stockProducts) {
     const normP = p.nome.toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/ML$/, 'M');
     return normP === normDesc;
   });
-  if (exact) return exact.id;
+  if (exact) return [exact];
   
   // 2. Token match para descrições com grafias diferentes
   const numbers = cleanDesc.match(/\d+/g) || [];
-  
-  let bestMatch = null;
+
+  // Palavras do texto: "C/ FURO" vira COMFURO e "S/ FURO" vira SEMFURO,
+  // pra não confundir tampa com furo e sem furo (nem bolha com reta).
+  const _palavras = (s) => String(s || '').toUpperCase()
+    .replace(/\bC\s*\/\s*/g, 'COM')
+    .replace(/\bS\s*\/\s*/g, 'SEM')
+    .replace(/[^A-Z\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length >= 2 && !['ML', 'DE', 'DO', 'DA', 'UN', 'UND'].includes(w));
+  const _mesmaPalavra = (a, b) => {
+    if (a === b) return true;
+    const n = Math.min(a.length, b.length);
+    return n >= 6 && a.slice(0, 6) === b.slice(0, 6); // GALVANOTEC ~ GALVANOTEK, CRISTAL ~ CRISTALCOPO
+  };
+  const palavrasDesc = _palavras(cleanDesc);
+
+  let melhores = [];
   let bestScore = 0;
-  
+
   for (const prod of stockProducts) {
     const cleanProd = prod.nome.toUpperCase();
+
+    // Pelo menos 70% das palavras do pedido precisam existir no produto do estoque
+    if (palavrasDesc.length) {
+      const palavrasProd = _palavras(cleanProd);
+      const achadas = palavrasDesc.filter(w => palavrasProd.some(q => _mesmaPalavra(w, q))).length;
+      if (achadas / palavrasDesc.length < 0.7) continue;
+    }
     
     // Todos os números da descrição devem estar no nome do produto
     let hasAllNumbers = true;
@@ -2264,11 +2293,13 @@ function findBestStockMatch(desc, stockProducts) {
     
     if (score > bestScore) {
       bestScore = score;
-      bestMatch = prod;
+      melhores = [prod];
+    } else if (score === bestScore && score > 0) {
+      melhores.push(prod);
     }
   }
   
-  return bestMatch && bestScore >= 3 ? bestMatch.id : null;
+  return bestScore >= 3 ? melhores : [];
 }
 
 function _itemEhRevenda(i) {
@@ -6331,6 +6362,7 @@ async function importarPedidoArquivo() {
     
     pedidoItens = (data.dados_extraidos.itens || []).map(i => ({
       descricao: i.descricao,
+      descricao_pdf: i.descricao,
       quantidade: i.quantidade,
       unidade: i.unidade || 'unidade',
       // preço/desconto lidos do PDF (quando houver): o pedido nasce igual ao original
@@ -6644,7 +6676,15 @@ function renderItensPedido() {
     const confirmMsg = prodVinc
       ? `<div style="color:var(--success);font-size:11px;margin-top:3px;word-break:break-word">✔ Estoque: ${_produtoLabel(prodVinc).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</div>`
       : '';
-    const warningMsg = isUnregistered ? '<div style="color:#ef4444;font-size:11px;margin-top:3px;font-weight:600">⚠️ Produto não cadastrado no estoque</div>' : '';
+    const _esc = t => String(t || '').replace(/&/g,'&amp;').replace(/</g,'&lt;');
+    const candidatos = (!item.produto_id && item.descricao) ? findStockCandidates(item.descricao, produtosEstoque || []) : [];
+    const ambiguoMsg = candidatos.length > 1
+      ? `<div style="color:#f59e0b;font-size:11px;margin-top:3px;font-weight:600;word-break:break-word">⚠️ O pedido não diz a marca. ${candidatos.length} produtos no estoque servem: ${candidatos.slice(0,4).map(c => _esc(_produtoLabel(c))).join(' | ')}${candidatos.length>4?' ...':''} — clique na seta ▼ e escolha o correto.</div>`
+      : '';
+    const pdfMsg = (item.descricao_pdf && item.descricao_pdf !== item.descricao)
+      ? `<div style="color:var(--muted);font-size:11px;margin-top:3px;word-break:break-word">Texto no PDF: ${_esc(item.descricao_pdf)}</div>`
+      : '';
+    const warningMsg = (isUnregistered && candidatos.length <= 1) ? '<div style="color:#ef4444;font-size:11px;margin-top:3px;font-weight:600">⚠️ Produto não cadastrado no estoque</div>' : '';
     const vinculoInfo = _opcoesInsumoVinculado(item);
     const vinculoRow = vinculoInfo ? `
     <div style="margin:2px 0 8px;padding:8px 10px;background:var(--surface2);border-radius:6px">
@@ -6671,7 +6711,7 @@ function renderItensPedido() {
             style="position:absolute;right:6px;top:50%;transform:translateY(-50%);cursor:pointer;color:var(--text);font-size:11px;padding:4px;user-select:none">▼</span>
         </div>
         <div id="ped-item-drop-${idx}" style="display:none;position:absolute;z-index:60;left:0;min-width:100%;width:max-content;max-width:min(620px,88vw);top:calc(100% + 2px);background:var(--surface2);border:1px solid var(--border);border-radius:6px;max-height:280px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.45)"></div>
-        ${warningMsg}${confirmMsg}
+        ${warningMsg}${ambiguoMsg}${confirmMsg}${pdfMsg}
       </div>
       <input type="number" value="${item.quantidade}" min="1" placeholder="Qtd" oninput="pedidoItens[${idx}].quantidade=+this.value" style="width:80px;font-size:13px;${isUnregistered ? 'align-self: flex-start; margin-top: 1px;' : ''}">
       <input type="number" value="${item.valor_unitario || ''}" min="0" step="0.01" placeholder="R$ unit." title="Valor unitário (R$) — pode ser ajustado em negociação" oninput="pedidoItens[${idx}].valor_unitario=+this.value" style="width:80px;font-size:13px;${isUnregistered ? 'align-self: flex-start; margin-top: 1px;' : ''}">
