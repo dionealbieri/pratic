@@ -311,6 +311,21 @@ def _sac_valor_apos(linhas, label, ate=None):
 # Prazo de entrega padrão para pedidos importados do SAC: data do pedido + N dias
 PRAZO_ENTREGA_PADRAO_DIAS = 15
 
+def _sac_valores_item(qtd, valores):
+    """Interpreta as colunas de valor da linha de item do PDF SAC:
+    [Valor Unitário, Desconto, Valor Total]. Só devolve o que for coerente
+    (qtd x unitário - desconto = total, com tolerância de centavos); se a conta
+    não fechar, não inventa preço — o item segue o comportamento anterior."""
+    if len(valores) < 3:
+        return {}
+    unit, desc, total = valores[0], valores[1], valores[2]
+    if abs(qtd * unit - desc - total) <= 0.02:
+        return {"valor_unitario": unit, "desconto": desc}
+    if abs(qtd * unit - total) <= 0.02:
+        return {"valor_unitario": unit, "desconto": 0.0}
+    return {}
+
+
 def _parse_pedido_sac(texto: str) -> dict:
     linhas = [l.strip() for l in (texto or "").splitlines()]
     linhas = [l for l in linhas if l != ""]
@@ -413,11 +428,15 @@ def _parse_pedido_sac(texto: str) -> dict:
                     qtd_raw = regiao[j + 1] if j + 1 < len(regiao) else ""
                     if _sac_is_numero(qtd_raw):
                         desc = " ".join(desc_parts).strip()
-                        if desc:
-                            itens.append({"descricao": desc[:250], "quantidade": _br_to_float(qtd_raw), "unidade": unidade})
                         i = j + 2
+                        valores = []
                         while i < len(regiao) and _sac_is_money(regiao[i]):
+                            valores.append(_br_to_float(regiao[i].replace("R$", "")))
                             i += 1
+                        if desc:
+                            item = {"descricao": desc[:250], "quantidade": _br_to_float(qtd_raw), "unidade": unidade}
+                            item.update(_sac_valores_item(item["quantidade"], valores))
+                            itens.append(item)
                         continue
             i += 1
 
@@ -860,9 +879,10 @@ async def importar_pedidos_lote(files: List[UploadFile] = File(...)):
                 pedido_id = cur.lastrowid
                 for it in parsed.get("itens", []):
                     cur.execute("""INSERT INTO pedidos_itens
-                        (pedido_id, produto_id, descricao, quantidade, unidade, qtd_produzida, status)
-                        VALUES (?,?,?,?,?,0,'aberto')""",
-                        (pedido_id, None, it["descricao"], it["quantidade"], it.get("unidade") or "unidade"))
+                        (pedido_id, produto_id, descricao, quantidade, unidade, valor_unitario, desconto, qtd_produzida, status)
+                        VALUES (?,?,?,?,?,?,?,0,'aberto')""",
+                        (pedido_id, None, it["descricao"], it["quantidade"], it.get("unidade") or "unidade",
+                         it.get("valor_unitario") or 0, it.get("desconto") or 0))
                 conn.commit()
                 criados += 1
                 criados_ids.append(pedido_id)
