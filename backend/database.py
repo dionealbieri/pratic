@@ -601,6 +601,113 @@ def get_conn():
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
+def _juntar_itens_divididos(conn):
+    """Migração única: junta de volta as linhas de item que o sistema dividia
+    sozinho quando a produção era parcial (ex.: 2.000 virava 1.000 + 400 + 600).
+
+    A divisão alterava o pedido original e as linhas novas nasciam sem valor,
+    desconto e insumo vinculado. Aqui, só são juntados grupos com a "assinatura"
+    inequívoca da divisão automática no mesmo pedido, produto, descrição e unidade:
+      - todas as linhas, menos a última, estão produzidas por inteiro
+        (qtd_produzida == quantidade) — foi assim que a divisão as deixou;
+      - as linhas a partir da 2ª têm desconto 0, valor 0 e sem insumo vinculado
+        (a divisão não copiava esses campos).
+    Grupos com entregas parciais misturadas ficam de fora (relatados no log).
+    Antes de mexer, gera uma cópia do banco ao lado do arquivo principal, e cada
+    junção fica registrada em pedidos_itens_juncoes.
+    """
+    conn.execute("""CREATE TABLE IF NOT EXISTS sistema_migracoes (
+        chave TEXT PRIMARY KEY, aplicada_em TEXT DEFAULT (datetime('now','localtime')))""")
+    if conn.execute("SELECT 1 FROM sistema_migracoes WHERE chave='juntar_itens_divididos_v1'").fetchone():
+        return
+    conn.execute("""CREATE TABLE IF NOT EXISTS pedidos_itens_juncoes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        pedido_id INTEGER, pedido_numero TEXT, item_id_mantido INTEGER,
+        ids_removidos TEXT, descricao TEXT, quantidades_antes TEXT,
+        quantidade_final REAL, criado_em TEXT DEFAULT (datetime('now','localtime')))""")
+
+    linhas = conn.execute("SELECT * FROM pedidos_itens ORDER BY pedido_id, id").fetchall()
+    grupos = {}
+    for r in linhas:
+        chave = (r["pedido_id"], r["produto_id"], (r["descricao"] or "").strip(), (r["unidade"] or ""))
+        grupos.setdefault(chave, []).append(r)
+
+    EPS = 1e-6
+    entregues = ("entregue", "enviado")
+    a_juntar, ignorados = [], []
+    for chave, rows in grupos.items():
+        if len(rows) < 2:
+            continue
+        base, resto, ultima = rows[0], rows[1:], rows[-1]
+        # (1) todas menos a última: produzidas por inteiro
+        if not all((r["quantidade"] or 0) > 0 and r["status"] in ("produzido",) + entregues
+                   and abs((r["qtd_produzida"] or 0) - (r["quantidade"] or 0)) < EPS
+                   for r in rows[:-1]):
+            continue
+        # (2) a partir da 2ª linha: sem valor, desconto nem insumo (como a divisão deixava)
+        if not all((r["valor_unitario"] or 0) == 0 and (r["desconto"] or 0) == 0
+                   and r["insumo_vinculado_id"] is None for r in resto):
+            continue
+        # (3) entrega parcial misturada: não arriscar
+        st = {r["status"] for r in rows}
+        if (st & set(entregues)) and not st <= set(entregues):
+            ignorados.append(chave)
+            continue
+        a_juntar.append(rows)
+
+    if not a_juntar:
+        conn.execute("INSERT OR IGNORE INTO sistema_migracoes (chave) VALUES ('juntar_itens_divididos_v1')")
+        if ignorados:
+            print(f"[migração] {len(ignorados)} grupo(s) de itens com entrega parcial NÃO foram juntados (revisar manualmente).")
+        return
+
+    # Cópia de segurança do banco antes de alterar qualquer linha
+    conn.commit()
+    import sqlite3 as _sq, datetime as _dt
+    destino = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)),
+                           "pratic_antes_juntar_itens_" + _dt.datetime.now().strftime("%Y%m%d_%H%M%S") + ".db")
+    bk = _sq.connect(destino)
+    try:
+        conn.backup(bk)
+    finally:
+        bk.close()
+
+    for rows in a_juntar:
+        base, resto = rows[0], rows[1:]
+        total_q = sum((r["quantidade"] or 0) for r in rows)
+        total_p = sum((r["qtd_produzida"] or 0) for r in rows)
+        status_set = {r["status"] for r in rows}
+        if status_set <= set(entregues):
+            novo_status = "entregue" if status_set == {"entregue"} else "enviado"
+        elif total_p >= total_q - EPS:
+            novo_status = "produzido"
+        elif total_p > 0 or "em_producao" in status_set:
+            novo_status = "em_producao"
+        else:
+            novo_status = "aberto"
+        valor = base["valor_unitario"] or max((r["valor_unitario"] or 0) for r in rows)
+        sep = base["status_separacao"] or next((r["status_separacao"] for r in rows if r["status_separacao"]), None)
+        conn.execute("""UPDATE pedidos_itens SET quantidade=?, qtd_produzida=?, status=?,
+                        valor_unitario=?, status_separacao=? WHERE id=?""",
+                     (total_q, min(total_p, total_q), novo_status, valor, sep, base["id"]))
+        ids = [r["id"] for r in resto]
+        marcas = ",".join("?" * len(ids))
+        conn.execute(f"UPDATE producao_programada SET pedido_item_id=? WHERE pedido_item_id IN ({marcas})", [base["id"]] + ids)
+        conn.execute(f"DELETE FROM pedidos_itens WHERE id IN ({marcas})", ids)
+        num = conn.execute("SELECT numero_pedido FROM pedidos WHERE id=?", (base["pedido_id"],)).fetchone()
+        conn.execute("""INSERT INTO pedidos_itens_juncoes
+            (pedido_id, pedido_numero, item_id_mantido, ids_removidos, descricao, quantidades_antes, quantidade_final)
+            VALUES (?,?,?,?,?,?,?)""",
+            (base["pedido_id"], num["numero_pedido"] if num else None, base["id"],
+             ",".join(map(str, ids)), base["descricao"],
+             "+".join(str(int(r["quantidade"])) if float(r["quantidade"]).is_integer() else str(r["quantidade"]) for r in rows),
+             total_q))
+    conn.execute("INSERT OR IGNORE INTO sistema_migracoes (chave) VALUES ('juntar_itens_divididos_v1')")
+    print(f"[migração] {len(a_juntar)} item(ns) dividido(s) foram juntados de volta. Cópia do banco: {destino}")
+    if ignorados:
+        print(f"[migração] {len(ignorados)} grupo(s) com entrega parcial NÃO foram juntados (revisar manualmente).")
+
+
 def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = get_conn()
@@ -1349,6 +1456,7 @@ def init_db():
         )
     """)
 
+    _juntar_itens_divididos(conn)
     conn.commit()
     conn.close()
 
