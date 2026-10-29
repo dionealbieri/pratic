@@ -720,6 +720,53 @@ def _juntar_itens_divididos(conn, versao=1):
         print(f"[migração] {len(ignorados)} grupo(s) com entrega parcial NÃO foram juntados (revisar manualmente).")
 
 
+def _normalizar_progresso_itens(conn):
+    """Migração única: item de pedido CONCLUÍDO (produzido/entregue/enviado) deve ter
+    qtd_produzida == quantidade. A edição antiga de pedido dava a todas as linhas de
+    mesma descrição o progresso da última, deixando itens concluídos com produzido
+    maior ou menor que o pedido. Os dois lados distorcem o estoque projetado:
+    produzido < quantidade conta como demanda pendente (estoque.py), e
+    produzido > quantidade mostra "produzido 3.000 de 1.000".
+    Só mexe em qtd_produzida de itens já concluídos; não toca em saldo de estoque,
+    movimentações nem em itens abertos/em produção. Gera cópia do banco antes e
+    registra cada ajuste em pedidos_itens_ajustes (valor de antes e de depois)."""
+    chave_mig = "normalizar_progresso_itens_v1"
+    conn.execute("""CREATE TABLE IF NOT EXISTS sistema_migracoes (
+        chave TEXT PRIMARY KEY, aplicada_em TEXT DEFAULT (datetime('now','localtime')))""")
+    if conn.execute("SELECT 1 FROM sistema_migracoes WHERE chave=?", (chave_mig,)).fetchone():
+        return
+    conn.execute("""CREATE TABLE IF NOT EXISTS pedidos_itens_ajustes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, item_id INTEGER, pedido_numero TEXT,
+        descricao TEXT, status TEXT, quantidade REAL, qtd_produzida_antes REAL,
+        qtd_produzida_depois REAL, criado_em TEXT DEFAULT (datetime('now','localtime')))""")
+    itens = conn.execute("""
+        SELECT i.id, i.descricao, i.status, i.quantidade, i.qtd_produzida, p.numero_pedido
+        FROM pedidos_itens i LEFT JOIN pedidos p ON p.id = i.pedido_id
+        WHERE i.status IN ('produzido','entregue','enviado') AND i.quantidade > 0
+          AND ABS(COALESCE(i.qtd_produzida,0) - i.quantidade) > 0.000001
+    """).fetchall()
+    if not itens:
+        conn.execute("INSERT OR IGNORE INTO sistema_migracoes (chave) VALUES (?)", (chave_mig,))
+        return
+    conn.commit()
+    import sqlite3 as _sq, datetime as _dt
+    destino = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)),
+                           "pratic_antes_normalizar_progresso_" + _dt.datetime.now().strftime("%Y%m%d_%H%M%S") + ".db")
+    bk = _sq.connect(destino)
+    try:
+        conn.backup(bk)
+    finally:
+        bk.close()
+    for r in itens:
+        conn.execute("""INSERT INTO pedidos_itens_ajustes
+            (item_id, pedido_numero, descricao, status, quantidade, qtd_produzida_antes, qtd_produzida_depois)
+            VALUES (?,?,?,?,?,?,?)""",
+            (r["id"], r["numero_pedido"], r["descricao"], r["status"], r["quantidade"], r["qtd_produzida"], r["quantidade"]))
+        conn.execute("UPDATE pedidos_itens SET qtd_produzida=quantidade WHERE id=?", (r["id"],))
+    conn.execute("INSERT OR IGNORE INTO sistema_migracoes (chave) VALUES (?)", (chave_mig,))
+    print(f"[migração] progresso de {len(itens)} item(ns) concluído(s) normalizado(s). Cópia do banco: {destino}")
+
+
 def init_db():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = get_conn()
@@ -1470,6 +1517,7 @@ def init_db():
 
     _juntar_itens_divididos(conn, 1)
     _juntar_itens_divididos(conn, 2)
+    _normalizar_progresso_itens(conn)
     conn.commit()
     conn.close()
 
