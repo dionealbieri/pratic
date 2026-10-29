@@ -6053,10 +6053,10 @@ async function _carregarHistoricoProducaoPedido(id) {
     const resumoHtml = resumo.length ? `
       <div class="table-head"><span class="table-head-title">Conferência por produto</span></div>
       <table>
-        <thead><tr><th>ML</th><th>Marca</th><th>Pedido</th><th>Produzido</th><th>Perda</th><th>Falta</th><th>Situação</th></tr></thead>
+        <thead><tr><th>Produto</th><th>Marca</th><th>Pedido</th><th>Produzido</th><th>Perda</th><th>Falta</th><th>Situação</th></tr></thead>
         <tbody>${resumo.map(r => `
           <tr>
-            <td title="${r.produto_nome || ''}">${r.produto_tamanho || r.produto_nome || '—'}</td>
+            <td>${r.produto_nome || '—'}</td>
             <td>${r.produto_marca || '—'}</td>
             <td>${fmtNum(r.pedido)}</td>
             <td>${fmtNum(r.produzido)}</td>
@@ -6076,8 +6076,8 @@ async function _carregarHistoricoProducaoPedido(id) {
             <td>${fmtDate(l.data)}</td>
             <td>${l.colaborador_nome}</td>
             <td>${l.maquina_nome}</td>
-            <td title="${l.produto_nome || ''}">${l.produto_tamanho || l.produto_nome || '—'}</td>
-            <td>${l.produto_marca || '—'}</td>
+            <td title="${l.produto_nome || ''}" style="color:var(--accent2);font-weight:600">${l.produto_tamanho || l.produto_nome || '—'}</td>
+            <td style="color:var(--accent);font-weight:600">${l.produto_marca || '—'}</td>
             <td>${fmtNum(l.producao)}</td>
             <td style="color:${l.perda_quantidade > 0 ? 'var(--danger)' : 'inherit'}">${fmtNum(l.perda_quantidade)}</td>
             <td style="color:${l.sobra_quantidade > 0 ? 'var(--success)' : 'inherit'}">${fmtNum(l.sobra_quantidade)}</td>
@@ -6332,7 +6332,10 @@ async function importarPedidoArquivo() {
     pedidoItens = (data.dados_extraidos.itens || []).map(i => ({
       descricao: i.descricao,
       quantidade: i.quantidade,
-      unidade: i.unidade || 'unidade'
+      unidade: i.unidade || 'unidade',
+      // preço/desconto lidos do PDF (quando houver): o pedido nasce igual ao original
+      valor_unitario: i.valor_unitario || 0,
+      desconto: i.desconto || 0
     }));
     
     await carregarProdutosEstoque();
@@ -6652,7 +6655,7 @@ function renderItensPedido() {
     </div>` : '';
     
     return `
-    <div style="display:grid;grid-template-columns:1fr auto auto auto;gap:8px;align-items:center;margin-bottom:8px">
+    <div style="display:grid;grid-template-columns:1fr auto auto auto auto;gap:8px;align-items:center;margin-bottom:8px">
       <div style="position:relative;min-width:0">
         <div style="position:relative">
           <input type="text" id="ped-item-input-${idx}" value="${(item.descricao||'').replace(/"/g,'&quot;')}" autocomplete="off"
@@ -6667,6 +6670,7 @@ function renderItensPedido() {
         ${warningMsg}
       </div>
       <input type="number" value="${item.quantidade}" min="1" placeholder="Qtd" oninput="pedidoItens[${idx}].quantidade=+this.value" style="width:80px;font-size:13px;${isUnregistered ? 'align-self: flex-start; margin-top: 1px;' : ''}">
+      <input type="number" value="${item.valor_unitario || ''}" min="0" step="0.01" placeholder="R$ unit." title="Valor unitário (R$) — pode ser ajustado em negociação" oninput="pedidoItens[${idx}].valor_unitario=+this.value" style="width:90px;font-size:13px;${isUnregistered ? 'align-self: flex-start; margin-top: 1px;' : ''}">
       <select onchange="pedidoItens[${idx}].unidade=this.value" style="font-size:13px;${isUnregistered ? 'align-self: flex-start; margin-top: 1px;' : ''}">
         ${unidadesEstoqueCache.map(u=>`<option value="${u}" ${item.unidade===u?'selected':''}>${u}</option>`).join('')}
       </select>
