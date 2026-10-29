@@ -1843,31 +1843,16 @@ def atualizar_status_item(id: int, body: StatusItemIn):
         
     pid = item["pedido_id"]
     
-    if body.split_if_partial and body.qtd_produzida is not None:
-        nova_qtd = body.qtd_produzida
-        limite = item["quantidade"]
-        if 0 < nova_qtd < limite:
-            # Caso de split parcial!
-            cur.execute("""
-                UPDATE pedidos_itens 
-                SET quantidade=?, qtd_produzida=?, status=? 
-                WHERE id=?
-            """, (nova_qtd, nova_qtd, 'produzido', id))
-            
-            resto = limite - nova_qtd
-            cur.execute("""
-                INSERT INTO pedidos_itens (pedido_id, produto_id, descricao, quantidade, unidade, qtd_produzida, status)
-                VALUES (?, ?, ?, ?, ?, 0, 'aberto')
-            """, (pid, item["produto_id"], item["descricao"], resto, item["unidade"]))
-        else:
-            cur.execute("UPDATE pedidos_itens SET status=?, qtd_produzida=? WHERE id=?",
-                        (body.status, body.qtd_produzida, id))
+    # Produção parcial NÃO divide mais o item em duas linhas: a linha mantém a
+    # quantidade original do pedido e só acumula qtd_produzida (o detalhe de cada
+    # dia fica no histórico de produção). Dividir alterava o pedido original e as
+    # linhas novas nasciam sem valor, desconto e insumo vinculado.
+    # `split_if_partial` continua aceito só por compatibilidade com telas antigas.
+    if body.qtd_produzida is not None:
+        cur.execute("UPDATE pedidos_itens SET status=?, qtd_produzida=? WHERE id=?",
+                    (body.status, body.qtd_produzida, id))
     else:
-        if body.qtd_produzida is not None:
-            cur.execute("UPDATE pedidos_itens SET status=?, qtd_produzida=? WHERE id=?",
-                        (body.status, body.qtd_produzida, id))
-        else:
-            cur.execute("UPDATE pedidos_itens SET status=? WHERE id=?", (body.status, id))
+        cur.execute("UPDATE pedidos_itens SET status=? WHERE id=?", (body.status, id))
 
     # Recalcular status do pedido pai
     item = cur.execute("SELECT pedido_id FROM pedidos_itens WHERE id=?", (id,)).fetchone()
