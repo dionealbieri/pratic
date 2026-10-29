@@ -389,8 +389,14 @@ def _parse_pedido_sac(texto: str) -> dict:
                 if inicio is None:
                     inicio = i + 7
                 break
-    fim = next((i for i, l in enumerate(linhas) if l.strip().lower() == "parcelas"), len(linhas))
     if inicio is not None:
+        # O bloco "Parcelas" pode vir ANTES ou DEPOIS da tabela de itens, conforme o
+        # layout do PDF. O fim da região é o primeiro "Parcelas" (ou o rodapé do
+        # Softline) que aparece DEPOIS do início da tabela — antes pegava o primeiro
+        # "Parcelas" do documento e, quando ele vinha antes dos itens, a região ficava vazia.
+        fim = next((i for i in range(inicio, len(linhas))
+                    if linhas[i].strip().lower() == "parcelas"
+                    or linhas[i].strip().lower().startswith("desenvolvido por")), len(linhas))
         regiao = linhas[inicio:fim]
         i = 0
         while i < len(regiao):
