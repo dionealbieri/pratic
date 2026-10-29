@@ -6498,7 +6498,7 @@ function abrirProdCombo(idx) {
     const destaque = (temQuery && i === 0 && s > 0) ? 'border-left:3px solid var(--accent);' : 'border-left:3px solid transparent;';
     const label = _produtoLabel(p).replace(/"/g, '&quot;');
     return `<div onmousedown="event.preventDefault();selecionarProdComboItem(${idx}, ${p.id})" title="${label}"
-      style="padding:7px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--border);${destaque}white-space:nowrap;overflow:hidden;text-overflow:ellipsis"
+      style="padding:7px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--border);${destaque}white-space:normal;word-break:break-word"
       onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='transparent'">
       ${_produtoLabel(p)} <span style="color:var(--muted)">· ${fmtNum(p.quantidade_atual || 0)} ${p.unidade || ''}</span>
     </div>`;
@@ -6640,6 +6640,10 @@ function renderItensPedido() {
   el.innerHTML=pedidoItens.map((item,idx)=>{
     const isUnregistered = item.descricao && !item.produto_id;
     const borderStyle = isUnregistered ? 'border:1px solid #ef4444 !important;' : '';
+    const prodVinc = item.produto_id ? (produtosEstoque || []).find(p => p.id === item.produto_id) : null;
+    const confirmMsg = prodVinc
+      ? `<div style="color:var(--success);font-size:11px;margin-top:3px;word-break:break-word">✔ Estoque: ${_produtoLabel(prodVinc).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</div>`
+      : '';
     const warningMsg = isUnregistered ? '<div style="color:#ef4444;font-size:11px;margin-top:3px;font-weight:600">⚠️ Produto não cadastrado no estoque</div>' : '';
     const vinculoInfo = _opcoesInsumoVinculado(item);
     const vinculoRow = vinculoInfo ? `
@@ -6658,7 +6662,7 @@ function renderItensPedido() {
     <div style="display:grid;grid-template-columns:1fr auto auto auto auto;gap:8px;align-items:center;margin-bottom:8px">
       <div style="position:relative;min-width:0">
         <div style="position:relative">
-          <input type="text" id="ped-item-input-${idx}" value="${(item.descricao||'').replace(/"/g,'&quot;')}" autocomplete="off"
+          <input type="text" id="ped-item-input-${idx}" value="${(item.descricao||'').replace(/"/g,'&quot;')}" title="${(item.descricao||'').replace(/"/g,'&quot;')}" autocomplete="off"
             placeholder="Clique na seta ▼ para ver os produtos, ou digite *"
             oninput="pedidoItens[${idx}].descricao=this.value; abrirProdCombo(${idx})"
             onfocus="abrirProdCombo(${idx})" onblur="fecharProdComboDelayed(${idx})"
@@ -6666,11 +6670,11 @@ function renderItensPedido() {
           <span onmousedown="event.preventDefault();toggleProdCombo(${idx})" title="Ver produtos do estoque"
             style="position:absolute;right:6px;top:50%;transform:translateY(-50%);cursor:pointer;color:var(--text);font-size:11px;padding:4px;user-select:none">▼</span>
         </div>
-        <div id="ped-item-drop-${idx}" style="display:none;position:absolute;z-index:60;left:0;right:0;top:calc(100% + 2px);background:var(--surface2);border:1px solid var(--border);border-radius:6px;max-height:240px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.45)"></div>
-        ${warningMsg}
+        <div id="ped-item-drop-${idx}" style="display:none;position:absolute;z-index:60;left:0;min-width:100%;width:max-content;max-width:min(620px,88vw);top:calc(100% + 2px);background:var(--surface2);border:1px solid var(--border);border-radius:6px;max-height:280px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.45)"></div>
+        ${warningMsg}${confirmMsg}
       </div>
       <input type="number" value="${item.quantidade}" min="1" placeholder="Qtd" oninput="pedidoItens[${idx}].quantidade=+this.value" style="width:80px;font-size:13px;${isUnregistered ? 'align-self: flex-start; margin-top: 1px;' : ''}">
-      <input type="number" value="${item.valor_unitario || ''}" min="0" step="0.01" placeholder="R$ unit." title="Valor unitário (R$) — pode ser ajustado em negociação" oninput="pedidoItens[${idx}].valor_unitario=+this.value" style="width:90px;font-size:13px;${isUnregistered ? 'align-self: flex-start; margin-top: 1px;' : ''}">
+      <input type="number" value="${item.valor_unitario || ''}" min="0" step="0.01" placeholder="R$ unit." title="Valor unitário (R$) — pode ser ajustado em negociação" oninput="pedidoItens[${idx}].valor_unitario=+this.value" style="width:80px;font-size:13px;${isUnregistered ? 'align-self: flex-start; margin-top: 1px;' : ''}">
       <select onchange="pedidoItens[${idx}].unidade=this.value" style="font-size:13px;${isUnregistered ? 'align-self: flex-start; margin-top: 1px;' : ''}">
         ${unidadesEstoqueCache.map(u=>`<option value="${u}" ${item.unidade===u?'selected':''}>${u}</option>`).join('')}
       </select>
