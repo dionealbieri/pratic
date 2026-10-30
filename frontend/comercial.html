@@ -65,7 +65,7 @@
     <button class="tab-btn active" id="tabbtn-pedidos" onclick="switchTab('pedidos')">🧾 Meus Pedidos</button>
     <button class="tab-btn" id="tabbtn-estoque" onclick="switchTab('estoque')">📦 Estoque dos meus clientes</button>
     <button class="tab-btn" id="tabbtn-novo" onclick="switchTab('novo')" style="display:none">➕ Novo Pedido</button>
-    <button class="tab-btn" id="tabbtn-importar" onclick="switchTab('importar')" style="display:none">📥 Importar</button>
+    <button class="tab-btn" id="tabbtn-importar" onclick="switchTab('importar')">📥 Importar</button>
   </div>
 
   <!-- ── TAB ESTOQUE DOS MEUS CLIENTES ── -->
@@ -979,8 +979,29 @@ async function mpVoltarAguardando() {
 // ── LISTA PEDIDOS
 let comPagina = 1;
 const COM_POR_PAGINA = 20;
+let comPodeExcluir = false;
+
+async function carregarPermissaoExcluir() {
+  try {
+    const perms = await req('/auth/me/permissoes');
+    comPodeExcluir = !!(perms && perms.pedidos && perms.pedidos.deletar);
+  } catch (e) { comPodeExcluir = false; }
+}
+
+async function excluirPedidoVendedor(id) {
+  const ped = (window._comLista || []).find(x => x.id === id);
+  const numero = ped ? ped.numero_pedido : id;
+  if (!confirm(`Excluir o pedido ${numero} do sistema?\n\nEssa ação não pode ser desfeita.`)) return;
+  try {
+    await req('/pedidos/' + id, 'DELETE');
+    showAlert('Pedido ' + numero + ' excluído.');
+    loadPedidosCom();
+    loadMeusPedidos();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
 
 async function loadPedidosCom() {
+  if (window._permExcluirCarregada !== true) { window._permExcluirCarregada = true; await carregarPermissaoExcluir(); }
   const status = document.getElementById('com-filtro-status').value;
   const busca = document.getElementById('com-busca').value.toLowerCase();
   let url = '/pedidos/';
@@ -988,6 +1009,7 @@ async function loadPedidosCom() {
   const meuId = window.meuUsuario ? window.meuUsuario.id : null;
   let rows = (await req(url) || []).filter(p => meuId != null && p.vendedor_usuario_id === meuId);
   if (status === 'andamento') rows = rows.filter(p => ['aberto', 'em_producao'].includes(p.status));
+  window._comLista = rows;
   const filtrados = busca ? rows.filter(p =>
     String(p.numero_pedido || '').toLowerCase().includes(busca) ||
     String(p.cliente_nome || '').toLowerCase().includes(busca)
@@ -1025,6 +1047,7 @@ async function loadPedidosCom() {
       <td class="flex gap-2">
         <button class="btn btn-sm btn-secondary" onclick="verDetalhe(${p.id})">Ver</button>
         <button class="btn btn-sm btn-secondary" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${p.id})">📄 PDF</button>
+        ${comPodeExcluir && p.status === 'aberto' && !(p.itens_iniciados > 0) ? `<button class="btn btn-sm btn-danger" title="Excluir pedido (só em aberto, sem produção)" onclick="excluirPedidoVendedor(${p.id})">🗑 Excluir</button>` : ''}
       </td>
     </tr>`;
   }).join('');
@@ -1377,7 +1400,7 @@ async function confirmarImportacao() {
         numero_pedido: num,
         cliente_nome: String(row[get('cliente')] || '').trim(),
         prazo_entrega: String(row[get('prazo_entrega')] || '').trim(),
-        vendedor: get('vendedor') ? String(row[get('vendedor')] || '') : '',
+        vendedor: (get('vendedor') && String(row[get('vendedor')] || '').trim()) ? String(row[get('vendedor')]).trim() : ((window.meuUsuario && window.meuUsuario.nome) || ''),
         itens: []
       };
     }

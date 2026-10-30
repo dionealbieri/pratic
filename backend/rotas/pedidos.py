@@ -2493,10 +2493,20 @@ def deletar_pedido(id: int, current_user = Depends(get_current_user)):
         cur = conn.cursor()
         
         # 2. Buscar o número do pedido para o histórico do estoque
-        ped = cur.execute("SELECT numero_pedido FROM pedidos WHERE id=?", (id,)).fetchone()
+        ped = cur.execute("SELECT numero_pedido, status, vendedor_usuario_id FROM pedidos WHERE id=?", (id,)).fetchone()
         if not ped:
             raise HTTPException(404, "Pedido não encontrado")
         numero_pedido = ped["numero_pedido"]
+
+        # Vendedor (Comercial): só o próprio pedido, ainda Aberto e sem produção lançada.
+        if current_user.get("role") == "comercial":
+            if ped["vendedor_usuario_id"] != current_user["id"]:
+                raise HTTPException(403, "Este pedido não é seu.")
+            if (ped["status"] or "aberto") != "aberto":
+                raise HTTPException(400, "Só é possível excluir pedidos ainda em aberto. Peça ao Gestor.")
+            if cur.execute("SELECT 1 FROM producao_diaria WHERE pedido_numero=? LIMIT 1", (numero_pedido,)).fetchone() \
+               or cur.execute("SELECT 1 FROM pedidos_itens WHERE pedido_id=? AND COALESCE(qtd_produzida,0) > 0 LIMIT 1", (id,)).fetchone():
+                raise HTTPException(400, "Este pedido já tem produção lançada. Peça ao Gestor para excluir.")
 
         # 3. Excluir lançamentos de produção vinculados a este pedido (pelo número),
         # revertendo a baixa/sobra/perda de estoque de cada um. Sem isso, o produto
@@ -2558,7 +2568,11 @@ def deletar_pedido(id: int, current_user = Depends(get_current_user)):
                        (SELECT id FROM pedidos_itens WHERE pedido_id=?)""", (id,))
         cur.execute("DELETE FROM pedidos_parcelas WHERE pedido_id=?", (id,))
         cur.execute("DELETE FROM pedidos_itens WHERE pedido_id=?", (id,))
+        cur.execute("DELETE FROM pedidos_status_hist WHERE pedido_id=?", (id,))
         cur.execute("DELETE FROM pedidos WHERE id=?", (id,))
+        cur.execute("""INSERT INTO auditoria (usuario, acao, entidade, entidade_id, descricao, valor_anterior, valor_novo)
+                       VALUES (?, 'excluir_pedido', 'pedidos', ?, ?, ?, '')""",
+                    (_nome_usuario(current_user), id, f"Pedido '{numero_pedido}' excluído", ped["status"] or ""))
         
         conn.commit()
     finally:
