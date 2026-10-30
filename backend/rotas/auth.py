@@ -1,12 +1,16 @@
 from fastapi import APIRouter, Request, Response, HTTPException, Depends
 from pydantic import BaseModel
+from typing import Optional
 from datetime import datetime, timedelta
 import secrets
 
 from database import get_conn
 from auth_utils import verify_password, hash_password, get_current_user
+from vendedores import juntar_nomes, separar_nomes, vincular_pedidos_sem_vendedor
 
 router = APIRouter()
+
+PERFIS_VALIDOS = ['gestor', 'producao', 'comercial', 'estoque', 'expedicao']
 
 class LoginIn(BaseModel):
     username: str
@@ -17,11 +21,14 @@ class UserCreateIn(BaseModel):
     password: str
     role: str
     nome: str
+    vendedor_nomes: Optional[str] = ""
 
 class UserUpdateIn(BaseModel):
     role: str
     nome: str
     ativo: int
+    # None = não mexer (compatível com telas antigas que não enviam o campo)
+    vendedor_nomes: Optional[str] = None
 
 class PasswordUpdateIn(BaseModel):
     password: str
@@ -116,7 +123,8 @@ def get_me(current_user = Depends(get_current_user)):
                 "gestor":   "dashboard,producao,premiacao,pintura,colaboradores,maquinas,pedidos,estoque,epi,saldo-demanda,consumo-medio,gerencial,comunicacao,graficos,relatorios,configuracoes,backup,permissoes,empresa,mobile,estoque_mobile",
                 "producao": "dashboard,producao,premiacao,pintura,colaboradores,maquinas,epi,relatorios",
                 "comercial":"dashboard,pedidos,relatorios",
-                "estoque":  "dashboard,estoque,consumo-medio,relatorios,estoque_mobile"
+                "estoque":  "dashboard,estoque,consumo-medio,relatorios,estoque_mobile",
+                "expedicao":"dashboard,pedidos"
             }
             permissions = defaults.get(role, "")
 
@@ -164,9 +172,26 @@ def listar_usuarios(current_user = Depends(verificar_gestor)):
     conn = get_conn()
     try:
         rows = conn.execute("""
-            SELECT id, username, role, nome, ativo, criado_em 
+            SELECT id, username, role, nome, ativo, criado_em,
+                   COALESCE(vendedor_nomes, '') AS vendedor_nomes
             FROM usuarios 
             ORDER BY nome
+        """).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+@router.get("/vendedores")
+def listar_vendedores(current_user = Depends(verificar_gestor)):
+    """Usuários que podem ser vendedor de um pedido (para o Gestor atribuir)."""
+    conn = get_conn()
+    try:
+        rows = conn.execute("""
+            SELECT id, nome, role, COALESCE(vendedor_nomes, '') AS vendedor_nomes
+            FROM usuarios
+            WHERE ativo = 1
+            ORDER BY CASE WHEN role = 'comercial' THEN 0 ELSE 1 END, nome
         """).fetchall()
         return [dict(r) for r in rows]
     finally:
@@ -176,7 +201,7 @@ def listar_usuarios(current_user = Depends(verificar_gestor)):
 def criar_usuario(data: UserCreateIn, current_user = Depends(verificar_gestor)):
     username_clean = data.username.strip().lower()
     
-    if data.role not in ['gestor', 'producao', 'comercial', 'estoque']:
+    if data.role not in PERFIS_VALIDOS:
         raise HTTPException(status_code=400, detail="Perfil de acesso inválido.")
         
     conn = get_conn()
@@ -189,17 +214,19 @@ def criar_usuario(data: UserCreateIn, current_user = Depends(verificar_gestor)):
         password_hash = hash_password(data.password)
         
         conn.execute("""
-            INSERT INTO usuarios (username, password_hash, role, nome)
-            VALUES (?, ?, ?, ?)
-        """, (username_clean, password_hash, data.role, data.nome.strip()))
+            INSERT INTO usuarios (username, password_hash, role, nome, vendedor_nomes)
+            VALUES (?, ?, ?, ?, ?)
+        """, (username_clean, password_hash, data.role, data.nome.strip(),
+              juntar_nomes(separar_nomes(data.vendedor_nomes))))
+        vinculados = vincular_pedidos_sem_vendedor(conn)
         conn.commit()
-        return {"mensagem": "Usuário criado com sucesso"}
+        return {"mensagem": "Usuário criado com sucesso", "pedidos_vinculados": vinculados}
     finally:
         conn.close()
 
 @router.put("/usuarios/{id}")
 def atualizar_usuario(id: int, data: UserUpdateIn, current_user = Depends(verificar_gestor)):
-    if data.role not in ['gestor', 'producao', 'comercial', 'estoque']:
+    if data.role not in PERFIS_VALIDOS:
         raise HTTPException(status_code=400, detail="Perfil de acesso inválido.")
         
     conn = get_conn()
@@ -216,8 +243,12 @@ def atualizar_usuario(id: int, data: UserUpdateIn, current_user = Depends(verifi
             SET role = ?, nome = ?, ativo = ?
             WHERE id = ?
         """, (data.role, data.nome.strip(), data.ativo, id))
+        if data.vendedor_nomes is not None:
+            conn.execute("UPDATE usuarios SET vendedor_nomes = ? WHERE id = ?",
+                         (juntar_nomes(separar_nomes(data.vendedor_nomes)), id))
+        vinculados = vincular_pedidos_sem_vendedor(conn)
         conn.commit()
-        return {"mensagem": "Usuário atualizado com sucesso"}
+        return {"mensagem": "Usuário atualizado com sucesso", "pedidos_vinculados": vinculados}
     finally:
         conn.close()
 
@@ -263,6 +294,8 @@ def deletar_usuario(id: int, current_user = Depends(verificar_gestor)):
         # Exclui usuário e deleta todas as sessões dele
         conn.execute("DELETE FROM usuarios WHERE id = ?", (id,))
         conn.execute("DELETE FROM sessoes WHERE usuario_id = ?", (id,))
+        # Pedidos desse vendedor voltam para a lista "sem vendedor vinculado"
+        conn.execute("UPDATE pedidos SET vendedor_usuario_id = NULL WHERE vendedor_usuario_id = ?", (id,))
         conn.commit()
         return {"mensagem": "Usuário excluído com sucesso"}
     finally:
@@ -286,6 +319,7 @@ MODULOS_ACOES = {
     'backup':         ['backup','restaurar','limpar'],
     'permissoes':     ['ver','editar'],
     'empresa':        ['ver','editar'],
+    'expedicao':      ['ver','despachar','desfazer'],
 }
 
 PERMISSOES_GESTOR = {modulo: acoes for modulo, acoes in MODULOS_ACOES.items()}

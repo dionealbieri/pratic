@@ -4,6 +4,7 @@ from typing import Optional, List
 from database import get_conn
 from auth_utils import get_current_user
 from rotas.producao import _reverter_estoque_producao
+from vendedores import vincular_pedido, vincular_pedidos_sem_vendedor, separar_nomes, juntar_nomes
 import httpx
 import os, re, tempfile, datetime
 from html.parser import HTMLParser
@@ -22,6 +23,16 @@ def verificar_permissao(modulo: str, acao: str, current_user: dict) -> bool:
         return bool(row and row["permitido"])
     finally:
         conn.close()
+
+
+def exigir_permissao(modulo: str, acao: str, current_user: dict):
+    if not verificar_permissao(modulo, acao, current_user):
+        raise HTTPException(403, "Você não tem permissão para esta ação. Fale com o Gestor (Controle de Acesso).")
+
+
+def exigir_gestor(current_user: dict):
+    if current_user.get("role") != "gestor":
+        raise HTTPException(403, "Acesso restrito ao perfil de Gestor.")
 
 
 class ClienteIn(BaseModel):
@@ -877,6 +888,7 @@ async def importar_pedidos_lote(files: List[UploadFile] = File(...)):
                     (str(numero), cliente_id, parsed.get("prazo_entrega") or datetime.date.today().isoformat(),
                      parsed.get("vendedor"), parsed.get("observacoes")))
                 pedido_id = cur.lastrowid
+                vincular_pedido(conn, pedido_id)
                 for it in parsed.get("itens", []):
                     cur.execute("""INSERT INTO pedidos_itens
                         (pedido_id, produto_id, descricao, quantidade, unidade, valor_unitario, desconto, qtd_produzida, status)
@@ -1165,9 +1177,11 @@ def listar_pedidos(status: Optional[str] = None, cliente_id: Optional[int] = Non
                COUNT(CASE WHEN ec.tipo = 'revenda' THEN 1 END) as itens_revenda,
                COUNT(CASE WHEN ec.tipo = 'revenda' AND (i.status IS NULL OR i.status != 'entregue') THEN 1 END) as revenda_pendentes,
                GROUP_CONCAT(DISTINCT pr.marca) as marcas,
-               julianday(p.prazo_entrega) - julianday('now') as dias_restantes
+               julianday(p.prazo_entrega) - julianday('now') as dias_restantes,
+               uv.nome as vendedor_usuario_nome
         FROM pedidos p
         JOIN pedidos_clientes c ON p.cliente_id = c.id
+        LEFT JOIN usuarios uv ON uv.id = p.vendedor_usuario_id
         LEFT JOIN pedidos_itens i ON i.pedido_id = p.id
         LEFT JOIN estoque_produtos pr ON pr.id = i.produto_id
         LEFT JOIN estoque_categorias ec ON pr.categoria_id = ec.id
@@ -1223,6 +1237,66 @@ def resync_status_pedidos():
     conn.commit()
     conn.close()
     return {"mensagem": "Status sincronizado", "pedidos": len(ped_ids)}
+
+
+# ─── VENDEDOR DO PEDIDO ──────────────────────────────────────────────────────
+
+class AtribuirVendedorIn(BaseModel):
+    usuario_id: int
+    lembrar_nome: Optional[bool] = True
+
+
+@router.get("/sem-vendedor")
+def pedidos_sem_vendedor(current_user: dict = Depends(get_current_user)):
+    """Pedidos em andamento cujo nome de vendedor não bateu com nenhum usuário."""
+    exigir_gestor(current_user)
+    conn = get_conn()
+    try:
+        rows = conn.execute("""
+            SELECT p.id, p.numero_pedido, p.vendedor, p.status, p.prazo_entrega, p.created_at,
+                   c.razao_social AS cliente_nome
+            FROM pedidos p
+            JOIN pedidos_clientes c ON c.id = p.cliente_id
+            WHERE p.vendedor_usuario_id IS NULL
+              AND COALESCE(p.status, 'aberto') NOT IN ('enviado', 'entregue')
+            ORDER BY p.created_at DESC, p.id DESC
+        """).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+@router.put("/{id}/vendedor")
+def atribuir_vendedor(id: int, body: AtribuirVendedorIn, current_user: dict = Depends(get_current_user)):
+    """Gestor atribui o vendedor do pedido. Com lembrar_nome, o nome que veio no
+    pedido passa a ser reconhecido para esse usuário nas próximas importações
+    (e os outros pedidos pendentes com o mesmo nome são vinculados na hora)."""
+    exigir_gestor(current_user)
+    conn = get_conn()
+    try:
+        ped = conn.execute("SELECT id, numero_pedido, vendedor, vendedor_usuario_id FROM pedidos WHERE id=?", (id,)).fetchone()
+        if not ped:
+            raise HTTPException(404, "Pedido não encontrado")
+        usr = conn.execute("SELECT id, nome, COALESCE(vendedor_nomes,'') AS vendedor_nomes FROM usuarios WHERE id=? AND ativo=1",
+                           (body.usuario_id,)).fetchone()
+        if not usr:
+            raise HTTPException(400, "Usuário não encontrado ou inativo")
+        conn.execute("UPDATE pedidos SET vendedor_usuario_id=? WHERE id=?", (usr["id"], id))
+        outros = 0
+        nome_pdf = (ped["vendedor"] or "").strip()
+        if body.lembrar_nome and nome_pdf:
+            nomes = separar_nomes(usr["vendedor_nomes"]) + [nome_pdf]
+            conn.execute("UPDATE usuarios SET vendedor_nomes=? WHERE id=?", (juntar_nomes(nomes), usr["id"]))
+            outros = vincular_pedidos_sem_vendedor(conn)
+        usuario = current_user.get("nome") or current_user.get("username") or "sistema"
+        conn.execute("""INSERT INTO auditoria (usuario, acao, entidade, entidade_id, descricao, valor_anterior, valor_novo)
+                       VALUES (?, 'atribuir_vendedor', 'pedidos', ?, ?, ?, ?)""",
+                     (usuario, id, f"Vendedor do pedido '{ped['numero_pedido']}' atribuído a {usr['nome']}",
+                      str(ped["vendedor_usuario_id"] or ""), str(usr["id"])))
+        conn.commit()
+        return {"mensagem": f"Pedido vinculado a {usr['nome']}", "outros_vinculados": outros}
+    finally:
+        conn.close()
 
 
 @router.get("/alertas/resumo")
@@ -1561,6 +1635,7 @@ def criar_pedido(p: PedidoIn):
         VALUES (?,?,?,?,?,?,?,?,'aberto',?)""",
         (p.numero_pedido, p.cliente_id, (p.prazo_entrega or ""), p.vendedor, p.observacoes, p.acrescimo or 0, p.frete or 0, p.desconto_global or 0, 1 if p.precisa_pintura else 0))
     pedido_id = cur.lastrowid
+    vincular_pedido(conn, pedido_id)
     for item in p.itens:
         vunit = item.valor_unitario or 0.0
         if vunit == 0.0 and item.produto_id:
@@ -1612,6 +1687,11 @@ def atualizar_pedido(id: int, p: PedidoIn):
         numero_pedido=?, cliente_id=?, prazo_entrega=?, vendedor=?, observacoes=?, acrescimo=?, frete=?, desconto_global=?, precisa_pintura=?
         WHERE id=?""",
         (p.numero_pedido, p.cliente_id, (p.prazo_entrega or ""), p.vendedor, p.observacoes, acrescimo or 0, frete or 0, desconto_global or 0, 1 if p.precisa_pintura else 0, id))
+    # Vendedor: se o nome mudou, refaz o vínculo; senão mantém (inclusive atribuição manual)
+    if (atual["vendedor"] or "").strip() != (p.vendedor or "").strip():
+        vincular_pedido(conn, id, forcar=True)
+    else:
+        vincular_pedido(conn, id)
 
     # Produção, pintura e movimentações de estoque se ligam ao pedido pelo NÚMERO:
     # se o número mudou, migra os vínculos para não deixar histórico órfão.
@@ -1693,7 +1773,8 @@ class EntregaIn(BaseModel):
     data_entrega: Optional[str] = ""
 
 @router.post("/{id}/despachar")
-def despachar_pedido(id: int, body: DespachoIn):
+def despachar_pedido(id: int, body: DespachoIn, current_user: dict = Depends(get_current_user)):
+    exigir_permissao("expedicao", "despachar", current_user)
     data_desp = (body.data_despacho or "").strip() or datetime.datetime.now().strftime("%Y-%m-%d")
     conn = get_conn()
     # Bloqueia despacho se houver itens de revenda (tampas) ainda nao separados
@@ -1719,7 +1800,8 @@ def despachar_pedido(id: int, body: DespachoIn):
     return {"mensagem": "Pedido despachado", "status": "enviado"}
 
 @router.post("/{id}/confirmar-entrega")
-def confirmar_entrega(id: int, body: EntregaIn):
+def confirmar_entrega(id: int, body: EntregaIn, current_user: dict = Depends(get_current_user)):
+    exigir_permissao("expedicao", "despachar", current_user)
     data_ent = (body.data_entrega or "").strip() or datetime.datetime.now().strftime("%Y-%m-%d")
     conn = get_conn()
     conn.execute("UPDATE pedidos SET status='entregue', data_entrega=? WHERE id=?", (data_ent, id))
@@ -1732,6 +1814,7 @@ def desfazer_despacho(id: int, current_user: dict = Depends(get_current_user)):
     """Desfaz o despacho de um pedido 'enviado', limpando os dados de envio e
     voltando o status para 'produzido' — o pedido reaparece na fila de
     expedição como 'a despachar', pronto pra ser reenviado."""
+    exigir_permissao("expedicao", "desfazer", current_user)
     conn = get_conn()
     ped = conn.execute("SELECT id, status, numero_pedido FROM pedidos WHERE id=?", (id,)).fetchone()
     if not ped:
@@ -1752,10 +1835,12 @@ def desfazer_despacho(id: int, current_user: dict = Depends(get_current_user)):
     return {"mensagem": "Envio desfeito, pedido voltou para a fila de expedição", "status": "produzido"}
 
 @router.put("/{id}/status")
-def atualizar_status_pedido(id: int, body: StatusItemIn):
+def atualizar_status_pedido(id: int, body: StatusItemIn, current_user: dict = Depends(get_current_user)):
     validos = ["aberto", "em_producao", "produzido", "enviado", "entregue"]
     if body.status not in validos:
         raise HTTPException(400, f"Status inválido. Use: {validos}")
+    if body.status in ("enviado", "entregue"):
+        exigir_permissao("expedicao", "despachar", current_user)
     conn = get_conn()
     conn.execute("UPDATE pedidos SET status=? WHERE id=?", (body.status, id))
     conn.commit()

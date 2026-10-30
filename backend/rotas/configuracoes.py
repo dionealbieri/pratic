@@ -25,7 +25,8 @@ def get_permissoes():
             "perm_gestor":   "dashboard,producao,premiacao,colaboradores,maquinas,pedidos,estoque,epi,graficos,relatorios,configuracoes,backup,permissoes,empresa,mobile,estoque_mobile",
             "perm_producao": "dashboard,producao,premiacao,colaboradores,maquinas,epi,relatorios",
             "perm_comercial":"dashboard,pedidos,relatorios",
-            "perm_estoque":  "dashboard,estoque,relatorios,estoque_mobile"
+            "perm_estoque":  "dashboard,estoque,relatorios,estoque_mobile",
+            "perm_expedicao":"dashboard,pedidos"
         }
     return {r["chave"]: r["valor"] for r in rows}
 
@@ -51,7 +52,8 @@ async def salvar_permissoes(request: Request):
         "perm_gestor":   "Gestor",
         "perm_producao": "Produção",
         "perm_comercial":"Comercial",
-        "perm_estoque":  "Estoque"
+        "perm_estoque":  "Estoque",
+        "perm_expedicao":"Expedição"
     }
     salvos = 0
     for chave, valor in body.items():
