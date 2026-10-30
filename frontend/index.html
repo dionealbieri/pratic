@@ -519,6 +519,7 @@
         <button class="btn btn-secondary" id="ptab-clientes" onclick="switchPedidosTab('clientes')">👥 Clientes</button>
         <button class="btn btn-secondary" id="ptab-transportadora" onclick="switchPedidosTab('transportadora')">📦 Transportadora</button>
       </div>
+      <div id="ped-sem-vendedor-banner"></div>
 
       <!-- FILA DE PRODUÇÃO -->
       <div id="ped-tab-fila">
@@ -729,8 +730,8 @@
         <div id="envio-detalhe-content"></div>
         <div class="flex gap-2 justify-end" style="margin-top:16px;flex-wrap:wrap">
           <button class="btn btn-secondary" onclick="closeModal('modal-envio-detalhe')">Fechar</button>
-          <button class="btn btn-secondary" onclick="desfazerEnvio()" data-perm-editar="pedidos">↺ Desfazer Envio</button>
-          <button class="btn btn-primary" onclick="editarEnvioAPartirDoDetalhe()" data-perm-editar="pedidos">✏️ Editar Envio</button>
+          <button class="btn btn-secondary" onclick="desfazerEnvio()" data-perm-desfazer="expedicao">↺ Desfazer Envio</button>
+          <button class="btn btn-primary" onclick="editarEnvioAPartirDoDetalhe()" data-perm-despachar="expedicao">✏️ Editar Envio</button>
         </div>
       </div>
     </div>
@@ -1282,6 +1283,7 @@
                   <th style="text-align:center">🏭 Produção</th>
                   <th style="text-align:center">🏢 Comercial</th>
                   <th style="text-align:center">📦 Estoque</th>
+                  <th style="text-align:center">🚚 Expedição</th>
                 </tr>
               </thead>
               <tbody id="perm-tbody"></tbody>
@@ -2771,7 +2773,13 @@
           <option value="producao">🏭 Produção</option>
           <option value="comercial">🏢 Comercial</option>
           <option value="estoque">📦 Estoque</option>
+          <option value="expedicao">🚚 Expedição</option>
         </select>
+      </div>
+      <div class="form-group" style="grid-column: 1 / -1">
+        <label>Nome do vendedor na importação de pedidos <span style="color:var(--muted);font-weight:400">(opcional)</span></label>
+        <textarea id="user-vendedor-nomes" rows="2" placeholder="Como o nome aparece no campo Vendedor do PDF — um por linha" style="resize:vertical"></textarea>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">Para perfil Comercial o nome completo acima já é reconhecido. Use este campo para outras grafias (ex.: “JOAO S.”). Maiúsculas e acentos não importam.</div>
       </div>
       <div class="form-group" id="user-password-container">
         <label>Senha de Acesso</label>
@@ -2788,6 +2796,23 @@
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal('modal-usuario')">Cancelar</button>
       <button class="btn btn-primary" onclick="salvarUsuario()">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL PEDIDOS SEM VENDEDOR VINCULADO -->
+<div class="modal-overlay" id="modal-sem-vendedor">
+  <div class="modal" style="max-width: 900px">
+    <div class="modal-title">🧾 Pedidos sem vendedor vinculado</div>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:12px">O nome que veio no pedido não corresponde a nenhum usuário. Escolha o vendedor. Com “lembrar nome”, as próximas importações com esse nome já vão direto para ele.</div>
+    <div class="table-wrap" style="max-height:60vh;overflow:auto">
+      <table>
+        <thead><tr><th>Pedido</th><th>Cliente</th><th>Nome no pedido</th><th>Vendedor</th><th></th></tr></thead>
+        <tbody id="sem-vendedor-tbody"></tbody>
+      </table>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-sem-vendedor')">Fechar</button>
     </div>
   </div>
 </div>
@@ -2999,7 +3024,7 @@
   </div>
 </div>
 
-<script src="js/app.js?v=20260902-bloqueio-separacao"></script>
+<script src="js/app.js?v=20261030-fase1-expedicao"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');
