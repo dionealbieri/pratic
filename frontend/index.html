@@ -738,7 +738,7 @@
 
     <!-- MODAL DESPACHAR -->
     <div class="modal-overlay" id="modal-despacho">
-      <div class="modal" style="max-width:560px;width:95vw">
+      <div class="modal" style="max-width:640px;width:95vw;max-height:92vh;overflow-y:auto">
         <div class="modal-title">📦 Despachar pedido</div>
         <input type="hidden" id="desp-pedido-id">
         <div id="desp-cabecalho" style="font-size:14px;color:var(--text);margin-bottom:16px;background:rgba(255,255,255,0.05);padding:10px 12px;border-radius:8px;border-left:4px solid var(--accent);line-height:1.6;"></div>
@@ -751,6 +751,25 @@
           <div class="form-group"><label>Data do despacho</label><input type="date" id="desp-data" onchange="atualizarPrevisaoEntrega()"></div>
           <div class="form-group"><label>Previsão de entrega</label><input type="date" id="desp-previsao"></div>
           <div class="form-group" style="grid-column:1/-1"><label>Observações de envio</label><textarea id="desp-obs" rows="2" placeholder="Ex.: entregar após 14h, retirada no balcão..."></textarea></div>
+        </div>
+        <div style="border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+            <div style="font-size:14px;font-weight:700">📍 Endereço de entrega</div>
+            <div id="desp-end-origem" style="font-size:11px;color:var(--muted)"></div>
+          </div>
+          <div class="form-grid" style="margin-bottom:8px">
+            <div class="form-group"><label>CEP</label>
+              <div style="display:flex;gap:6px"><input type="text" id="desp-end-cep" maxlength="9" placeholder="00000-000" onblur="buscarCepDespacho()" onkeydown="if(event.key==='Enter'){event.preventDefault();buscarCepDespacho();}" style="flex:1"><button type="button" class="btn btn-secondary btn-sm" onclick="buscarCepDespacho()" title="Buscar endereço pelo CEP">🔎</button></div>
+            </div>
+            <div class="form-group"><label>Número</label><input type="text" id="desp-end-numero"></div>
+            <div class="form-group" style="grid-column:1/-1"><label>Logradouro</label><input type="text" id="desp-end-logradouro"></div>
+            <div class="form-group"><label>Complemento</label><input type="text" id="desp-end-complemento"></div>
+            <div class="form-group"><label>Bairro</label><input type="text" id="desp-end-bairro"></div>
+            <div class="form-group"><label>Cidade</label><input type="text" id="desp-end-cidade"></div>
+            <div class="form-group"><label>UF</label><input type="text" id="desp-end-uf" maxlength="2" style="text-transform:uppercase"></div>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer"><input type="checkbox" id="desp-end-atualizar-cad"> Atualizar também o cadastro do cliente com este endereço</label>
+          <div style="font-size:11px;color:var(--muted);margin-top:4px">Sem marcar, o endereço vale só para este pedido — o cadastro do cliente não muda.</div>
         </div>
         <div class="flex gap-2 justify-end">
           <button class="btn btn-secondary" onclick="closeModal('modal-despacho')">Cancelar</button>
@@ -3024,7 +3043,7 @@
   </div>
 </div>
 
-<script src="js/app.js?v=20261030-fase1-expedicao"></script>
+<script src="js/app.js?v=20261030-fase1-1-endereco"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');

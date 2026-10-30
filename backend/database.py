@@ -1582,6 +1582,13 @@ def _migrar_expedicao_e_vendedores(conn):
         conn.execute("ALTER TABLE pedidos ADD COLUMN vendedor_usuario_id INTEGER")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pedidos_vendedor_usuario ON pedidos(vendedor_usuario_id)")
 
+    # Endereço de entrega do pedido (pode ser diferente do cadastro do cliente)
+    cols_ped = [r[1] for r in conn.execute("PRAGMA table_info(pedidos)").fetchall()]
+    for _c in ("entrega_cep", "entrega_logradouro", "entrega_numero", "entrega_complemento",
+               "entrega_bairro", "entrega_cidade", "entrega_uf"):
+        if _c not in cols_ped:
+            conn.execute(f"ALTER TABLE pedidos ADD COLUMN {_c} TEXT")
+
     conn.execute(
         "INSERT OR IGNORE INTO configuracoes (chave, valor, descricao) VALUES (?, ?, ?)",
         ("perm_expedicao", "dashboard,pedidos", "Permissões do perfil Expedição"))

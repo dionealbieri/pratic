@@ -4797,9 +4797,52 @@ async function abrirDespacho(id) {
   document.getElementById('desp-data').value = dataDespacho;
   document.getElementById('desp-previsao').value = p.previsao_entrega || adicionarDiasUteis(dataDespacho, 8);
   document.getElementById('desp-obs').value = p.obs_envio || '';
+
+  // Endereço de entrega: o já salvo neste pedido, senão o do cadastro do cliente
+  const temEndPedido = !!(p.entrega_cep || p.entrega_logradouro || p.entrega_cidade);
+  const src = temEndPedido ? 'entrega_' : 'cliente_';
+  ['cep','logradouro','numero','complemento','bairro','cidade','uf'].forEach(c => {
+    const el = document.getElementById('desp-end-' + c);
+    if (el) el.value = p[src + c] || '';
+  });
+  const cepEl = document.getElementById('desp-end-cep');
+  if (cepEl) cepEl.value = _fmtCepDesp(cepEl.value);
+  _despCepBuscado = cepEl ? cepEl.value.replace(/\D/g, '') : '';
+  const orig = document.getElementById('desp-end-origem');
+  if (orig) orig.textContent = temEndPedido ? 'Endereço específico deste pedido' : 'Do cadastro do cliente — confira antes de despachar';
+  const chk = document.getElementById('desp-end-atualizar-cad');
+  if (chk) chk.checked = false;
   openModal('modal-despacho');
 }
 window.abrirDespacho = abrirDespacho;
+
+let _despCepBuscado = '';
+function _fmtCepDesp(v) {
+  const d = String(v || '').replace(/\D/g, '').slice(0, 8);
+  return d.length > 5 ? d.slice(0, 5) + '-' + d.slice(5) : d;
+}
+
+async function buscarCepDespacho() {
+  const el = document.getElementById('desp-end-cep');
+  if (!el) return;
+  const cep = el.value.replace(/\D/g, '');
+  el.value = _fmtCepDesp(cep);
+  if (cep.length !== 8 || cep === _despCepBuscado) return;
+  try {
+    const d = await api('/pedidos/busca-cep/' + cep);
+    _despCepBuscado = cep;
+    if (d.logradouro) document.getElementById('desp-end-logradouro').value = d.logradouro;
+    if (d.bairro) document.getElementById('desp-end-bairro').value = d.bairro;
+    if (d.cidade) document.getElementById('desp-end-cidade').value = d.cidade;
+    if (d.uf) document.getElementById('desp-end-uf').value = d.uf;
+    document.getElementById('desp-end-numero').value = '';
+    document.getElementById('desp-end-complemento').value = '';
+    document.getElementById('desp-end-numero').focus();
+  } catch (e) {
+    showAlert('CEP não encontrado: ' + e.message, 'danger');
+  }
+}
+window.buscarCepDespacho = buscarCepDespacho;
 
 async function salvarDespacho() {
   const id = document.getElementById('desp-pedido-id').value;
@@ -4815,6 +4858,12 @@ async function salvarDespacho() {
     previsao_entrega: document.getElementById('desp-previsao').value,
     obs_envio: document.getElementById('desp-obs').value.trim()
   };
+  ['cep','logradouro','numero','complemento','bairro','cidade','uf'].forEach(c => {
+    const el = document.getElementById('desp-end-' + c);
+    if (el) body['entrega_' + c] = el.value.trim();
+  });
+  const chkCad = document.getElementById('desp-end-atualizar-cad');
+  body.atualizar_cadastro_cliente = !!(chkCad && chkCad.checked);
   if (!body.transportadora) { showAlert('Informe a transportadora', 'danger'); return; }
   try {
     await api('/pedidos/' + id + '/despachar', 'POST', body);
@@ -4835,6 +4884,7 @@ async function verProdutosEnviados(id) {
       Pedido: <strong style="color:var(--accent)">${p.numero_pedido}</strong> — Cliente: <strong>${p.cliente_nome || ''}</strong><br>
       Transportadora: <strong>${p.transportadora || '—'}</strong> · NF: <strong>${p.nota_fiscal || '—'}</strong> · Rastreio: <strong>${p.rastreio || '—'}</strong><br>
       Despacho: <strong>${p.data_despacho ? fmtDate(p.data_despacho) : '—'}</strong> · Volumes: <strong>${p.volumes || '—'}</strong> · Frete pago: <strong>${fmtBRL(p.frete_pago || 0)}</strong>
+      ${(p.entrega_logradouro || p.entrega_cidade) ? `<br>📍 Entrega: <strong>${_escHtml([[p.entrega_logradouro, p.entrega_numero].filter(Boolean).join(', '), p.entrega_complemento, p.entrega_bairro, [p.entrega_cidade, p.entrega_uf].filter(Boolean).join('/'), p.entrega_cep ? 'CEP ' + _fmtCepDesp(p.entrega_cep) : ''].filter(Boolean).join(' — '))}</strong>` : ''}
     </div>
     <div style="font-size:13px;font-weight:600;margin-bottom:8px">Produtos enviados</div>
     <div class="table-wrap">

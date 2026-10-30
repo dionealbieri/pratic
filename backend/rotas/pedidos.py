@@ -1768,6 +1768,15 @@ class DespachoIn(BaseModel):
     frete_pago: Optional[float] = 0
     obs_envio: Optional[str] = ""
     data_despacho: Optional[str] = ""
+    # Endereço de entrega deste pedido (None = não mexer)
+    entrega_cep: Optional[str] = None
+    entrega_logradouro: Optional[str] = None
+    entrega_numero: Optional[str] = None
+    entrega_complemento: Optional[str] = None
+    entrega_bairro: Optional[str] = None
+    entrega_cidade: Optional[str] = None
+    entrega_uf: Optional[str] = None
+    atualizar_cadastro_cliente: Optional[bool] = False
 
 class EntregaIn(BaseModel):
     data_entrega: Optional[str] = ""
@@ -1796,6 +1805,29 @@ def despachar_pedido(id: int, body: DespachoIn, current_user: dict = Depends(get
          (body.rastreio or "").strip(), int(body.volumes or 0),
          (body.previsao_entrega or "").strip(), float(body.frete or 0), float(body.frete_pago or 0),
          (body.obs_envio or "").strip(), data_desp, id))
+
+    campos_end = ("cep", "logradouro", "numero", "complemento", "bairro", "cidade", "uf")
+    if any(getattr(body, "entrega_" + c) is not None for c in campos_end):
+        end = {c: (getattr(body, "entrega_" + c) or "").strip() for c in campos_end}
+        end["cep"] = "".join(ch for ch in end["cep"] if ch.isdigit())
+        end["uf"] = end["uf"].upper()[:2]
+        conn.execute("""UPDATE pedidos SET entrega_cep=?, entrega_logradouro=?, entrega_numero=?,
+                        entrega_complemento=?, entrega_bairro=?, entrega_cidade=?, entrega_uf=? WHERE id=?""",
+                     (end["cep"], end["logradouro"], end["numero"], end["complemento"],
+                      end["bairro"], end["cidade"], end["uf"], id))
+        if body.atualizar_cadastro_cliente:
+            ped = conn.execute("SELECT cliente_id, numero_pedido FROM pedidos WHERE id=?", (id,)).fetchone()
+            if ped:
+                conn.execute("""UPDATE pedidos_clientes SET cep=?, logradouro=?, numero=?, complemento=?,
+                                bairro=?, cidade=?, uf=? WHERE id=?""",
+                             (end["cep"], end["logradouro"], end["numero"], end["complemento"],
+                              end["bairro"], end["cidade"], end["uf"], ped["cliente_id"]))
+                usuario = current_user.get("nome") or current_user.get("username") or "sistema"
+                conn.execute("""INSERT INTO auditoria (usuario, acao, entidade, entidade_id, descricao, valor_anterior, valor_novo)
+                               VALUES (?, 'atualizar_endereco', 'pedidos_clientes', ?, ?, '', ?)""",
+                             (usuario, ped["cliente_id"],
+                              f"Endereço do cliente atualizado no despacho do pedido '{ped['numero_pedido']}'",
+                              f"{end['logradouro']}, {end['numero']} - {end['bairro']} - {end['cidade']}/{end['uf']} - CEP {end['cep']}"))
     conn.commit(); conn.close()
     return {"mensagem": "Pedido despachado", "status": "enviado"}
 
