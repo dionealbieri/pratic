@@ -1199,7 +1199,10 @@ def _recalc_status_pedido(cur, pedido_id):
 
 
 @router.get("/")
-def listar_pedidos(status: Optional[str] = None, cliente_id: Optional[int] = None):
+def listar_pedidos(status: Optional[str] = None, cliente_id: Optional[int] = None,
+                   current_user: dict = Depends(get_current_user)):
+    # Vendedor (perfil Comercial) só enxerga os pedidos vinculados a ele
+    so_do_vendedor = current_user.get("role") == "comercial"
     conn = get_conn()
     query = """
         SELECT p.*,
@@ -1233,6 +1236,9 @@ def listar_pedidos(status: Optional[str] = None, cliente_id: Optional[int] = Non
         query += " AND p.cliente_id = ?"
         params.append(cliente_id)
     query += " GROUP BY p.id ORDER BY p.prazo_entrega ASC"
+    if so_do_vendedor:
+        query = query.replace(" GROUP BY p.id ", " AND p.vendedor_usuario_id = ? GROUP BY p.id ", 1)
+        params.append(current_user["id"])
     rows = conn.execute(query, params).fetchall()
     conn.close()
     result = []
@@ -1705,7 +1711,7 @@ def marcar_item_separado(id: int, body: MarcarSeparadoIn, current_user: dict = D
     return {"mensagem": "Item marcado como separado" if body.marcar else "Marcação desfeita", "status_separacao": novo_status}
 
 @router.get("/{id}")
-def buscar_pedido(id: int):
+def buscar_pedido(id: int, current_user: dict = Depends(get_current_user)):
     conn = get_conn()
     pedido = conn.execute("""
         SELECT p.*, c.razao_social as cliente_nome, c.nome_fantasia,
@@ -1722,6 +1728,9 @@ def buscar_pedido(id: int):
     if not pedido:
         conn.close()
         raise HTTPException(404, "Pedido não encontrado")
+    if current_user.get("role") == "comercial" and pedido["vendedor_usuario_id"] != current_user["id"]:
+        conn.close()
+        raise HTTPException(403, "Este pedido não é seu.")
     itens = conn.execute("""
         SELECT i.*, ep.nome as produto_nome, ep.codigo as produto_codigo, ec.tipo as categoria_tipo
         FROM pedidos_itens i

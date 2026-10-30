@@ -295,11 +295,9 @@ async function carregarAcessoPrincipal() {
           return;
         }
       } else if (me.role === 'comercial') {
-        // Comercial agora pode usar o painel principal quando tiver outras abas liberadas
-        // pelo Controle de Acesso. Antes o sistema sempre redirecionava para /comercial,
-        // que é uma tela simplificada somente de pedidos.
-        const somentePedidos = paginasLiberadas.every(p => ['pedidos'].includes(p));
-        if (somentePedidos) {
+        // Vendedor entra sempre pelo portal /comercial (Meus Pedidos). As outras
+        // páginas liberadas pelo Controle de Acesso abrem pelo painel com ?page=.
+        if (paginasLiberadas.includes('pedidos') || !paginasLiberadas.length) {
           window.location.href = '/comercial';
           return;
         }
@@ -362,6 +360,11 @@ function paginaPermitida(name) {
 }
 
 function showPage(name) {
+  // Vendedor (Comercial) trabalha os pedidos no portal /comercial (Meus Pedidos)
+  if (name === 'pedidos' && window.usuarioLogado && window.usuarioLogado.role === 'comercial') {
+    window.location.href = '/comercial';
+    return;
+  }
   if (!paginaPermitida(name)) {
     showAlert('Acesso não liberado para este perfil.', 'danger');
     return;

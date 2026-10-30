@@ -51,6 +51,7 @@
     <span id="topbar-user-name" style="font-size:13px;font-weight:600;margin-right:8px;color:var(--text);display:flex;align-items:center;gap:4px">👤 <span id="topbar-user-name-txt">—</span></span>
     <span class="setor-badge">🏢 Setor Comercial</span>
     <span class="badge" id="topbar-mes" style="font-size:12px;padding:4px 10px;">—</span>
+    <span id="com-outras-paginas" style="display:flex;gap:6px;flex-wrap:wrap"></span>
     <button class="btn btn-sm btn-secondary" onclick="openModal('modal-ajuda-comercial')" style="padding: 6px 12px; font-size: 12px;">❓ Ajuda</button>
     <button class="btn btn-sm btn-danger" onclick="sairSistema()" style="padding: 6px 12px; font-size: 12px;">🚪 Sair</button>
   </div>
@@ -410,6 +411,10 @@ function showAlert(msg, type='success') {
 
 // ── TABS
 function switchTab(tab) {
+  if (tab === 'novo' && window.meuUsuario) {
+    const v = document.getElementById('np-vendedor');
+    if (v && !v.value) v.value = window.meuUsuario.nome || '';
+  }
   ['pedidos','novo','importar'].forEach(t => {
     document.getElementById('tab-' + t).style.display = t === tab ? '' : 'none';
     document.querySelectorAll('.tab-btn')[['pedidos','novo','importar'].indexOf(t)].classList.toggle('active', t === tab);
@@ -827,6 +832,7 @@ async function salvarNovoPedido() {
 
 function limparFormulario() {
   ['np-numero','np-prazo','np-vendedor','np-obs'].forEach(id => document.getElementById(id).value = '');
+  if (window.meuUsuario) document.getElementById('np-vendedor').value = window.meuUsuario.nome || '';
   document.getElementById('np-cliente').value = '';
   document.getElementById('np-alert').innerHTML = '';
   npItens = [];
@@ -1118,13 +1124,17 @@ async function verificarAcessoComercial() {
     const liberadas = String(perms['perm_comercial'] || 'pedidos').split(',').map(p => p.trim()).filter(Boolean);
     const paginasPainel = liberadas.filter(p => p !== 'pedidos');
 
-    // Se o Comercial tiver outras páginas liberadas no Controle de Acesso,
-    // envia para o painel principal, onde a barra lateral mostra todas as abas autorizadas.
-    // A página /comercial continua sendo usada apenas quando o perfil tem somente Pedidos.
-    if (paginasPainel.length > 0) {
-      const destino = liberadas.includes('dashboard') ? 'dashboard' : paginasPainel[0];
-      window.location.href = '/?perfil=comercial&page=' + encodeURIComponent(destino);
-      return false;
+    // O vendedor trabalha os pedidos aqui (Meus Pedidos). Outras páginas liberadas
+    // para o Comercial no Controle de Acesso viram botões no topo, abrindo o painel.
+    const NOMES_PAG = {
+      dashboard: '📊 Dashboard', 'lista-compras': '🛒 Lista de Compras', estoque: '📦 Estoque',
+      relatorios: '📋 Relatórios', graficos: '📈 Gráficos', 'saldo-demanda': '📊 Saldo vs Demanda',
+      'consumo-medio': '📉 Consumo Médio', producao: '🏭 Produção', epi: '🦺 EPI'
+    };
+    const box = document.getElementById('com-outras-paginas');
+    const paginasLink = paginasPainel.filter(p => !['mobile', 'estoque_mobile', 'producao_simplificada', 'comunicacao'].includes(p));
+    if (box && paginasLink.length) {
+      box.innerHTML = paginasLink.map(p => `<button class="btn btn-sm btn-secondary" style="padding:6px 12px;font-size:12px" onclick="location.href='/?page=${encodeURIComponent(p)}'">${NOMES_PAG[p] || p}</button>`).join('');
     }
 
     if (!liberadas.includes('pedidos')) {
