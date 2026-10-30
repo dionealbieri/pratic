@@ -1043,7 +1043,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT UNIQUE NOT NULL,
             password_hash TEXT NOT NULL,
-            role TEXT NOT NULL CHECK(role IN ('gestor', 'producao', 'comercial', 'estoque')),
+            role TEXT NOT NULL CHECK(role IN ('gestor', 'producao', 'comercial', 'estoque', 'expedicao')),
             nome TEXT NOT NULL,
             ativo INTEGER DEFAULT 1,
             deve_alterar_senha INTEGER DEFAULT 1,
@@ -1474,6 +1474,7 @@ def init_db():
         ("perm_producao", "dashboard,producao,premiacao,pintura,colaboradores,maquinas,epi,relatorios", "Permissões do perfil Produção"),
         ("perm_comercial", "dashboard,pedidos,relatorios", "Permissões do perfil Comercial"),
         ("perm_estoque", "dashboard,estoque,consumo-medio,relatorios,estoque_mobile", "Permissões do perfil Estoque"),
+        ("perm_expedicao", "dashboard,pedidos", "Permissões do perfil Expedição"),
         ("chat_p2p_permitido", "0", "Permitir chat 1:1 privado entre colaboradores"),
         ("exigir_pedido_producao_perfis", "", "Perfis que são obrigados a informar número do pedido em todo lançamento de Produção Diária (lista separada por vírgula, ex: producao,comercial)"),
     ]
@@ -1519,7 +1520,96 @@ def init_db():
     _juntar_itens_divididos(conn, 2)
     _normalizar_progresso_itens(conn)
     conn.commit()
+    _migrar_expedicao_e_vendedores(conn)
+    conn.commit()
     conn.close()
+
+
+def _migrar_expedicao_e_vendedores(conn):
+    """Fase 1 — perfil Expedição e vínculo pedido ↔ vendedor. Idempotente.
+
+    1. usuarios.vendedor_nomes: nomes extras com que o vendedor aparece no PDF.
+    2. CHECK de usuarios.role passa a aceitar 'expedicao' (SQLite não altera CHECK:
+       a tabela é recriada com os mesmos dados).
+    3. pedidos.vendedor_usuario_id: usuário vendedor do pedido.
+    4. Permissões iniciais do módulo Expedição (uma única vez): quem hoje pode
+       editar pedidos continua podendo despachar, para nada parar no dia da
+       atualização. O Gestor ajusta depois no Controle de Acesso.
+    5. Vincula os pedidos que ainda não têm vendedor.
+    """
+    import re
+
+    # 1) vendedor_nomes
+    cols_usr = [r[1] for r in conn.execute("PRAGMA table_info(usuarios)").fetchall()]
+    if "vendedor_nomes" not in cols_usr:
+        conn.execute("ALTER TABLE usuarios ADD COLUMN vendedor_nomes TEXT DEFAULT ''")
+        conn.commit()
+
+    # 2) CHECK do role
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='usuarios'"
+    ).fetchone()
+    sql_atual = (row[0] if row else "") or ""
+    if sql_atual and "'expedicao'" not in sql_atual and re.search(r"CHECK\s*\(\s*role\s+IN", sql_atual, re.I):
+        novo_sql = re.sub(
+            r"CHECK\s*\(\s*role\s+IN\s*\([^)]*\)\s*\)",
+            "CHECK(role IN ('gestor', 'producao', 'comercial', 'estoque', 'expedicao'))",
+            sql_atual, count=1, flags=re.I)
+        novo_sql = re.sub(
+            r"CREATE\s+TABLE\s+(IF\s+NOT\s+EXISTS\s+)?[\"`\[]?usuarios[\"`\]]?",
+            "CREATE TABLE usuarios__novo", novo_sql, count=1, flags=re.I)
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(usuarios)").fetchall()]
+        lista = ", ".join(f'"{c}"' for c in cols)
+        conn.commit()
+        conn.execute("PRAGMA foreign_keys = OFF")
+        try:
+            conn.execute("BEGIN")
+            conn.execute("DROP TABLE IF EXISTS usuarios__novo")
+            conn.execute(novo_sql)
+            conn.execute(f"INSERT INTO usuarios__novo ({lista}) SELECT {lista} FROM usuarios")
+            conn.execute("DROP TABLE usuarios")
+            conn.execute("ALTER TABLE usuarios__novo RENAME TO usuarios")
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        finally:
+            conn.execute("PRAGMA foreign_keys = ON")
+
+    # 3) vendedor_usuario_id
+    cols_ped = [r[1] for r in conn.execute("PRAGMA table_info(pedidos)").fetchall()]
+    if "vendedor_usuario_id" not in cols_ped:
+        conn.execute("ALTER TABLE pedidos ADD COLUMN vendedor_usuario_id INTEGER")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pedidos_vendedor_usuario ON pedidos(vendedor_usuario_id)")
+
+    conn.execute(
+        "INSERT OR IGNORE INTO configuracoes (chave, valor, descricao) VALUES (?, ?, ?)",
+        ("perm_expedicao", "dashboard,pedidos", "Permissões do perfil Expedição"))
+
+    # 4) permissões iniciais do módulo Expedição (uma vez)
+    conn.execute("""CREATE TABLE IF NOT EXISTS sistema_migracoes (
+        chave TEXT PRIMARY KEY, aplicada_em TEXT DEFAULT (datetime('now','localtime')))""")
+    chave_mig = "expedicao_permissoes_iniciais_v1"
+    if not conn.execute("SELECT 1 FROM sistema_migracoes WHERE chave=?", (chave_mig,)).fetchone():
+        quem_edita = conn.execute(
+            "SELECT DISTINCT usuario_id FROM usuario_permissoes "
+            "WHERE modulo='pedidos' AND acao='editar' AND permitido=1"
+        ).fetchall()
+        for r in quem_edita:
+            for acao in ("ver", "despachar", "desfazer"):
+                conn.execute(
+                    "INSERT OR IGNORE INTO usuario_permissoes (usuario_id, modulo, acao, permitido) "
+                    "VALUES (?, 'expedicao', ?, 1)", (r["usuario_id"], acao))
+        conn.execute("INSERT OR IGNORE INTO sistema_migracoes (chave) VALUES (?)", (chave_mig,))
+    conn.commit()
+
+    # 5) vínculo automático dos pedidos sem vendedor
+    try:
+        from vendedores import vincular_pedidos_sem_vendedor
+        vincular_pedidos_sem_vendedor(conn)
+        conn.commit()
+    except Exception as e:
+        print("Aviso: vínculo de vendedores não executado:", e)
 
 def seed_data():
     conn = get_conn()
