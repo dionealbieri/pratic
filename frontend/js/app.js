@@ -4865,8 +4865,28 @@ async function abrirDespacho(id) {
   const chk = document.getElementById('desp-end-atualizar-cad');
   if (chk) chk.checked = false;
   openModal('modal-despacho');
+  // Volumes e peso calculados pelas caixas (cadastro do produto + lançamentos manuais)
+  if (typeof resumoCotacaoHTML === 'function') {
+    const d = await resumoCotacaoHTML(id, document.getElementById('desp-volumes-resumo'));
+    if (d && !p.volumes && d.totais && d.totais.caixas > 0) {
+      document.getElementById('desp-volumes').value = Math.ceil(d.totais.caixas);
+    }
+  }
 }
 window.abrirDespacho = abrirDespacho;
+
+// Quando a Expedição lança/exclui caixas com o despacho aberto, atualiza o resumo e os volumes
+window.cotAoAlterar = function (pedidoId, d) {
+  const det = document.getElementById('ped-det-embalagem');
+  const detModal = document.getElementById('modal-ped-detalhe');
+  if (det && detModal && detModal.classList.contains('open')) resumoCotacaoHTML(pedidoId, det);
+  const el = document.getElementById('desp-volumes-resumo');
+  const modal = document.getElementById('modal-despacho');
+  if (!el || !modal || !modal.classList.contains('open')) return;
+  if (String(document.getElementById('desp-pedido-id').value) !== String(pedidoId)) return;
+  resumoCotacaoHTML(pedidoId, el);
+  if (d && d.totais && d.totais.caixas > 0) document.getElementById('desp-volumes').value = Math.ceil(d.totais.caixas);
+};
 
 let _despCepBuscado = '';
 function _fmtCepDesp(v) {
@@ -6202,6 +6222,7 @@ async function loadSeparacaoProducao() {
         ${separado
           ? `<button class="btn btn-sm btn-secondary" onclick="marcarItemSeparado(${it.item_id}, false)" data-perm-movimentar="estoque">↺ Desfazer</button>`
           : `<button class="btn btn-sm btn-primary" onclick="marcarItemSeparado(${it.item_id}, true)" data-perm-movimentar="estoque">Marcar separado</button>`}
+        <button class="btn btn-sm btn-secondary" onclick="abrirCotacaoPedido(${it.pedido_id})" title="Embalagens do pedido (caixas, medidas e peso)">📦 Embalagens</button>
         <button class="btn btn-sm btn-secondary" onclick="cancelarProgramacaoSeparacaoLista(${it.item_id})" data-perm-deletar="pedidos" title="Cancelar programação">✕</button>
       </div>`;
     }
@@ -6234,6 +6255,7 @@ async function loadSeparacaoProducao() {
             ${separado
               ? `<button class="btn btn-sm btn-secondary" onclick="marcarItemSeparado(${it.item_id}, false)" data-perm-movimentar="estoque">↺ Desfazer</button>`
               : `<button class="btn btn-sm btn-primary" onclick="marcarItemSeparado(${it.item_id}, true)" data-perm-movimentar="estoque">Marcar separado</button>`}
+            <button class="btn btn-sm btn-secondary" onclick="abrirCotacaoPedido(${it.pedido_id})" title="Embalagens do pedido (caixas, medidas e peso)">📦 Embalagens</button>
             <button class="btn btn-sm btn-secondary" onclick="cancelarProgramacaoSeparacaoLista(${it.item_id})" data-perm-deletar="pedidos" title="Cancelar programação">✕</button>
           </div>`;
         }).join('')}
@@ -6307,8 +6329,13 @@ async function verDetalhesPedido(id) {
           <td>${prox?`<button class="btn btn-sm btn-secondary" onclick="avancarItemStatus(${i.id},'${prox}',${i.quantidade});closeModal('modal-ped-detalhe');loadPedidos()">${STATUS_NEXT_LABEL_PED[i.status]}</button>`:''}</td>
         </tr>`;
       }).join('')}</tbody></table>
+    </div>
+    <div style="margin-top:12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 14px;font-size:13px">
+      <div style="font-weight:700;margin-bottom:4px">📦 Embalagens do pedido</div>
+      <div id="ped-det-embalagem"></div>
     </div>`;
   openModal('modal-ped-detalhe');
+  if (typeof resumoCotacaoHTML === 'function') resumoCotacaoHTML(id, document.getElementById('ped-det-embalagem'));
   const btnImprimir = document.getElementById('btn-imprimir-pedido-modal');
   if(btnImprimir) btnImprimir.onclick = () => { imprimirPedido(id); };
   _carregarHistoricoProducaoPedido(id);
@@ -8709,6 +8736,7 @@ async function openModalProduto() {
   _setVal('est-prod-emb-larg', '0');
   _setVal('est-prod-emb-alt', '0');
   _setVal('est-prod-emb-peso', '0');
+  _setVal('est-prod-emb-qtd', '0');
   const ti = document.getElementById('modal-prod-est-title'); if (ti) ti.textContent = 'Cadastrar Produto';
   openModal('modal-produto');
 }
@@ -8730,6 +8758,7 @@ async function editProduto(id) {
   _setVal('est-prod-emb-larg', p.embalagem_largura || 0);
   _setVal('est-prod-emb-alt', p.embalagem_altura || 0);
   _setVal('est-prod-emb-peso', p.embalagem_peso || 0);
+  _setVal('est-prod-emb-qtd', p.embalagem_qtd || 0);
   const ti = document.getElementById('modal-prod-est-title'); if (ti) ti.textContent = 'Editar Produto';
   openModal('modal-produto');
 }
@@ -8749,7 +8778,8 @@ async function salvarProduto() {
     embalagem_comprimento: _numVal('est-prod-emb-comp'),
     embalagem_largura: _numVal('est-prod-emb-larg'),
     embalagem_altura: _numVal('est-prod-emb-alt'),
-    embalagem_peso: _numVal('est-prod-emb-peso')
+    embalagem_peso: _numVal('est-prod-emb-peso'),
+    embalagem_qtd: _numVal('est-prod-emb-qtd')
   };
   if (!body.nome) { showAlert('Informe o nome do produto', 'danger'); return; }
   try {
@@ -9755,7 +9785,7 @@ async function loadAcompanhamento() {
       <div style="font-size:12px;color:var(--muted)">${sub} · ${fmtBRL(e.valor)}</div>
       <div style="font-size:12px;margin-top:4px">${e.qtd ? `mais antigo: <strong>${e.mais_antigo_dias} dia(s)</strong>` : '—'}${e.atrasados ? ` · <span style="color:var(--danger);font-weight:700">${e.atrasados} no vermelho</span>` : ''}</div>
     </div>`;
-  const nomeEtapa = { produzido: '⏳ Aguardando vendedor', aguardando_nf: '🧾 Aguardando NF', aguardando_retirada: '🙋 Aguardando retirada' };
+  const nomeEtapa = { aguardando_separacao: '📦 Separação / embalagem', produzido: '⏳ Aguardando vendedor', aguardando_nf: '🧾 Aguardando NF', aguardando_retirada: '🙋 Aguardando retirada' };
   const parados = (d.parados || []).map(p => `<tr>
       <td><strong>${_escHtml(p.numero_pedido)}</strong></td>
       <td>${_escHtml(p.cliente_nome)}</td>
@@ -9780,10 +9810,11 @@ async function loadAcompanhamento() {
       <button class="btn btn-sm btn-secondary" onclick="loadAcompanhamento()">↻ Atualizar</button>
     </div>
     <div class="cards-grid" style="margin-bottom:18px">
+      ${card('📦 Separação / embalagem', E.aguardando_separacao || {qtd:0,valor:0}, 'var(--warn)', 'com o Estoque')}
       ${card('⏳ Aguardando vendedor', E.produzido || {qtd:0,valor:0}, 'var(--danger)', 'com o vendedor')}
       ${card('🧾 Aguardando NF', E.aguardando_nf || {qtd:0,valor:0}, 'var(--accent)', 'com a Expedição')}
       ${card('🙋 Aguardando retirada', E.aguardando_retirada || {qtd:0,valor:0}, 'var(--accent2)', 'com o cliente')}
-      <div class="card" style="border:1px solid var(--accent)"><div class="card-label">Pronto e não faturado</div><div class="card-value accent" style="font-size:22px">${fmtBRL(d.valor_nao_faturado)}</div><div style="font-size:12px;color:var(--muted)">soma das três etapas</div></div>
+      <div class="card" style="border:1px solid var(--accent)"><div class="card-label">Pronto e não faturado</div><div class="card-value accent" style="font-size:22px">${fmtBRL(d.valor_nao_faturado)}</div><div style="font-size:12px;color:var(--muted)">soma das etapas</div></div>
     </div>
     ${d.sem_vendedor ? `<div style="background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.4);border-radius:10px;padding:10px 14px;margin-bottom:16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap"><strong style="color:var(--warn)">🧾 ${d.sem_vendedor} pedido(s) sem vendedor vinculado</strong><span style="font-size:12px;color:var(--muted)">não aparecem para nenhum vendedor</span><button class="btn btn-sm btn-secondary" style="margin-left:auto" onclick="abrirModalSemVendedor()">Resolver →</button></div>` : ''}
     <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start">

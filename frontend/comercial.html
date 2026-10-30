@@ -13,6 +13,7 @@
   })();
 </script>
 <link rel="stylesheet" href="css/common.css?v=2">
+<script src="/js/cotacao.js?v=20261030-embalagem"></script>
 <style>
   body {
     display: flex !important;
@@ -194,7 +195,8 @@
   <div class="modal" style="max-width:600px">
     <div class="modal-title">Como este pedido vai sair?</div>
     <input type="hidden" id="mp-envio-id">
-    <div id="mp-envio-cab" style="font-size:14px;margin-bottom:14px;background:rgba(255,255,255,0.05);padding:10px 12px;border-radius:8px;border-left:4px solid var(--accent);line-height:1.6"></div>
+    <div id="mp-envio-cab" style="font-size:14px;margin-bottom:10px;background:rgba(255,255,255,0.05);padding:10px 12px;border-radius:8px;border-left:4px solid var(--accent);line-height:1.6"></div>
+    <div id="mp-envio-volumes" style="font-size:13px;margin-bottom:14px"></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
       <button type="button" class="btn btn-secondary" id="mp-modo-transportadora" onclick="mpEscolherModo('transportadora')">🚚 Transportadora</button>
       <button type="button" class="btn btn-secondary" id="mp-modo-retirada" onclick="mpEscolherModo('retirada')">🙋 Cliente retira</button>
@@ -849,7 +851,7 @@ async function mpMarcarVisto() {
 
 function renderCardsMeus() {
   const ps = mpDados.pedidos || [];
-  const aguardando = ps.filter(p => p.status === 'produzido');
+  const aguardando = ps.filter(p => p.status === 'produzido' && !mpRevendaPendente(p));
   const retirada = ps.filter(p => p.status === 'aguardando_retirada');
   const expedicao = ps.filter(p => p.status === 'aguardando_nf');
   const naoFaturado = ps.filter(p => ['produzido', 'aguardando_nf', 'aguardando_retirada'].includes(p.status))
@@ -875,13 +877,15 @@ function renderSecoesMeus() {
   const el = document.getElementById('mp-secoes');
   if (!el) return;
   const ps = mpDados.pedidos || [];
-  const aguardando = ps.filter(p => p.status === 'produzido');
+  const aguardando = ps.filter(p => p.status === 'produzido' && !mpRevendaPendente(p));
+  const separacao = ps.filter(p => p.status === 'produzido' && mpRevendaPendente(p));
   const retirada = ps.filter(p => p.status === 'aguardando_retirada');
   const expedicao = ps.filter(p => p.status === 'aguardando_nf');
   const dataConcl = p => (p.status === 'entregue' ? (p.data_entrega || p.data_despacho) : p.data_despacho) || '';
   const concluidos = ps.filter(p => ['enviado', 'retirado', 'entregue'].includes(p.status))
                        .sort((a, b) => String(dataConcl(b)).localeCompare(String(dataConcl(a))));
-  const tampas = p => (p.revenda_pendentes || 0) > 0 ? `<div style="font-size:11px;color:var(--warn)">⚠ ${p.revenda_pendentes} item(ns) de revenda a separar</div>` : '';
+  const tampas = p => ((p.revenda_pendentes || 0) > 0 ? `<div style="font-size:11px;color:var(--warn)">⚠ ${p.revenda_pendentes} item(ns) de revenda a separar</div>` : '')
+    + (p.status === 'produzido' && (p.embalagem_pendentes || 0) > 0 ? `<div style="font-size:11px;color:var(--warn)">⚠ embalagem de ${p.embalagem_pendentes} item(ns) ainda não informada</div>` : '');
 
   let html = _tabelaSecao('⏳ Aguardando você — defina como o pedido vai sair', aguardando.length,
     ['Pedido', 'Cliente', 'Produzido há', 'Valor', ''],
@@ -892,10 +896,23 @@ function renderSecoesMeus() {
       <td>${fmtBRL(p.valor_total)}</td>
       <td style="white-space:nowrap;text-align:right">
         <button class="btn btn-sm btn-secondary" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${p.id})">📄 PDF</button>
+        <button class="btn btn-sm btn-secondary" title="Caixas, peso e cubagem para cotar o frete" onclick="abrirCotacaoPedido(${p.id})">📦 Cotação</button>
         <button class="btn btn-sm btn-primary" onclick="mpAbrirEnvio(${p.id},'transportadora')">🚚 Informar frete</button>
         <button class="btn btn-sm btn-secondary" onclick="mpAbrirEnvio(${p.id},'retirada')">🙋 Cliente retira</button>
       </td></tr>`),
     '✅ Nenhum pedido aguardando você');
+
+  if (separacao.length) html += _tabelaSecao('📦 Aguardando separação / embalagem — liberado para o frete quando o Estoque concluir', separacao.length,
+    ['Pedido', 'Cliente', 'Produzido há', 'Valor', ''],
+    separacao.map(p => `<tr>
+      <td><strong>${esc(p.numero_pedido)}</strong></td>
+      <td>${esc(p.cliente_nome)}${tampas(p)}</td>
+      <td>${seloDias(p.dias_na_etapa)}</td>
+      <td>${fmtBRL(p.valor_total)}</td>
+      <td style="white-space:nowrap;text-align:right">
+        <button class="btn btn-sm btn-secondary" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${p.id})">📄 PDF</button>
+        <button class="btn btn-sm btn-secondary" title="Caixas, peso e cubagem para cotar o frete" onclick="abrirCotacaoPedido(${p.id})">📦 Cotação</button>
+      </td></tr>`), '');
 
   if (retirada.length) html += _tabelaSecao('🙋 Aguardando retirada do cliente', retirada.length,
     ['Pedido', 'Cliente', 'Previsão', 'Parado', ''],
@@ -918,7 +935,7 @@ function renderSecoesMeus() {
       <td>${esc(p.transportadora || '—')}</td>
       <td>${fmtBRL(p.frete)}</td>
       <td>${seloDias(p.dias_na_etapa)}</td>
-      <td style="text-align:right;white-space:nowrap"><button class="btn btn-sm btn-secondary" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${p.id})">📄 PDF</button> <button class="btn btn-sm btn-secondary" onclick="mpAbrirEnvio(${p.id},'transportadora')">✏️ Alterar</button></td>
+      <td style="text-align:right;white-space:nowrap"><button class="btn btn-sm btn-secondary" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${p.id})">📄 PDF</button> <button class="btn btn-sm btn-secondary" title="Caixas, peso e cubagem para cotar o frete" onclick="abrirCotacaoPedido(${p.id})">📦 Cotação</button> <button class="btn btn-sm btn-secondary" onclick="mpAbrirEnvio(${p.id},'transportadora')">✏️ Alterar</button></td>
     </tr>`), '');
 
   const concluidosVis = mpVerTodosConcluidos ? concluidos : concluidos.slice(0, 10);
@@ -938,6 +955,8 @@ function renderSecoesMeus() {
 
   el.innerHTML = html;
 }
+
+function mpRevendaPendente(p) { return (Number(p.revenda_pendentes) || 0) > 0 || (Number(p.embalagem_pendentes) || 0) > 0; }
 
 function mpEscolherModo(modo) {
   mpModo = modo;
@@ -982,6 +1001,7 @@ async function mpAbrirEnvio(id, modo) {
   document.getElementById('mp-btn-voltar').style.display = ['aguardando_nf', 'aguardando_retirada'].includes(p.status) ? '' : 'none';
   mpEscolherModo(modo);
   openModal('modal-mp-envio');
+  if (typeof resumoCotacaoHTML === 'function') resumoCotacaoHTML(id, document.getElementById('mp-envio-volumes'));
 }
 
 async function mpSalvarEnvio() {
@@ -1083,7 +1103,7 @@ async function loadPedidosCom() {
       <td>${fmtDate(p.prazo_entrega)}</td>
       <td style="color:${diasCor};font-weight:700">${dias < 0 ? 'Vencido' : dias + 'd'}</td>
       <td style="color:var(--muted)">${p.itens_entregues}/${p.total_itens}</td>
-      <td><span class="pill ${STATUS_PILL_PEDIDO[p.status] || ''}">${STATUS_LABEL_PEDIDO[p.status] || p.status}</span></td>
+      <td><span class="pill ${STATUS_PILL_PEDIDO[p.status] || ''}">${(p.status === 'produzido' && Number(p.revenda_bloqueado)) ? '📦 Aguardando separação' : (STATUS_LABEL_PEDIDO[p.status] || p.status)}</span></td>
       <td class="flex gap-2">
         <button class="btn btn-sm btn-secondary" onclick="verDetalhe(${p.id})">Ver</button>
         <button class="btn btn-sm btn-secondary" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${p.id})">📄 PDF</button>
@@ -1112,7 +1132,7 @@ async function verDetalhe(id) {
       </div>
       <div class="card">
         <div class="card-label">Status</div>
-        <span class="pill ${STATUS_PILL_PEDIDO[p.status] || ''}">${STATUS_LABEL_PEDIDO[p.status] || p.status}</span>
+        <span class="pill ${STATUS_PILL_PEDIDO[p.status] || ''}">${(p.status === 'produzido' && Number(p.revenda_bloqueado)) ? '📦 Aguardando separação' : (STATUS_LABEL_PEDIDO[p.status] || p.status)}</span>
         ${p.transportadora ? `<div style="font-size:12px;color:var(--muted);margin-top:4px">${esc(p.transportadora)}${p.nota_fiscal ? ' · NF ' + esc(p.nota_fiscal) : ''}</div>` : ''}
       </div>
       ${p.vendedor ? `<div class="card"><div class="card-label">Vendedor</div><div style="font-weight:600">${p.vendedor}</div></div>` : ''}

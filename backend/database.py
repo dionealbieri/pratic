@@ -1525,8 +1525,41 @@ def init_db():
     _migrar_fluxo_expedicao(conn)
     conn.commit()
     _migrar_transportadoras(conn)
+    _migrar_volumes(conn)
     conn.commit()
     conn.close()
+
+
+def _migrar_volumes(conn):
+    """Dados para cotação de frete:
+    - estoque_produtos.embalagem_qtd: unidades por caixa (as medidas/peso do produto são da caixa fechada);
+    - pedidos_volumes: caixas lançadas à mão (revenda ou caixa diferente do cadastro).
+      Se o lançamento estiver ligado a um item, substitui o cálculo automático daquele item."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(estoque_produtos)").fetchall()]
+    if "embalagem_qtd" not in cols:
+        conn.execute("ALTER TABLE estoque_produtos ADD COLUMN embalagem_qtd REAL DEFAULT 0")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS pedidos_volumes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pedido_id INTEGER NOT NULL,
+            pedido_item_id INTEGER,
+            descricao TEXT,
+            qtd_caixas REAL DEFAULT 1,
+            comprimento REAL DEFAULT 0,
+            largura REAL DEFAULT 0,
+            altura REAL DEFAULT 0,
+            peso_caixa REAL DEFAULT 0,
+            usuario TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pedidos_volumes_pedido ON pedidos_volumes(pedido_id)")
+    # Pedido produzido mas com revenda ainda por separar: fica bloqueado para o vendedor.
+    # A flag marca o bloqueio para gerar o aviso "liberado" quando a revenda for separada.
+    cols_ped = [r[1] for r in conn.execute("PRAGMA table_info(pedidos)").fetchall()]
+    if "revenda_bloqueado" not in cols_ped:
+        conn.execute("ALTER TABLE pedidos ADD COLUMN revenda_bloqueado INTEGER DEFAULT 0")
+    conn.commit()
 
 
 def _migrar_transportadoras(conn):

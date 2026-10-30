@@ -65,6 +65,35 @@ def _revenda_pendente(conn, pedido_id: int) -> int:
     """, (pedido_id,)).fetchone()[0]
 
 
+# Item com embalagem definida: tem caixas lançadas à mão OU o produto tem no cadastro
+# medidas + peso da caixa e unidades por caixa (ou o item já está em caixas).
+SQL_ITEM_COM_EMBALAGEM = """(
+    EXISTS (SELECT 1 FROM pedidos_volumes v WHERE v.pedido_item_id = i.id)
+    OR EXISTS (SELECT 1 FROM estoque_produtos ep2 WHERE ep2.id = i.produto_id
+               AND COALESCE(ep2.embalagem_comprimento,0) > 0 AND COALESCE(ep2.embalagem_largura,0) > 0
+               AND COALESCE(ep2.embalagem_altura,0) > 0 AND COALESCE(ep2.embalagem_peso,0) > 0
+               AND (COALESCE(ep2.embalagem_qtd,0) > 0 OR LOWER(COALESCE(i.unidade,'')) LIKE 'cx%'
+                    OR LOWER(COALESCE(i.unidade,'')) LIKE 'caixa%')))"""
+
+
+def _sql_embalagem_pendente(alias_pedido: str = "p") -> str:
+    return f"""(SELECT COUNT(*) FROM pedidos_itens i WHERE i.pedido_id = {alias_pedido}.id
+                AND NOT {SQL_ITEM_COM_EMBALAGEM})"""
+
+
+def _sql_revenda_pendente(alias_pedido: str = "p") -> str:
+    return f"""(SELECT COUNT(*) FROM pedidos_itens i
+                LEFT JOIN estoque_produtos ep ON i.produto_id = ep.id
+                LEFT JOIN estoque_categorias ec ON ep.categoria_id = ec.id
+                WHERE i.pedido_id = {alias_pedido}.id AND ec.tipo = 'revenda'
+                  AND (i.status IS NULL OR i.status != 'entregue'))"""
+
+
+def _embalagem_pendente(conn, pedido_id: int) -> int:
+    return conn.execute(f"SELECT COUNT(*) FROM pedidos_itens i WHERE i.pedido_id = ? AND NOT {SQL_ITEM_COM_EMBALAGEM}",
+                        (pedido_id,)).fetchone()[0]
+
+
 def _vendedor_desde(conn) -> str:
     """Data de corte (AAAA-MM-DD) configurada pelo Gestor: pedidos lançados antes
     dela não aparecem no portal do vendedor nem no aviso 'sem vendedor'."""
@@ -1217,7 +1246,31 @@ def _recalc_status_pedido(cur, pedido_id):
     else:
         novo = 'aberto'
     cur.execute("UPDATE pedidos SET status=? WHERE id=?", (novo, pedido_id))
+    _checar_bloqueio_revenda(cur, pedido_id, novo)
     return novo
+
+
+def _checar_bloqueio_revenda(cur, pedido_id, status):
+    """Pedido produzido com revenda ainda por separar ou com item sem embalagem
+    informada fica 'Aguardando separação/embalagem' (o vendedor vê, mas não consegue
+    informar o frete). Quando tudo estiver ok, o pedido é liberado: registra no
+    histórico (vira novidade para o vendedor) e a contagem de dias recomeça."""
+    try:
+        ped = cur.execute("SELECT COALESCE(revenda_bloqueado,0) AS bloq FROM pedidos WHERE id=?", (pedido_id,)).fetchone()
+    except Exception:
+        return  # banco ainda sem a coluna (migração não rodou)
+    if not ped:
+        return
+    pend = (_revenda_pendente(cur, pedido_id) + _embalagem_pendente(cur, pedido_id)) if status == 'produzido' else 0
+    if status == 'produzido' and pend > 0:
+        if not ped["bloq"]:
+            cur.execute("UPDATE pedidos SET revenda_bloqueado=1 WHERE id=?", (pedido_id,))
+    elif ped["bloq"]:
+        cur.execute("UPDATE pedidos SET revenda_bloqueado=0 WHERE id=?", (pedido_id,))
+        if status == 'produzido':
+            cur.execute("""INSERT INTO pedidos_status_hist (pedido_id, status_anterior, status, usuario)
+                           VALUES (?, 'aguardando_separacao', 'produzido', 'Separação/embalagem')""", (pedido_id,))
+            cur.execute("UPDATE pedidos SET status_desde=datetime('now','localtime') WHERE id=?", (pedido_id,))
 
 
 @router.get("/")
@@ -1558,6 +1611,7 @@ def acompanhamento(current_user: dict = Depends(get_current_user)):
             SELECT p.id, p.numero_pedido, p.status, p.status_desde, p.transportadora, p.retirada_prevista,
                    p.vendedor, p.vendedor_usuario_id, uv.nome AS vendedor_nome,
                    c.razao_social AS cliente_nome,
+                   ({_sql_revenda_pendente('p')} + {_sql_embalagem_pendente('p')}) AS bloqueios,
                    CAST(julianday('now','localtime') - julianday(p.status_desde) AS INTEGER) AS dias_na_etapa,
                    {SQL_VALOR_PEDIDO} AS valor_total
             FROM pedidos p
@@ -1568,9 +1622,14 @@ def acompanhamento(current_user: dict = Depends(get_current_user)):
             ORDER BY p.status_desde ASC
         """, (desde, desde)).fetchall()
         pedidos = [dict(r) for r in rows]
-        responsavel = {"produzido": "Vendedor", "aguardando_nf": "Expedição", "aguardando_retirada": "Cliente (retirada)"}
+        # Produzido com revenda por separar: etapa à parte, com o Estoque
+        for p in pedidos:
+            if p["status"] == "produzido" and p["bloqueios"]:
+                p["status"] = "aguardando_separacao"
+        responsavel = {"aguardando_separacao": "Estoque (separação/embalagem)", "produzido": "Vendedor",
+                       "aguardando_nf": "Expedição", "aguardando_retirada": "Cliente (retirada)"}
         etapas = {}
-        for st in ("produzido", "aguardando_nf", "aguardando_retirada"):
+        for st in ("aguardando_separacao", "produzido", "aguardando_nf", "aguardando_retirada"):
             lst = [p for p in pedidos if p["status"] == st]
             etapas[st] = {
                 "qtd": len(lst),
@@ -1713,6 +1772,18 @@ def estoque_dos_meus_clientes(current_user: dict = Depends(get_current_user)):
         conn.close()
 
 
+def _sem_repetir_novidades(rows):
+    """Um aviso por pedido/etapa (ex.: produzido e depois liberado da separação de revenda)."""
+    vistos, out = set(), []
+    for r in rows:
+        k = (r["pedido_id"], r["status"])
+        if k in vistos:
+            continue
+        vistos.add(k)
+        out.append(dict(r))
+    return out
+
+
 @router.get("/meus")
 def meus_pedidos(current_user: dict = Depends(get_current_user)):
     """Pedidos do vendedor logado: em andamento + concluídos nos últimos 15 dias,
@@ -1733,7 +1804,8 @@ def meus_pedidos(current_user: dict = Depends(get_current_user)):
                       LEFT JOIN estoque_produtos ep ON i.produto_id = ep.id
                       LEFT JOIN estoque_categorias ec ON ep.categoria_id = ec.id
                      WHERE i.pedido_id = p.id AND ec.tipo = 'revenda'
-                       AND (i.status IS NULL OR i.status != 'entregue')) AS revenda_pendentes
+                       AND (i.status IS NULL OR i.status != 'entregue')) AS revenda_pendentes,
+                   {_sql_embalagem_pendente('p')} AS embalagem_pendentes
             FROM pedidos p
             JOIN pedidos_clientes c ON c.id = p.cliente_id
             WHERE p.vendedor_usuario_id = ?
@@ -1746,7 +1818,7 @@ def meus_pedidos(current_user: dict = Depends(get_current_user)):
         """, (uid, desde, desde)).fetchall()
         visto = conn.execute("SELECT meus_pedidos_visto_em FROM usuarios WHERE id=?", (uid,)).fetchone()
         visto_em = visto["meus_pedidos_visto_em"] if visto else None
-        novidades = conn.execute("""
+        novidades = conn.execute(f"""
             SELECT h.id, h.status, h.em, h.usuario, p.id AS pedido_id, p.numero_pedido, p.nota_fiscal,
                    c.razao_social AS cliente_nome
             FROM pedidos_status_hist h
@@ -1755,13 +1827,15 @@ def meus_pedidos(current_user: dict = Depends(get_current_user)):
             WHERE p.vendedor_usuario_id = ?
               AND (? = '' OR date(p.created_at) >= ?)
               AND h.status IN ('produzido','enviado','retirado')
+              AND NOT (h.status = 'produzido' AND p.status = 'produzido'
+                       AND ({_sql_revenda_pendente('p')} + {_sql_embalagem_pendente('p')}) > 0)
               AND h.em > COALESCE(?, datetime('now','localtime','-3 days'))
             ORDER BY h.id DESC
             LIMIT 30
         """, (uid, desde, desde, visto_em)).fetchall()
         return {
             "pedidos": [dict(r) for r in rows],
-            "novidades": [dict(r) for r in novidades],
+            "novidades": _sem_repetir_novidades(novidades),
             "visto_em": visto_em,
             "mostrar_desde": desde,
             "prazos": _prazos_parados(conn),
@@ -1778,6 +1852,178 @@ def meus_pedidos_visto(current_user: dict = Depends(get_current_user)):
                      (current_user["id"],))
         conn.commit()
         return {"mensagem": "ok"}
+    finally:
+        conn.close()
+
+
+# ─── DADOS PARA COTAÇÃO DE FRETE (CAIXAS, PESO, CUBAGEM) ────────────────────
+
+class VolumeIn(BaseModel):
+    pedido_item_id: Optional[int] = None
+    descricao: Optional[str] = ""
+    qtd_caixas: float = 1
+    comprimento: float = 0
+    largura: float = 0
+    altura: float = 0
+    peso_caixa: float = 0
+
+
+def _acesso_pedido_cotacao(conn, pedido_id: int, current_user: dict, editar: bool = False):
+    ped = conn.execute("SELECT id, numero_pedido, vendedor_usuario_id, status FROM pedidos WHERE id=?", (pedido_id,)).fetchone()
+    if not ped:
+        raise HTTPException(404, "Pedido não encontrado")
+    role = current_user.get("role")
+    dono = ped["vendedor_usuario_id"] == current_user.get("id")
+    if role == "comercial" and not dono:
+        raise HTTPException(403, "Este pedido não é seu.")
+    if editar and not _pode_lancar_caixas(current_user):
+        raise HTTPException(403, "As caixas do pedido são informadas pelo Estoque ou pela Expedição.")
+    return ped
+
+
+def _pode_lancar_caixas(current_user: dict) -> bool:
+    """Embalagem é informada por quem separa/embala: Gestor, Estoque (movimentar) e Expedição (despachar).
+    O vendedor só consulta."""
+    role = current_user.get("role")
+    if role == "gestor":
+        return True
+    if role == "comercial":
+        return False
+    return (verificar_permissao("estoque", "movimentar", current_user)
+            or verificar_permissao("expedicao", "despachar", current_user))
+
+
+def _eh_caixa(unidade: str) -> bool:
+    u = (unidade or "").strip().lower()
+    return u.startswith("cx") or u.startswith("caixa")
+
+
+def _cubagem_m3(qtd, c, l, a) -> float:
+    return (qtd or 0) * (c or 0) * (l or 0) * (a or 0) / 1_000_000.0
+
+
+@router.get("/{id}/cotacao")
+def dados_cotacao(id: int, current_user: dict = Depends(get_current_user)):
+    """Caixas, peso e cubagem do pedido para o vendedor cotar o frete.
+    Cada item é calculado pelo cadastro do produto (unidades por caixa + medidas e peso
+    da caixa fechada). Caixas lançadas à mão e ligadas a um item substituem o cálculo
+    daquele item; lançamentos sem item são somados à parte."""
+    import math
+    conn = get_conn()
+    try:
+        ped = _acesso_pedido_cotacao(conn, id, current_user)
+        itens = conn.execute("""
+            SELECT i.id, i.descricao, i.quantidade, i.unidade, i.produto_id,
+                   ep.nome AS produto_nome, ep.codigo AS produto_codigo,
+                   COALESCE(ep.embalagem_qtd,0) AS emb_qtd, COALESCE(ep.embalagem_comprimento,0) AS emb_c,
+                   COALESCE(ep.embalagem_largura,0) AS emb_l, COALESCE(ep.embalagem_altura,0) AS emb_a,
+                   COALESCE(ep.embalagem_peso,0) AS emb_peso, ec.tipo AS categoria_tipo
+            FROM pedidos_itens i
+            LEFT JOIN estoque_produtos ep ON ep.id = i.produto_id
+            LEFT JOIN estoque_categorias ec ON ec.id = ep.categoria_id
+            WHERE i.pedido_id = ? ORDER BY i.id
+        """, (id,)).fetchall()
+        manuais = [dict(r) for r in conn.execute(
+            "SELECT * FROM pedidos_volumes WHERE pedido_id=? ORDER BY id", (id,)).fetchall()]
+        itens_com_manual = {m["pedido_item_id"] for m in manuais if m["pedido_item_id"]}
+
+        linhas, avisos = [], []
+        tot_cx = tot_peso = tot_m3 = 0.0
+        for it in itens:
+            nome = it["descricao"] or it["produto_nome"] or "Item"
+            base = {"item_id": it["id"], "descricao": nome, "quantidade": it["quantidade"] or 0,
+                    "unidade": it["unidade"] or "", "revenda": it["categoria_tipo"] == "revenda"}
+            if it["id"] in itens_com_manual:
+                linhas.append({**base, "origem": "manual"})
+                continue
+            qtd = float(it["quantidade"] or 0)
+            tem_medida = it["emb_c"] > 0 and it["emb_l"] > 0 and it["emb_a"] > 0
+            if _eh_caixa(it["unidade"]):
+                caixas_exatas = qtd
+            elif it["emb_qtd"] > 0:
+                caixas_exatas = qtd / it["emb_qtd"]
+            else:
+                caixas_exatas = None
+            if caixas_exatas is None or not tem_medida or not it["emb_peso"]:
+                falta = []
+                if not it["produto_id"]:
+                    falta.append("item sem produto vinculado")
+                else:
+                    if caixas_exatas is None:
+                        falta.append("unidades por caixa")
+                    if not tem_medida:
+                        falta.append("medidas da caixa")
+                    if not it["emb_peso"]:
+                        falta.append("peso")
+                linhas.append({**base, "origem": "sem_dados", "falta": falta})
+                avisos.append(f"{nome}: falta {', '.join(falta)} — cadastre no produto ou lance as caixas.")
+                continue
+            caixas = math.ceil(round(caixas_exatas, 6))
+            # Peso proporcional: a última caixa pode ir incompleta
+            peso = round(caixas_exatas * it["emb_peso"], 2)
+            m3 = _cubagem_m3(caixas, it["emb_c"], it["emb_l"], it["emb_a"])
+            tot_cx += caixas; tot_peso += peso; tot_m3 += m3
+            linhas.append({**base, "origem": "cadastro", "unid_por_caixa": it["emb_qtd"],
+                           "caixas": caixas, "comprimento": it["emb_c"], "largura": it["emb_l"],
+                           "altura": it["emb_a"], "peso_caixa": it["emb_peso"],
+                           "peso_total": peso, "cubagem_m3": round(m3, 4)})
+        for m in manuais:
+            q = m["qtd_caixas"] or 0
+            peso = round(q * (m["peso_caixa"] or 0), 2)
+            m3 = _cubagem_m3(q, m["comprimento"], m["largura"], m["altura"])
+            m["peso_total"] = peso
+            m["cubagem_m3"] = round(m3, 4)
+            tot_cx += q; tot_peso += peso; tot_m3 += m3
+        return {
+            "pedido_id": id, "numero_pedido": ped["numero_pedido"],
+            "itens": linhas, "manuais": manuais, "avisos": avisos,
+            "pode_editar": _pode_lancar_caixas(current_user),
+            "completo": not any(l["origem"] == "sem_dados" for l in linhas),
+            "totais": {"caixas": round(tot_cx, 2), "peso_kg": round(tot_peso, 2), "cubagem_m3": round(tot_m3, 4)},
+        }
+    finally:
+        conn.close()
+
+
+@router.post("/{id}/volumes")
+def lancar_volume(id: int, v: VolumeIn, current_user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    try:
+        _acesso_pedido_cotacao(conn, id, current_user, editar=True)
+        if (v.qtd_caixas or 0) <= 0:
+            raise HTTPException(400, "Informe a quantidade de caixas.")
+        if (v.comprimento or 0) <= 0 or (v.largura or 0) <= 0 or (v.altura or 0) <= 0:
+            raise HTTPException(400, "Informe comprimento, largura e altura da caixa.")
+        if (v.peso_caixa or 0) <= 0:
+            raise HTTPException(400, "Informe o peso de cada caixa.")
+        if v.pedido_item_id:
+            ok = conn.execute("SELECT 1 FROM pedidos_itens WHERE id=? AND pedido_id=?", (v.pedido_item_id, id)).fetchone()
+            if not ok:
+                raise HTTPException(400, "Item não pertence a este pedido.")
+        conn.execute("""INSERT INTO pedidos_volumes (pedido_id, pedido_item_id, descricao, qtd_caixas,
+                        comprimento, largura, altura, peso_caixa, usuario) VALUES (?,?,?,?,?,?,?,?,?)""",
+                     (id, v.pedido_item_id or None, (v.descricao or "").strip(), v.qtd_caixas,
+                      v.comprimento, v.largura, v.altura, v.peso_caixa, _nome_usuario(current_user)))
+        st = conn.execute("SELECT status FROM pedidos WHERE id=?", (id,)).fetchone()["status"]
+        _checar_bloqueio_revenda(conn, id, st)
+        conn.commit()
+        return {"mensagem": "Caixas lançadas"}
+    finally:
+        conn.close()
+
+
+@router.delete("/{id}/volumes/{vid}")
+def excluir_volume(id: int, vid: int, current_user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    try:
+        _acesso_pedido_cotacao(conn, id, current_user, editar=True)
+        cur = conn.execute("DELETE FROM pedidos_volumes WHERE id=? AND pedido_id=?", (vid, id))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Lançamento não encontrado")
+        st = conn.execute("SELECT status FROM pedidos WHERE id=?", (id,)).fetchone()["status"]
+        _checar_bloqueio_revenda(conn, id, st)
+        conn.commit()
+        return {"mensagem": "Lançamento excluído"}
     finally:
         conn.close()
 
@@ -1802,6 +2048,13 @@ def definir_envio(id: int, body: DefinirEnvioIn, current_user: dict = Depends(ge
             raise HTTPException(400, "O pedido ainda não foi produzido.")
         usuario = _nome_usuario(current_user)
         modo = (body.modo or "").strip().lower()
+        if modo in ("transportadora", "retirada") and ped["status"] == "produzido":
+            if _revenda_pendente(conn, id) > 0:
+                raise HTTPException(400, "Este pedido tem itens de revenda ainda não separados. "
+                                         "Ele será liberado para o frete assim que a separação for concluída.")
+            if _embalagem_pendente(conn, id) > 0:
+                raise HTTPException(400, "A embalagem deste pedido ainda não foi informada pelo Estoque/Expedição. "
+                                         "Ele será liberado para o frete assim que as caixas forem informadas.")
         if modo == "transportadora":
             transp = (body.transportadora or "").strip()
             if not transp:
@@ -2585,6 +2838,7 @@ def deletar_pedido(id: int, current_user = Depends(get_current_user)):
         cur.execute("DELETE FROM pedidos_parcelas WHERE pedido_id=?", (id,))
         cur.execute("DELETE FROM pedidos_itens WHERE pedido_id=?", (id,))
         cur.execute("DELETE FROM pedidos_status_hist WHERE pedido_id=?", (id,))
+        cur.execute("DELETE FROM pedidos_volumes WHERE pedido_id=?", (id,))
         cur.execute("DELETE FROM pedidos WHERE id=?", (id,))
         cur.execute("""INSERT INTO auditoria (usuario, acao, entidade, entidade_id, descricao, valor_anterior, valor_novo)
                        VALUES (?, 'excluir_pedido', 'pedidos', ?, ?, ?, '')""",
