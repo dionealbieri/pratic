@@ -4672,8 +4672,8 @@ function imprimirComprovante() {
 
 // ─── PEDIDOS ──────────────────────────────────────────────────────────────────
 
-const STATUS_LABEL_PED={aberto:'📋 Aberto',em_producao:'🏭 Em produção',produzido:'✅ Produzido',enviado:'🚚 Enviado',entregue:'📦 Entregue'};
-const STATUS_PILL_PED={aberto:'pill-info',em_producao:'pill-warn',produzido:'pill-success',enviado:'pill-info',entregue:'pill-success'};
+const STATUS_LABEL_PED={aberto:'📋 Aberto',em_producao:'🏭 Em produção',produzido:'✅ Produzido',aguardando_nf:'🧾 Aguardando NF',aguardando_retirada:'🙋 Aguardando retirada',enviado:'🚚 Enviado',retirado:'✅ Retirado',entregue:'📦 Entregue'};
+const STATUS_PILL_PED={aberto:'pill-info',em_producao:'pill-warn',produzido:'pill-success',aguardando_nf:'pill-warn',aguardando_retirada:'pill-warn',enviado:'pill-info',retirado:'pill-success',entregue:'pill-success'};
 const STATUS_NEXT_PED={aberto:'em_producao',em_producao:'produzido',produzido:null,entregue:null};
 const STATUS_NEXT_LABEL_PED={aberto:'→ Iniciar',em_producao:'→ Produzido',produzido:null,entregue:null};
 // Considera o item como produzido pela quantidade real, não só pelo campo status (evita divergência)
@@ -4696,55 +4696,96 @@ function switchPedidosTab(tab) {
   }
 }
 
+// Selo de tempo parado na etapa: verde até 1 dia, amarelo 2–3, vermelho 4+
+function _seloDiasEtapa(dias) {
+  const n = Math.max(0, Number(dias) || 0);
+  let bg = 'rgba(16,185,129,.15)', cor = 'var(--success)';
+  if (n >= 4) { bg = 'rgba(239,68,68,.15)'; cor = 'var(--danger)'; }
+  else if (n >= 2) { bg = 'rgba(240,180,41,.15)'; cor = 'var(--accent)'; }
+  const txt = n === 0 ? 'hoje' : n === 1 ? '1 dia' : n + ' dias';
+  return `<span style="display:inline-flex;align-items:center;gap:6px;background:${bg};color:${cor};border-radius:12px;padding:3px 10px;font-size:12px;font-weight:700;white-space:nowrap"><span style="width:7px;height:7px;border-radius:4px;background:${cor}"></span>${txt}</span>`;
+}
+function _diasDesde(s) {
+  if (!s) return 0;
+  const d = new Date(String(s).replace(' ', 'T'));
+  if (isNaN(d)) return 0;
+  return Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000));
+}
+
 async function loadTransportadora() {
-  const filtro = document.getElementById('ped-transp-filtro')?.value || 'a_despachar';
+  const sel = document.getElementById('ped-transp-filtro');
+  const ehGestor = window.usuarioLogado && window.usuarioLogado.role === 'gestor';
+  // "Aguardando vendedor" só para o Gestor: a Expedição só vê o que o vendedor liberou
+  const optVend = sel ? sel.querySelector('option[value="aguardando_vendedor"]') : null;
+  if (optVend) optVend.hidden = !ehGestor;
+  let filtro = sel?.value || 'aguardando_nf';
+  if (filtro === 'aguardando_vendedor' && !ehGestor) { filtro = 'aguardando_nf'; if (sel) sel.value = filtro; }
   const busca = (document.getElementById('ped-transp-busca')?.value || '').trim().toLowerCase();
   let rows = await api('/pedidos/');
   const st = p => p.status_efetivo || p.status;
-  let lista;
-  if (filtro === 'a_despachar') lista = rows.filter(p => st(p) === 'produzido');
-  else if (filtro === 'enviado') lista = rows.filter(p => st(p) === 'enviado');
-  else if (filtro === 'entregue') lista = rows.filter(p => st(p) === 'entregue');
-  else lista = rows.filter(p => ['enviado','entregue'].includes(st(p)));
-  if (busca) lista = lista.filter(p => (p.numero_pedido || '').toLowerCase().includes(busca));
-  lista.sort((a,b) => (a.dias_restantes||99) - (b.dias_restantes||99));
+  const mapa = {
+    aguardando_nf: ['aguardando_nf'],
+    aguardando_retirada: ['aguardando_retirada'],
+    aguardando_vendedor: ['produzido'],
+    enviado: ['enviado'],
+    retirado: ['retirado'],
+    entregue: ['entregue'],
+    todos: ['enviado', 'retirado', 'entregue'],
+  };
+  let lista = rows.filter(p => (mapa[filtro] || ['aguardando_nf']).includes(st(p)));
+  if (busca) lista = lista.filter(p =>
+    String(p.numero_pedido || '').toLowerCase().includes(busca) ||
+    String(p.cliente_nome || '').toLowerCase().includes(busca) ||
+    String(p.vendedor_usuario_nome || p.vendedor || '').toLowerCase().includes(busca));
+  // Pendentes: mais antigos na etapa primeiro. Concluídos: mais recentes primeiro.
+  if (['enviado', 'retirado', 'entregue', 'todos'].includes(filtro)) lista.sort((a, b) => String(b.status_desde || '').localeCompare(String(a.status_desde || '')));
+  else lista.sort((a, b) => String(a.status_desde || '').localeCompare(String(b.status_desde || '')));
 
   const resumo = document.getElementById('ped-transp-resumo');
   if (resumo) {
-    const aDesp = rows.filter(p => st(p) === 'produzido').length;
-    const emTransito = rows.filter(p => st(p) === 'enviado').length;
-    resumo.innerHTML = `
-      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 14px;font-size:13px">📦 <strong>${aDesp}</strong> a despachar</div>
-      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 14px;font-size:13px">🚚 <strong>${emTransito}</strong> em trânsito</div>`;
+    const n = s2 => rows.filter(p => st(p) === s2).length;
+    const chip = (txt, qtd, alvo, cor) => `<button type="button" onclick="document.getElementById('ped-transp-filtro').value='${alvo}';loadTransportadora()" style="background:var(--surface2);border:1px solid ${filtro === alvo ? 'var(--accent)' : 'var(--border)'};border-radius:8px;padding:8px 12px;font-size:13px;color:var(--text);cursor:pointer;white-space:nowrap">${txt} <strong style="color:${cor}">${qtd}</strong></button>`;
+    resumo.innerHTML = chip('🧾 Aguardando NF', n('aguardando_nf'), 'aguardando_nf', 'var(--accent)')
+      + chip('🙋 Aguardando retirada', n('aguardando_retirada'), 'aguardando_retirada', 'var(--accent)')
+      + (ehGestor ? chip('⏳ Aguardando vendedor', n('produzido'), 'aguardando_vendedor', 'var(--danger)') : '');
   }
 
   const tbody = document.getElementById('ped-transp-tbody');
   if (!tbody) return;
   if (!lista.length) { tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:24px">Nenhum pedido nesta visão</td></tr>'; return; }
+  const podeDespachar = temPermissao('expedicao', 'despachar');
   tbody.innerHTML = lista.map(p => {
-    const s = st(p);
+    const s2 = st(p);
+    const revPend = p.revenda_pendentes || 0;
+    const btnRevenda = `<button class="btn btn-sm btn-secondary" style="color:var(--warn);border-color:var(--warn)" title="Separe as tampas/revenda antes de concluir" onclick="verDetalhesPedido(${p.id})">⚠ Separar ${revPend} revenda</button>`;
     let acoes = '';
-    if (s === 'produzido' && temPermissao('expedicao','despachar')) {
-      const revPend = p.revenda_pendentes || 0;
-      if (revPend > 0) {
-        acoes = `<button class="btn btn-sm btn-secondary" style="color:var(--warn);border-color:var(--warn)" title="Separe as tampas/revenda antes de liberar para a transportadora" onclick="verDetalhesPedido(${p.id})">⚠ Separar ${revPend} revenda</button>`;
-      } else {
-        acoes = `<button class="btn btn-sm btn-primary" onclick="abrirDespacho(${p.id})">📦 Despachar</button> <button class="btn btn-sm btn-secondary" onclick="confirmarEntrega(${p.id})">✓ Entregue</button>`;
-      }
-    } else if (s === 'enviado' && temPermissao('expedicao','despachar')) {
+    if (s2 === 'aguardando_nf' && podeDespachar) {
+      acoes = revPend > 0 ? btnRevenda : `<button class="btn btn-sm btn-primary" onclick="abrirDespacho(${p.id})">📦 Lançar NF e despachar</button>`;
+    } else if (s2 === 'aguardando_retirada' && podeDespachar) {
+      acoes = revPend > 0 ? btnRevenda : `<button class="btn btn-sm btn-primary" onclick="abrirRetirada(${p.id})">✅ Lançar NF e registrar retirada</button>`;
+    } else if (s2 === 'produzido' && ehGestor) {
+      acoes = `<span style="font-size:12px;color:var(--muted)">aguardando o vendedor</span> <button class="btn btn-sm btn-secondary" title="Exceção do Gestor: despachar sem o vendedor ter definido o frete" onclick="abrirDespacho(${p.id})">📦 Despachar direto</button>`;
+    } else if (s2 === 'enviado' && podeDespachar) {
       acoes = `<button class="btn btn-sm btn-secondary" onclick="verProdutosEnviados(${p.id})">👁 Produtos</button> <button class="btn btn-sm btn-secondary" onclick="abrirDespacho(${p.id})">✏️</button> <button class="btn btn-sm btn-primary" onclick="confirmarEntrega(${p.id})">✓ Entregue</button>`;
+    } else if (['enviado', 'retirado', 'entregue'].includes(s2)) {
+      acoes = `<button class="btn btn-sm btn-secondary" onclick="verProdutosEnviados(${p.id})">👁 Produtos</button>`;
     }
+    const pendente = ['aguardando_nf', 'aguardando_retirada', 'produzido'].includes(s2);
+    let previsao = '—';
+    if (s2 === 'aguardando_retirada') previsao = p.retirada_prevista ? fmtDate(p.retirada_prevista) : '—';
+    else if (p.previsao_entrega) previsao = fmtDate(p.previsao_entrega);
+    const obsV = p.obs_vendedor ? `<div style="font-size:11px;color:var(--muted);max-width:240px" title="Observação do vendedor">💬 ${_escHtml(p.obs_vendedor)}</div>` : '';
     return `<tr>
       <td><strong>${p.numero_pedido}</strong></td>
-      <td>${p.cliente_nome||'—'}</td>
-      <td>${p.transportadora||'—'}</td>
+      <td>${p.cliente_nome||'—'}${obsV}</td>
+      <td>${_escHtml(p.vendedor_usuario_nome || p.vendedor || '—')}</td>
+      <td>${s2 === 'aguardando_retirada' ? '<span style="color:var(--muted)">Cliente retira</span>' : _escHtml(p.transportadora || '—')}</td>
+      <td>${s2 === 'aguardando_retirada' ? '—' : fmtBRL(p.frete || 0)}</td>
+      <td>${previsao}</td>
       <td>${p.nota_fiscal||'—'}</td>
-      <td>${p.rastreio||'—'}</td>
-      <td>${p.volumes||'—'}</td>
-      <td>${p.data_despacho?fmtDate(p.data_despacho):'—'}</td>
-      <td>${fmtBRL(p.frete_pago || 0)}</td>
-      <td><span class="pill ${STATUS_PILL_PED[s]}">${STATUS_LABEL_PED[s]}</span></td>
-      <td class="flex gap-2">${acoes}</td>
+      <td>${pendente ? _seloDiasEtapa(_diasDesde(p.status_desde)) : (p.data_despacho ? fmtDate(p.data_despacho) : '—')}</td>
+      <td><span class="pill ${s2 === 'produzido' ? 'pill-danger' : STATUS_PILL_PED[s2]}">${s2 === 'produzido' ? '⏳ Aguardando vendedor' : STATUS_LABEL_PED[s2]}</span></td>
+      <td class="flex gap-2" style="flex-wrap:wrap">${acoes}</td>
     </tr>`;
   }).join('');
 }
@@ -4785,6 +4826,7 @@ async function abrirDespacho(id) {
   document.getElementById('desp-cabecalho').innerHTML = `
     Pedido: <strong style="color:var(--accent); font-size:16px;">${p.numero_pedido}</strong> — Cliente: <strong style="color:var(--text);">${p.cliente_nome||''}</strong><br>
     Vendedor: <strong style="color:var(--text); font-weight:bold;">${p.vendedor || 'Não informado'}</strong>
+    ${p.envio_definido_em ? `<br><span style="color:var(--muted);font-size:12px">Frete definido por ${_escHtml(p.envio_definido_por || 'vendedor')} em ${fmtDate(String(p.envio_definido_em).slice(0,10))}${p.obs_vendedor ? ' · 💬 ' + _escHtml(p.obs_vendedor) : ''}</span>` : ''}
   `;
   
   document.getElementById('desp-transportadora').value = p.transportadora || '';
@@ -4865,6 +4907,7 @@ async function salvarDespacho() {
   const chkCad = document.getElementById('desp-end-atualizar-cad');
   body.atualizar_cadastro_cliente = !!(chkCad && chkCad.checked);
   if (!body.transportadora) { showAlert('Informe a transportadora', 'danger'); return; }
+  if (!body.nota_fiscal) { showAlert('Informe o número da nota fiscal', 'danger'); return; }
   try {
     await api('/pedidos/' + id + '/despachar', 'POST', body);
     closeModal('modal-despacho');
@@ -4873,6 +4916,40 @@ async function salvarDespacho() {
   } catch(e) { showAlert(e.message, 'danger'); }
 }
 window.salvarDespacho = salvarDespacho;
+
+async function abrirRetirada(id) {
+  let p;
+  try { p = await api('/pedidos/' + id); } catch (e) { showAlert('Erro ao carregar pedido: ' + e.message, 'danger'); return; }
+  document.getElementById('ret-pedido-id').value = id;
+  document.getElementById('ret-cabecalho').innerHTML = `
+    Pedido: <strong style="color:var(--accent); font-size:16px;">${p.numero_pedido}</strong> — Cliente: <strong>${p.cliente_nome || ''}</strong><br>
+    Vendedor: <strong>${p.vendedor || 'Não informado'}</strong>${p.retirada_prevista ? ' · Previsão de retirada: <strong>' + fmtDate(p.retirada_prevista) + '</strong>' : ''}
+    ${p.obs_vendedor ? '<br><span style="color:var(--muted);font-size:12px">💬 ' + _escHtml(p.obs_vendedor) + '</span>' : ''}`;
+  document.getElementById('ret-nf').value = '';
+  document.getElementById('ret-data').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('ret-volumes').value = 1;
+  document.getElementById('ret-obs').value = '';
+  openModal('modal-retirada');
+}
+window.abrirRetirada = abrirRetirada;
+
+async function salvarRetirada() {
+  const id = document.getElementById('ret-pedido-id').value;
+  const body = {
+    nota_fiscal: document.getElementById('ret-nf').value.trim(),
+    data_retirada: document.getElementById('ret-data').value,
+    volumes: parseInt(document.getElementById('ret-volumes').value) || 0,
+    obs: document.getElementById('ret-obs').value.trim()
+  };
+  if (!body.nota_fiscal) { showAlert('Informe o número da nota fiscal', 'danger'); return; }
+  try {
+    await api('/pedidos/' + id + '/retirar', 'POST', body);
+    closeModal('modal-retirada');
+    showAlert('Retirada registrada!');
+    loadTransportadora();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+window.salvarRetirada = salvarRetirada;
 
 async function verProdutosEnviados(id) {
   let p;
@@ -4896,6 +4973,10 @@ async function verProdutosEnviados(id) {
       </table>
     </div>`;
   if (typeof aplicarPermissoesUI === 'function') aplicarPermissoesUI();
+  const btnEd = document.querySelector('#modal-envio-detalhe [onclick="editarEnvioAPartirDoDetalhe()"]');
+  if (btnEd) btnEd.style.display = (p.status === 'enviado' && temPermissao('expedicao', 'despachar')) ? '' : 'none';
+  const btnDf = document.querySelector('#modal-envio-detalhe [onclick="desfazerEnvio()"]');
+  if (btnDf) btnDf.style.display = (['enviado', 'retirado'].includes(p.status) && temPermissao('expedicao', 'desfazer')) ? '' : 'none';
   openModal('modal-envio-detalhe');
 }
 window.verProdutosEnviados = verProdutosEnviados;
@@ -4910,13 +4991,13 @@ window.editarEnvioAPartirDoDetalhe = editarEnvioAPartirDoDetalhe;
 async function desfazerEnvio() {
   const id = document.getElementById('envio-detalhe-pedido-id').value;
   if (!id) return;
-  if (!confirm('Desfazer o envio deste pedido? Ele volta para "A despachar" na fila de expedição, e os dados de transportadora/NF/rastreio serão apagados.')) return;
+  if (!confirm('Desfazer a conclusão deste pedido? Ele volta para a fila da Expedição (Aguardando NF ou Aguardando retirada) e os dados da NF serão apagados.')) return;
   try {
-    await api('/pedidos/' + id + '/desfazer-despacho', 'POST');
-    showAlert('Envio desfeito — pedido voltou para a fila de expedição');
+    const r = await api('/pedidos/' + id + '/desfazer-despacho', 'POST');
+    showAlert(r.mensagem || 'Desfeito — pedido voltou para a fila da Expedição');
     closeModal('modal-envio-detalhe');
     const filtroSel = document.getElementById('ped-transp-filtro');
-    if (filtroSel) filtroSel.value = 'a_despachar';
+    if (filtroSel) filtroSel.value = r.status === 'aguardando_retirada' ? 'aguardando_retirada' : (r.status === 'produzido' ? (window.usuarioLogado && window.usuarioLogado.role === 'gestor' ? 'aguardando_vendedor' : 'aguardando_nf') : 'aguardando_nf');
     loadTransportadora();
   } catch(e) { showAlert(e.message, 'danger'); }
 }
@@ -4971,7 +5052,8 @@ async function loadPedidosEntregues() {
 
   let rows = await api('/pedidos/');
   const st = p => p.status_efetivo || p.status;
-  let lista = rows.filter(p => st(p) === 'entregue');
+  let lista = rows.filter(p => ['entregue', 'retirado'].includes(st(p)))
+    .map(p => st(p) === 'retirado' ? Object.assign({}, p, { data_entrega: p.data_entrega || p.data_despacho }) : p);
 
   if (busca) {
     lista = lista.filter(p => 
@@ -5324,6 +5406,14 @@ function exportarRelatorioTransp(formato) {
 window.exportarRelatorioTransp = exportarRelatorioTransp;
 
 async function loadPedidos_init() {
+  if (window.usuarioLogado && window.usuarioLogado.role === 'expedicao') {
+    ['fila', 'programacao', 'pedidos', 'clientes'].forEach(t => {
+      const b = document.getElementById('ptab-' + t);
+      if (b) b.style.display = 'none';
+    });
+    switchPedidosTab('transportadora');
+    return;
+  }
   await loadFila();
   await checkAlertasPedidos();
   carregarAvisoSemVendedor();
@@ -5604,7 +5694,7 @@ async function loadPedidos() {
   _popularFiltroVendedores(rows, vendF);
 
   // Filtro de situação (usa o status real derivado da produção)
-  if (sit === 'ativos') rows = rows.filter(p => statusDe(p) !== 'entregue');
+  if (sit === 'ativos') rows = rows.filter(p => !['entregue', 'retirado'].includes(statusDe(p)));
   else if (sit) rows = rows.filter(p => statusDe(p) === sit);
 
   // Filtro de marca (marca dos produtos vinculados aos itens)

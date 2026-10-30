@@ -211,7 +211,7 @@ def dashboard(mes: str, incluir_produzidos_enviados: bool = False):
     # isso), mas a regra cobre o caso mesmo assim por segurança.
     filtro_produzido_enviado = "" if incluir_produzidos_enviados else """
         AND (
-            p.status NOT IN ('produzido','enviado')
+            p.status NOT IN ('produzido','aguardando_nf','aguardando_retirada','enviado','retirado')
             OR EXISTS (
                 SELECT 1 FROM pedidos_itens pi
                 JOIN estoque_produtos ep ON pi.produto_id = ep.id

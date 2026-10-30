@@ -35,6 +35,42 @@ def exigir_gestor(current_user: dict):
         raise HTTPException(403, "Acesso restrito ao perfil de Gestor.")
 
 
+# ─── FLUXO PÓS-PRODUÇÃO ──────────────────────────────────────────────────────
+# produzido ──(vendedor)──> aguardando_nf ──(expedição: NF)──> enviado ──> entregue (futuro)
+#           └─(vendedor)──> aguardando_retirada ──(expedição: NF)──> retirado
+STATUS_LIBERADOS = ("aguardando_nf", "aguardando_retirada")
+STATUS_CONCLUIDOS = ("enviado", "retirado", "entregue")
+STATUS_POS_PRODUCAO = ("produzido",) + STATUS_LIBERADOS + STATUS_CONCLUIDOS
+STATUS_VALIDOS_PEDIDO = ["aberto", "em_producao"] + list(STATUS_POS_PRODUCAO)
+
+
+def _nome_usuario(current_user: dict) -> str:
+    return current_user.get("nome") or current_user.get("username") or "sistema"
+
+
+def _marcar_usuario_hist(conn, pedido_id: int, current_user: dict):
+    """Grava quem fez a última mudança de status (o gatilho do banco cria a linha)."""
+    conn.execute("""UPDATE pedidos_status_hist SET usuario = ?
+                    WHERE id = (SELECT MAX(id) FROM pedidos_status_hist WHERE pedido_id = ?)
+                      AND usuario IS NULL""", (_nome_usuario(current_user), pedido_id))
+
+
+def _revenda_pendente(conn, pedido_id: int) -> int:
+    return conn.execute("""
+        SELECT COUNT(*) FROM pedidos_itens i
+        LEFT JOIN estoque_produtos ep ON i.produto_id = ep.id
+        LEFT JOIN estoque_categorias ec ON ep.categoria_id = ec.id
+        WHERE i.pedido_id = ? AND ec.tipo = 'revenda'
+          AND (i.status IS NULL OR i.status != 'entregue')
+    """, (pedido_id,)).fetchone()[0]
+
+
+SQL_VALOR_PEDIDO = """(
+    COALESCE((SELECT SUM(COALESCE(it.quantidade,0) * COALESCE(it.valor_unitario,0) - COALESCE(it.desconto,0))
+              FROM pedidos_itens it WHERE it.pedido_id = p.id), 0)
+    + COALESCE(p.acrescimo,0) + COALESCE(p.frete,0) - COALESCE(p.desconto_global,0))"""
+
+
 class ClienteIn(BaseModel):
     cnpj: Optional[str] = None
     razao_social: str
@@ -1148,6 +1184,8 @@ def _recalc_status_pedido(cur, pedido_id):
         novo = 'entregue'
     elif current_status == 'enviado':
         novo = 'enviado'
+    elif current_status in ('aguardando_nf', 'aguardando_retirada', 'retirado'):
+        novo = current_status
     elif total_prod == 0:
         novo = 'produzido'
     elif produzidos == total_prod:
@@ -1206,7 +1244,7 @@ def listar_pedidos(status: Optional[str] = None, cliente_id: Optional[int] = Non
         entr = d.get("itens_entregues") or 0
         ini_prod = d.get("itens_iniciados") or 0
         stored = d.get("status") or "aberto"
-        if stored in ("enviado", "entregue"):
+        if stored in STATUS_LIBERADOS + STATUS_CONCLUIDOS:
             d["status_efetivo"] = stored
         elif tot > 0 and entr == tot:
             d["status_efetivo"] = "entregue"
@@ -1258,7 +1296,7 @@ def pedidos_sem_vendedor(current_user: dict = Depends(get_current_user)):
             FROM pedidos p
             JOIN pedidos_clientes c ON c.id = p.cliente_id
             WHERE p.vendedor_usuario_id IS NULL
-              AND COALESCE(p.status, 'aberto') NOT IN ('enviado', 'entregue')
+              AND COALESCE(p.status, 'aberto') NOT IN ('enviado', 'retirado', 'entregue')
             ORDER BY p.created_at DESC, p.id DESC
         """).fetchall()
         return [dict(r) for r in rows]
@@ -1299,6 +1337,173 @@ def atribuir_vendedor(id: int, body: AtribuirVendedorIn, current_user: dict = De
         conn.close()
 
 
+# ─── VENDEDOR: MEUS PEDIDOS / DEFINIR ENVIO ─────────────────────────────────
+
+class DefinirEnvioIn(BaseModel):
+    modo: str  # 'transportadora' | 'retirada' | 'voltar'
+    transportadora: Optional[str] = ""
+    frete: Optional[float] = 0
+    previsao_entrega: Optional[str] = ""
+    retirada_prevista: Optional[str] = ""
+    obs_vendedor: Optional[str] = ""
+
+
+class RetiradaIn(BaseModel):
+    nota_fiscal: str
+    data_retirada: Optional[str] = ""
+    volumes: Optional[int] = 0
+    obs: Optional[str] = ""
+
+
+@router.get("/meus")
+def meus_pedidos(current_user: dict = Depends(get_current_user)):
+    """Pedidos do vendedor logado: em andamento + concluídos nos últimos 15 dias,
+    e as novidades (produzido / enviado / retirado) desde o último 'marcar como visto'."""
+    conn = get_conn()
+    try:
+        uid = current_user["id"]
+        rows = conn.execute(f"""
+            SELECT p.id, p.numero_pedido, p.status, p.status_desde, p.prazo_entrega,
+                   p.transportadora, p.frete, p.previsao_entrega, p.retirada_prevista,
+                   p.obs_vendedor, p.nota_fiscal, p.data_despacho, p.envio_definido_em,
+                   c.razao_social AS cliente_nome, c.nome_fantasia,
+                   CAST(julianday('now','localtime') - julianday(p.status_desde) AS INTEGER) AS dias_na_etapa,
+                   julianday(p.prazo_entrega) - julianday('now') AS dias_restantes,
+                   {SQL_VALOR_PEDIDO} AS valor_total,
+                   (SELECT COUNT(*) FROM pedidos_itens i
+                      LEFT JOIN estoque_produtos ep ON i.produto_id = ep.id
+                      LEFT JOIN estoque_categorias ec ON ep.categoria_id = ec.id
+                     WHERE i.pedido_id = p.id AND ec.tipo = 'revenda'
+                       AND (i.status IS NULL OR i.status != 'entregue')) AS revenda_pendentes
+            FROM pedidos p
+            JOIN pedidos_clientes c ON c.id = p.cliente_id
+            WHERE p.vendedor_usuario_id = ?
+              AND (COALESCE(p.status,'aberto') NOT IN ('enviado','retirado','entregue')
+                   OR p.status_desde >= datetime('now','localtime','-15 days'))
+            ORDER BY p.status_desde ASC, p.id ASC
+        """, (uid,)).fetchall()
+        visto = conn.execute("SELECT meus_pedidos_visto_em FROM usuarios WHERE id=?", (uid,)).fetchone()
+        visto_em = visto["meus_pedidos_visto_em"] if visto else None
+        novidades = conn.execute("""
+            SELECT h.id, h.status, h.em, h.usuario, p.id AS pedido_id, p.numero_pedido, p.nota_fiscal,
+                   c.razao_social AS cliente_nome
+            FROM pedidos_status_hist h
+            JOIN pedidos p ON p.id = h.pedido_id
+            JOIN pedidos_clientes c ON c.id = p.cliente_id
+            WHERE p.vendedor_usuario_id = ?
+              AND h.status IN ('produzido','enviado','retirado')
+              AND h.em > COALESCE(?, datetime('now','localtime','-3 days'))
+            ORDER BY h.id DESC
+            LIMIT 30
+        """, (uid, visto_em)).fetchall()
+        return {
+            "pedidos": [dict(r) for r in rows],
+            "novidades": [dict(r) for r in novidades],
+            "visto_em": visto_em,
+        }
+    finally:
+        conn.close()
+
+
+@router.post("/meus/visto")
+def meus_pedidos_visto(current_user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    try:
+        conn.execute("UPDATE usuarios SET meus_pedidos_visto_em = datetime('now','localtime') WHERE id=?",
+                     (current_user["id"],))
+        conn.commit()
+        return {"mensagem": "ok"}
+    finally:
+        conn.close()
+
+
+@router.post("/{id}/definir-envio")
+def definir_envio(id: int, body: DefinirEnvioIn, current_user: dict = Depends(get_current_user)):
+    """Vendedor informa como o pedido produzido vai sair:
+    - transportadora + frete combinado → Aguardando NF (entra na fila da Expedição);
+    - retirada pelo cliente → Aguardando retirada;
+    - voltar → Produzido (desfaz a escolha enquanto a Expedição não concluiu)."""
+    conn = get_conn()
+    try:
+        ped = conn.execute("SELECT id, status, numero_pedido, vendedor_usuario_id FROM pedidos WHERE id=?", (id,)).fetchone()
+        if not ped:
+            raise HTTPException(404, "Pedido não encontrado")
+        eh_gestor = current_user.get("role") == "gestor"
+        if not eh_gestor and ped["vendedor_usuario_id"] != current_user["id"]:
+            raise HTTPException(403, "Só o vendedor deste pedido (ou o Gestor) pode definir o envio.")
+        if ped["status"] not in ("produzido",) + STATUS_LIBERADOS:
+            if ped["status"] in STATUS_CONCLUIDOS:
+                raise HTTPException(400, "Este pedido já foi concluído pela Expedição.")
+            raise HTTPException(400, "O pedido ainda não foi produzido.")
+        usuario = _nome_usuario(current_user)
+        modo = (body.modo or "").strip().lower()
+        if modo == "transportadora":
+            transp = (body.transportadora or "").strip()
+            if not transp:
+                raise HTTPException(400, "Informe a transportadora.")
+            conn.execute("""UPDATE pedidos SET status='aguardando_nf', transportadora=?, frete=?,
+                            previsao_entrega=?, retirada_prevista=NULL, obs_vendedor=?,
+                            envio_definido_em=datetime('now','localtime'), envio_definido_por=?
+                            WHERE id=?""",
+                         (transp, float(body.frete or 0), (body.previsao_entrega or "").strip(),
+                          (body.obs_vendedor or "").strip(), usuario, id))
+            novo = "aguardando_nf"
+        elif modo == "retirada":
+            conn.execute("""UPDATE pedidos SET status='aguardando_retirada', transportadora=NULL, frete=0,
+                            previsao_entrega=NULL, retirada_prevista=?, obs_vendedor=?,
+                            envio_definido_em=datetime('now','localtime'), envio_definido_por=?
+                            WHERE id=?""",
+                         ((body.retirada_prevista or "").strip() or None, (body.obs_vendedor or "").strip(), usuario, id))
+            novo = "aguardando_retirada"
+        elif modo == "voltar":
+            conn.execute("""UPDATE pedidos SET status='produzido', transportadora=NULL, frete=0,
+                            previsao_entrega=NULL, retirada_prevista=NULL,
+                            envio_definido_em=NULL, envio_definido_por=NULL WHERE id=?""", (id,))
+            novo = "produzido"
+        else:
+            raise HTTPException(400, "Modo inválido. Use 'transportadora', 'retirada' ou 'voltar'.")
+        _marcar_usuario_hist(conn, id, current_user)
+        conn.commit()
+        msgs = {"aguardando_nf": "Enviado para a Expedição (aguardando NF)",
+                "aguardando_retirada": "Enviado para a Expedição (aguardando retirada)",
+                "produzido": "Pedido voltou para aguardando vendedor"}
+        return {"mensagem": msgs[novo], "status": novo}
+    finally:
+        conn.close()
+
+
+@router.post("/{id}/retirar")
+def registrar_retirada(id: int, body: RetiradaIn, current_user: dict = Depends(get_current_user)):
+    """Expedição lança a NF e conclui a retirada pelo cliente."""
+    exigir_permissao("expedicao", "despachar", current_user)
+    conn = get_conn()
+    try:
+        ped = conn.execute("SELECT id, status FROM pedidos WHERE id=?", (id,)).fetchone()
+        if not ped:
+            raise HTTPException(404, "Pedido não encontrado")
+        permitidos = ("aguardando_retirada",)
+        if current_user.get("role") == "gestor":
+            permitidos = permitidos + ("produzido",)
+        if ped["status"] not in permitidos:
+            raise HTTPException(400, "Este pedido não está aguardando retirada.")
+        if not (body.nota_fiscal or "").strip():
+            raise HTTPException(400, "Informe o número da nota fiscal.")
+        pend = _revenda_pendente(conn, id)
+        if pend > 0:
+            raise HTTPException(400, f"Ha {pend} item(ns) de revenda/tampa pendente(s) de separacao. Separe antes de liberar a retirada.")
+        data_ret = (body.data_retirada or "").strip() or datetime.datetime.now().strftime("%Y-%m-%d")
+        conn.execute("""UPDATE pedidos SET status='retirado', nota_fiscal=?, volumes=?, obs_envio=?,
+                        data_despacho=?, transportadora=COALESCE(NULLIF(transportadora,''),'Retirada pelo cliente'),
+                        concluido_por=? WHERE id=?""",
+                     (body.nota_fiscal.strip(), int(body.volumes or 0), (body.obs or "").strip(),
+                      data_ret, _nome_usuario(current_user), id))
+        _marcar_usuario_hist(conn, id, current_user)
+        conn.commit()
+        return {"mensagem": "Retirada registrada", "status": "retirado"}
+    finally:
+        conn.close()
+
+
 @router.get("/alertas/resumo")
 def alertas_pedidos():
     conn = get_conn()
@@ -1309,7 +1514,7 @@ def alertas_pedidos():
     # pedidos que na prática não têm mais nada pendente.
     filtro_produzido_enviado = """
         AND (
-            p.status NOT IN ('produzido','enviado')
+            p.status NOT IN ('produzido','aguardando_nf','aguardando_retirada','enviado','retirado')
             OR EXISTS (
                 SELECT 1 FROM pedidos_itens pi
                 JOIN estoque_produtos ep ON pi.produto_id = ep.id
@@ -1370,7 +1575,7 @@ def fila_producao(status: Optional[str] = None):
         JOIN pedidos_clientes c ON p.cliente_id = c.id
         LEFT JOIN estoque_produtos ep ON i.produto_id = ep.id
         LEFT JOIN estoque_categorias ec ON ep.categoria_id = ec.id
-        WHERE p.status NOT IN ('produzido', 'enviado', 'entregue')
+        WHERE p.status NOT IN ('produzido', 'aguardando_nf', 'aguardando_retirada', 'enviado', 'retirado', 'entregue')
           AND (ec.tipo IS NULL OR ec.tipo != 'revenda')
           AND p.id IN (
               SELECT i2.pedido_id
@@ -1783,17 +1988,32 @@ class EntregaIn(BaseModel):
 
 @router.post("/{id}/despachar")
 def despachar_pedido(id: int, body: DespachoIn, current_user: dict = Depends(get_current_user)):
+    """Expedição lança a NF e conclui o envio por transportadora.
+    Só vale para pedido liberado pelo vendedor (Aguardando NF) ou para corrigir
+    um já enviado. O Gestor pode despachar direto um Produzido, como exceção."""
     exigir_permissao("expedicao", "despachar", current_user)
     data_desp = (body.data_despacho or "").strip() or datetime.datetime.now().strftime("%Y-%m-%d")
     conn = get_conn()
+    ped = conn.execute("SELECT id, status FROM pedidos WHERE id=?", (id,)).fetchone()
+    if not ped:
+        conn.close()
+        raise HTTPException(404, "Pedido não encontrado")
+    permitidos = ("aguardando_nf", "enviado")
+    if current_user.get("role") == "gestor":
+        permitidos = permitidos + ("produzido",)
+    if ped["status"] not in permitidos:
+        conn.close()
+        if ped["status"] == "produzido":
+            raise HTTPException(400, "Este pedido ainda aguarda o vendedor informar a transportadora e o frete.")
+        raise HTTPException(400, "Este pedido não está liberado para despacho.")
+    if not (body.nota_fiscal or "").strip():
+        conn.close()
+        raise HTTPException(400, "Informe o número da nota fiscal.")
+    if not (body.transportadora or "").strip():
+        conn.close()
+        raise HTTPException(400, "Informe a transportadora.")
     # Bloqueia despacho se houver itens de revenda (tampas) ainda nao separados
-    pend = conn.execute("""
-        SELECT COUNT(*) FROM pedidos_itens i
-        LEFT JOIN estoque_produtos ep ON i.produto_id = ep.id
-        LEFT JOIN estoque_categorias ec ON ep.categoria_id = ec.id
-        WHERE i.pedido_id = ? AND ec.tipo = 'revenda'
-          AND (i.status IS NULL OR i.status != 'entregue')
-    """, (id,)).fetchone()[0]
+    pend = _revenda_pendente(conn, id)
     if pend > 0:
         conn.close()
         raise HTTPException(400, f"Ha {pend} item(ns) de revenda/tampa pendente(s) de separacao. Separe antes de despachar.")
@@ -1805,6 +2025,9 @@ def despachar_pedido(id: int, body: DespachoIn, current_user: dict = Depends(get
          (body.rastreio or "").strip(), int(body.volumes or 0),
          (body.previsao_entrega or "").strip(), float(body.frete or 0), float(body.frete_pago or 0),
          (body.obs_envio or "").strip(), data_desp, id))
+    if ped["status"] != "enviado":
+        conn.execute("UPDATE pedidos SET concluido_por=? WHERE id=?", (_nome_usuario(current_user), id))
+        _marcar_usuario_hist(conn, id, current_user)
 
     campos_end = ("cep", "logradouro", "numero", "complemento", "bairro", "cidade", "uf")
     if any(getattr(body, "entrega_" + c) is not None for c in campos_end):
@@ -1836,45 +2059,66 @@ def confirmar_entrega(id: int, body: EntregaIn, current_user: dict = Depends(get
     exigir_permissao("expedicao", "despachar", current_user)
     data_ent = (body.data_entrega or "").strip() or datetime.datetime.now().strftime("%Y-%m-%d")
     conn = get_conn()
+    ped = conn.execute("SELECT status FROM pedidos WHERE id=?", (id,)).fetchone()
+    if not ped:
+        conn.close()
+        raise HTTPException(404, "Pedido não encontrado")
+    if ped["status"] != "enviado" and current_user.get("role") != "gestor":
+        conn.close()
+        raise HTTPException(400, "Só pedidos enviados podem ser confirmados como entregues.")
     conn.execute("UPDATE pedidos SET status='entregue', data_entrega=? WHERE id=?", (data_ent, id))
+    _marcar_usuario_hist(conn, id, current_user)
     conn.execute("UPDATE pedidos_itens SET status='entregue' WHERE pedido_id=?", (id,))
     conn.commit(); conn.close()
     return {"mensagem": "Entrega confirmada", "status": "entregue"}
 
 @router.post("/{id}/desfazer-despacho")
 def desfazer_despacho(id: int, current_user: dict = Depends(get_current_user)):
-    """Desfaz o despacho de um pedido 'enviado', limpando os dados de envio e
-    voltando o status para 'produzido' — o pedido reaparece na fila de
-    expedição como 'a despachar', pronto pra ser reenviado."""
+    """Desfaz a conclusão feita pela Expedição:
+    - enviado  → volta para Aguardando NF (mantém transportadora/frete do vendedor);
+    - retirado → volta para Aguardando retirada.
+    Pedidos despachados antes do fluxo novo (sem frete definido pelo vendedor)
+    voltam para Produzido, como era antes."""
     exigir_permissao("expedicao", "desfazer", current_user)
     conn = get_conn()
-    ped = conn.execute("SELECT id, status, numero_pedido FROM pedidos WHERE id=?", (id,)).fetchone()
+    ped = conn.execute("SELECT id, status, numero_pedido, envio_definido_em FROM pedidos WHERE id=?", (id,)).fetchone()
     if not ped:
         conn.close()
         raise HTTPException(404, "Pedido não encontrado")
-    if ped["status"] != "enviado":
+    if ped["status"] not in ("enviado", "retirado"):
         conn.close()
-        raise HTTPException(400, "Só é possível desfazer o envio de pedidos com status 'enviado'")
-    conn.execute("""UPDATE pedidos SET status='produzido', transportadora=NULL, nota_fiscal=NULL,
-                    rastreio=NULL, volumes=NULL, frete=0, frete_pago=0, obs_envio=NULL,
-                    data_despacho=NULL, previsao_entrega=NULL WHERE id=?""", (id,))
-    usuario = current_user.get("nome") or current_user.get("username") or "sistema"
+        raise HTTPException(400, "Só é possível desfazer pedidos enviados ou retirados.")
+    if ped["status"] == "retirado":
+        novo = "aguardando_retirada"
+        conn.execute("""UPDATE pedidos SET status=?, nota_fiscal=NULL, volumes=NULL, obs_envio=NULL,
+                        data_despacho=NULL, concluido_por=NULL WHERE id=?""", (novo, id))
+    elif ped["envio_definido_em"]:
+        novo = "aguardando_nf"
+        conn.execute("""UPDATE pedidos SET status=?, nota_fiscal=NULL, rastreio=NULL, volumes=NULL,
+                        frete_pago=0, obs_envio=NULL, data_despacho=NULL, concluido_por=NULL WHERE id=?""", (novo, id))
+    else:
+        novo = "produzido"
+        conn.execute("""UPDATE pedidos SET status=?, transportadora=NULL, nota_fiscal=NULL,
+                        rastreio=NULL, volumes=NULL, frete=0, frete_pago=0, obs_envio=NULL,
+                        data_despacho=NULL, previsao_entrega=NULL, concluido_por=NULL WHERE id=?""", (novo, id))
+    _marcar_usuario_hist(conn, id, current_user)
     conn.execute("""INSERT INTO auditoria (usuario, acao, entidade, entidade_id, descricao, valor_anterior, valor_novo)
-                   VALUES (?, 'desfazer_despacho', 'pedidos', ?, ?, 'enviado', 'produzido')""",
-                (usuario, id, f"Envio desfeito do pedido '{ped['numero_pedido']}'"))
+                   VALUES (?, 'desfazer_despacho', 'pedidos', ?, ?, ?, ?)""",
+                (_nome_usuario(current_user), id, f"Conclusão desfeita do pedido '{ped['numero_pedido']}'", ped["status"], novo))
     conn.commit()
     conn.close()
-    return {"mensagem": "Envio desfeito, pedido voltou para a fila de expedição", "status": "produzido"}
+    return {"mensagem": "Desfeito — o pedido voltou para a fila da Expedição", "status": novo}
 
 @router.put("/{id}/status")
 def atualizar_status_pedido(id: int, body: StatusItemIn, current_user: dict = Depends(get_current_user)):
-    validos = ["aberto", "em_producao", "produzido", "enviado", "entregue"]
+    validos = STATUS_VALIDOS_PEDIDO
     if body.status not in validos:
         raise HTTPException(400, f"Status inválido. Use: {validos}")
-    if body.status in ("enviado", "entregue"):
-        exigir_permissao("expedicao", "despachar", current_user)
+    if body.status in STATUS_LIBERADOS + STATUS_CONCLUIDOS:
+        exigir_gestor(current_user)
     conn = get_conn()
     conn.execute("UPDATE pedidos SET status=? WHERE id=?", (body.status, id))
+    _marcar_usuario_hist(conn, id, current_user)
     conn.commit()
     conn.close()
     return {"mensagem": "Status atualizado"}

@@ -576,7 +576,7 @@ def saldo_vs_demanda(categoria_id: Optional[int] = None):
             SELECT 
                 COALESCE(SUM(CASE WHEN ped.status = 'aberto' THEN pi.quantidade - pi.qtd_produzida ELSE 0 END), 0) as qtd_aberto,
                 COALESCE(SUM(CASE WHEN ped.status = 'em_producao' THEN pi.quantidade - pi.qtd_produzida ELSE 0 END), 0) as qtd_em_producao,
-                COALESCE(SUM(CASE WHEN ped.status IN ('produzido','enviado') THEN pi.quantidade - pi.qtd_produzida ELSE 0 END), 0) as qtd_aguardando_separacao,
+                COALESCE(SUM(CASE WHEN ped.status IN ('produzido','aguardando_nf','aguardando_retirada','enviado','retirado') THEN pi.quantidade - pi.qtd_produzida ELSE 0 END), 0) as qtd_aguardando_separacao,
                 COALESCE(SUM(pi.quantidade - pi.qtd_produzida), 0) as total_demanda
             FROM pedidos_itens pi
             JOIN pedidos ped ON pi.pedido_id = ped.id

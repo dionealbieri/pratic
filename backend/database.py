@@ -1522,7 +1522,72 @@ def init_db():
     conn.commit()
     _migrar_expedicao_e_vendedores(conn)
     conn.commit()
+    _migrar_fluxo_expedicao(conn)
+    conn.commit()
     conn.close()
+
+
+def _migrar_fluxo_expedicao(conn):
+    """Fase 2 — fluxo Produzido → (vendedor) → Aguardando NF / Aguardando retirada
+    → (expedição) → Enviado / Retirado. Idempotente.
+
+    - pedidos.status_desde: quando o pedido entrou no status atual (dias parados).
+    - pedidos_status_hist: histórico de cada mudança de status (alimenta os avisos
+      do vendedor e, depois, o painel do gestor).
+    - Gatilhos no banco mantêm os dois atualizados em QUALQUER mudança de status,
+      venha de onde vier (produção, despacho, edição...).
+    - Pedidos que já existiam começam a contar a partir da atualização.
+    """
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(pedidos)").fetchall()]
+    novas = [
+        ("status_desde", "TEXT"),
+        ("retirada_prevista", "TEXT"),
+        ("obs_vendedor", "TEXT"),
+        ("envio_definido_em", "TEXT"),
+        ("envio_definido_por", "TEXT"),
+        ("concluido_por", "TEXT"),
+    ]
+    for c, t in novas:
+        if c not in cols:
+            conn.execute(f"ALTER TABLE pedidos ADD COLUMN {c} {t}")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS pedidos_status_hist (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pedido_id INTEGER NOT NULL,
+            status_anterior TEXT,
+            status TEXT,
+            usuario TEXT,
+            em TEXT DEFAULT (datetime('now','localtime'))
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_status_hist_pedido ON pedidos_status_hist(pedido_id, id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_status_hist_em ON pedidos_status_hist(em)")
+
+    conn.execute("""
+        CREATE TRIGGER IF NOT EXISTS trg_pedidos_status_upd
+        AFTER UPDATE OF status ON pedidos
+        WHEN COALESCE(OLD.status, '') <> COALESCE(NEW.status, '')
+        BEGIN
+            UPDATE pedidos SET status_desde = datetime('now','localtime') WHERE id = NEW.id;
+            INSERT INTO pedidos_status_hist (pedido_id, status_anterior, status)
+            VALUES (NEW.id, OLD.status, NEW.status);
+        END
+    """)
+    conn.execute("""
+        CREATE TRIGGER IF NOT EXISTS trg_pedidos_status_ins
+        AFTER INSERT ON pedidos
+        BEGIN
+            UPDATE pedidos SET status_desde = datetime('now','localtime')
+            WHERE id = NEW.id AND status_desde IS NULL;
+        END
+    """)
+    conn.execute("UPDATE pedidos SET status_desde = datetime('now','localtime') WHERE status_desde IS NULL")
+
+    cols_usr = [r[1] for r in conn.execute("PRAGMA table_info(usuarios)").fetchall()]
+    if "meus_pedidos_visto_em" not in cols_usr:
+        conn.execute("ALTER TABLE usuarios ADD COLUMN meus_pedidos_visto_em TEXT")
+    conn.commit()
 
 
 def _migrar_expedicao_e_vendedores(conn):

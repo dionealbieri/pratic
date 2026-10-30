@@ -68,15 +68,22 @@
 
   <!-- ── TAB PEDIDOS ── -->
   <div id="tab-pedidos">
+    <div id="mp-novidades"></div>
     <div class="cards-grid" id="com-cards"></div>
+    <div id="mp-secoes"></div>
 
+    <div class="section-title" style="margin-top:8px">Todos os meus pedidos</div>
     <div class="flex items-center justify-between mb-4">
-      <div class="flex gap-2 items-center">
-        <select id="com-filtro-status" onchange="loadPedidosCom()" style="min-width:160px">
+      <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+        <select id="com-filtro-status" onchange="loadPedidosCom()" style="min-width:180px">
           <option value="">Todos os status</option>
           <option value="aberto">Aberto</option>
           <option value="em_producao">Em produção</option>
-          <option value="produzido">Produzido</option>
+          <option value="produzido">Aguardando vendedor</option>
+          <option value="aguardando_nf">Aguardando NF</option>
+          <option value="aguardando_retirada">Aguardando retirada</option>
+          <option value="enviado">Enviado</option>
+          <option value="retirado">Retirado</option>
           <option value="entregue">Entregue</option>
         </select>
         <input type="text" id="com-busca" placeholder="Buscar pedido..." oninput="loadPedidosCom()" style="min-width:200px">
@@ -189,6 +196,36 @@
   </div>
 </div>
 
+<!-- MODAL: COMO O PEDIDO VAI SAIR (vendedor) -->
+<div class="modal-overlay" id="modal-mp-envio">
+  <div class="modal" style="max-width:600px">
+    <div class="modal-title">Como este pedido vai sair?</div>
+    <input type="hidden" id="mp-envio-id">
+    <div id="mp-envio-cab" style="font-size:14px;margin-bottom:14px;background:rgba(255,255,255,0.05);padding:10px 12px;border-radius:8px;border-left:4px solid var(--accent);line-height:1.6"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
+      <button type="button" class="btn btn-secondary" id="mp-modo-transportadora" onclick="mpEscolherModo('transportadora')">🚚 Transportadora</button>
+      <button type="button" class="btn btn-secondary" id="mp-modo-retirada" onclick="mpEscolherModo('retirada')">🙋 Cliente retira</button>
+    </div>
+    <div id="mp-campos-transportadora" class="form-grid">
+      <div class="form-group" style="grid-column:1/-1"><label>Transportadora escolhida</label><input type="text" id="mp-transportadora" list="mp-transp-list" placeholder="Ex.: Braspress, Jamef..."><datalist id="mp-transp-list"></datalist></div>
+      <div class="form-group"><label>Valor do frete combinado (R$)</label><input type="number" id="mp-frete" min="0" step="0.01" value="0"></div>
+      <div class="form-group"><label>Previsão de entrega</label><input type="date" id="mp-previsao"></div>
+    </div>
+    <div id="mp-campos-retirada" class="form-grid" style="display:none">
+      <div class="form-group"><label>Previsão de retirada <span style="color:var(--muted);font-weight:400">(opcional)</span></label><input type="date" id="mp-retirada-prevista"></div>
+    </div>
+    <div class="form-group" style="margin-top:4px"><label>Observação para a Expedição <span style="color:var(--muted);font-weight:400">(opcional)</span></label><textarea id="mp-obs" rows="2" placeholder="Ex.: frete já combinado com o cliente; cliente vem pela manhã..."></textarea></div>
+    <div id="mp-envio-rodape" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
+    <div class="modal-footer" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
+      <button type="button" class="btn btn-secondary" id="mp-btn-voltar" onclick="mpVoltarAguardando()" style="display:none">↺ Voltar para aguardando vendedor</button>
+      <div style="display:flex;gap:8px;margin-left:auto">
+        <button class="btn btn-secondary" onclick="closeModal('modal-mp-envio')">Cancelar</button>
+        <button class="btn btn-primary" onclick="mpSalvarEnvio()">Enviar para a Expedição</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL DETALHE PEDIDO -->
 <div class="modal-overlay" id="modal-com-detalhe">
   <div class="modal" style="max-width:740px">
@@ -268,6 +305,7 @@
       <strong style="color:var(--accent); display:block; margin:14px 0 6px">🧾 Gestão de Pedidos:</strong>
       <ul style="padding-left:20px; margin-bottom:12px">
         <li><strong>Visualizar Pedidos:</strong> Na aba "Meus Pedidos", você acompanha a listagem geral com prazos, dias restantes para entrega e status atualizado (Aberto, Em produção, Produzido, Entregue).</li>
+        <li><strong>Aguardando você:</strong> quando um pedido seu fica produzido, ele aparece no topo da aba. Clique em <strong>Informar frete</strong> (transportadora e valor combinado com o cliente) ou em <strong>Cliente retira</strong>. O pedido vai para a fila da Expedição, que lança a nota fiscal e conclui.</li>
         <li><strong>Filtros e Busca:</strong> Use o seletor de status ou o campo de busca para encontrar pedidos por número ou cliente em tempo real.</li>
       </ul>
 
@@ -311,6 +349,18 @@ const STATUS_LABEL = {
 const STATUS_PILL = {
   aberto: 'pill-info', em_producao: 'pill-warn',
   produzido: 'pill-success', entregue: 'pill-success'
+};
+// Status do PEDIDO (os itens continuam usando STATUS_LABEL acima)
+const STATUS_LABEL_PEDIDO = {
+  aberto: '📋 Aberto', em_producao: '🏭 Em produção',
+  produzido: '⏳ Aguardando vendedor', aguardando_nf: '🧾 Aguardando NF',
+  aguardando_retirada: '🙋 Aguardando retirada', enviado: '🚚 Enviado',
+  retirado: '✅ Retirado', entregue: '📦 Entregue'
+};
+const STATUS_PILL_PEDIDO = {
+  aberto: 'pill-info', em_producao: 'pill-warn', produzido: 'pill-danger',
+  aguardando_nf: 'pill-warn', aguardando_retirada: 'pill-warn',
+  enviado: 'pill-info', retirado: 'pill-success', entregue: 'pill-success'
 };
 const STATUS_NEXT = {
   aberto: 'em_producao', em_producao: 'produzido', produzido: 'entregue', entregue: null
@@ -375,19 +425,221 @@ document.querySelectorAll('.modal-overlay').forEach(m => {
   m.addEventListener('click', e => { if (e.target === m) m.classList.remove('open'); });
 });
 
-// ── CARDS
-async function loadCards() {
+// ── MEUS PEDIDOS (fluxo pós-produção)
+let mpDados = { pedidos: [], novidades: [] };
+let mpModo = 'transportadora';
+
+function esc(v) {
+  return String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+function fmtBRL(v) { return 'R$ ' + (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function fmtDataHora(s) {
+  if (!s) return '';
+  const [d, h] = String(s).split(' ');
+  return fmtDate(d) + (h ? ' ' + h.slice(0, 5) : '');
+}
+function hojeISO() { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
+
+// Selo de tempo parado: verde até 1 dia, amarelo 2–3, vermelho 4+
+function seloDias(dias, textoForcado) {
+  const n = Math.max(0, Number(dias) || 0);
+  let bg = 'rgba(16,185,129,.15)', cor = 'var(--success)';
+  if (n >= 4) { bg = 'rgba(239,68,68,.15)'; cor = 'var(--danger)'; }
+  else if (n >= 2) { bg = 'rgba(240,180,41,.15)'; cor = 'var(--accent)'; }
+  const txt = textoForcado || (n === 0 ? 'hoje' : n === 1 ? '1 dia' : n + ' dias');
+  return `<span style="display:inline-flex;align-items:center;gap:6px;background:${bg};color:${cor};border-radius:12px;padding:3px 10px;font-size:12px;font-weight:700;white-space:nowrap"><span style="width:7px;height:7px;border-radius:4px;background:${cor}"></span>${txt}</span>`;
+}
+
+async function loadCards() { await loadMeusPedidos(); }
+
+async function loadMeusPedidos() {
   try {
-    const al = await req('/pedidos/alertas/resumo');
-    const rows = await req('/pedidos/');
-    const entregues = rows.filter(p => p.status === 'entregue').length;
-    document.getElementById('com-cards').innerHTML = `
-      <div class="card"><div class="card-label">Total de Pedidos</div><div class="card-value accent">${rows.length}</div></div>
-      <div class="card"><div class="card-label">Em Aberto</div><div class="card-value info">${al.em_aberto}</div></div>
-      <div class="card"><div class="card-label">Vencidos</div><div class="card-value danger">${al.vencidos}</div></div>
-      <div class="card"><div class="card-label">Entregues</div><div class="card-value success">${entregues}</div></div>
-    `;
-  } catch(e) {}
+    mpDados = await req('/pedidos/meus') || { pedidos: [], novidades: [] };
+  } catch (e) {
+    mpDados = { pedidos: [], novidades: [] };
+  }
+  renderNovidades();
+  renderCardsMeus();
+  renderSecoesMeus();
+}
+
+function renderNovidades() {
+  const el = document.getElementById('mp-novidades');
+  if (!el) return;
+  const nov = mpDados.novidades || [];
+  if (!nov.length) { el.innerHTML = ''; return; }
+  const frase = n => {
+    if (n.status === 'produzido') return `ficou <strong>produzido</strong> — defina o frete ou a retirada`;
+    if (n.status === 'enviado') return `foi <strong>despachado</strong>${n.nota_fiscal ? ' · NF ' + esc(n.nota_fiscal) : ''}`;
+    if (n.status === 'retirado') return `foi <strong>retirado</strong> pelo cliente${n.nota_fiscal ? ' · NF ' + esc(n.nota_fiscal) : ''}`;
+    return esc(n.status);
+  };
+  el.innerHTML = `<div style="background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.45);border-radius:10px;padding:12px 16px;margin-bottom:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+      <strong style="color:var(--accent2)">🔔 Desde seu último acesso (${nov.length})</strong>
+      <button class="btn btn-sm btn-secondary" onclick="mpMarcarVisto()">Marcar como visto</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px;font-size:13px;max-height:150px;overflow-y:auto">
+      ${nov.map(n => `<div>Pedido <strong>${esc(n.numero_pedido)}</strong> <span style="color:var(--muted)">(${esc(n.cliente_nome)})</span> ${frase(n)} <span style="color:var(--muted)">· ${fmtDataHora(n.em)}</span></div>`).join('')}
+    </div>
+  </div>`;
+}
+
+async function mpMarcarVisto() {
+  try { await req('/pedidos/meus/visto', 'POST'); } catch (e) {}
+  mpDados.novidades = [];
+  renderNovidades();
+}
+
+function renderCardsMeus() {
+  const ps = mpDados.pedidos || [];
+  const aguardando = ps.filter(p => p.status === 'produzido');
+  const retirada = ps.filter(p => p.status === 'aguardando_retirada');
+  const expedicao = ps.filter(p => p.status === 'aguardando_nf');
+  const naoFaturado = ps.filter(p => ['produzido', 'aguardando_nf', 'aguardando_retirada'].includes(p.status))
+                        .reduce((a, p) => a + (Number(p.valor_total) || 0), 0);
+  document.getElementById('com-cards').innerHTML = `
+    <div class="card" style="${aguardando.length ? 'border-color:var(--accent)' : ''}"><div class="card-label">Aguardando você</div><div class="card-value ${aguardando.length ? 'danger' : 'success'}">${aguardando.length}</div><div style="font-size:12px;color:var(--muted)">produzidos sem frete/retirada definidos</div></div>
+    <div class="card"><div class="card-label">Aguardando retirada</div><div class="card-value accent">${retirada.length}</div><div style="font-size:12px;color:var(--muted)">cliente vai buscar</div></div>
+    <div class="card"><div class="card-label">Com a Expedição</div><div class="card-value info">${expedicao.length}</div><div style="font-size:12px;color:var(--muted)">aguardando NF</div></div>
+    <div class="card"><div class="card-label">Pronto e não faturado</div><div class="card-value accent" style="font-size:22px">${fmtBRL(naoFaturado)}</div><div style="font-size:12px;color:var(--muted)">soma dos pedidos acima</div></div>`;
+}
+
+function _tabelaSecao(titulo, badge, cabecalho, linhas, vazio) {
+  return `<div class="table-wrap" style="margin-bottom:18px">
+    <div class="table-head"><span class="table-head-title">${titulo}${badge != null ? ` <span style="font-size:12px;background:var(--surface2);border-radius:10px;padding:2px 8px;margin-left:6px">${badge}</span>` : ''}</span></div>
+    <div style="overflow-x:auto"><table>
+      <thead><tr>${cabecalho.map(h => `<th>${h}</th>`).join('')}</tr></thead>
+      <tbody>${linhas.length ? linhas.join('') : `<tr><td colspan="${cabecalho.length}" style="text-align:center;color:var(--muted);padding:20px">${vazio}</td></tr>`}</tbody>
+    </table></div>
+  </div>`;
+}
+
+function renderSecoesMeus() {
+  const el = document.getElementById('mp-secoes');
+  if (!el) return;
+  const ps = mpDados.pedidos || [];
+  const aguardando = ps.filter(p => p.status === 'produzido');
+  const retirada = ps.filter(p => p.status === 'aguardando_retirada');
+  const expedicao = ps.filter(p => p.status === 'aguardando_nf');
+  const concluidos = ps.filter(p => ['enviado', 'retirado', 'entregue'].includes(p.status)).slice().reverse();
+  const tampas = p => (p.revenda_pendentes || 0) > 0 ? `<div style="font-size:11px;color:var(--warn)">⚠ ${p.revenda_pendentes} item(ns) de revenda a separar</div>` : '';
+
+  let html = _tabelaSecao('⏳ Aguardando você — defina como o pedido vai sair', aguardando.length,
+    ['Pedido', 'Cliente', 'Produzido há', 'Valor', ''],
+    aguardando.map(p => `<tr>
+      <td><strong>${esc(p.numero_pedido)}</strong></td>
+      <td>${esc(p.cliente_nome)}${tampas(p)}</td>
+      <td>${seloDias(p.dias_na_etapa)}</td>
+      <td>${fmtBRL(p.valor_total)}</td>
+      <td style="white-space:nowrap;text-align:right">
+        <button class="btn btn-sm btn-primary" onclick="mpAbrirEnvio(${p.id},'transportadora')">🚚 Informar frete</button>
+        <button class="btn btn-sm btn-secondary" onclick="mpAbrirEnvio(${p.id},'retirada')">🙋 Cliente retira</button>
+      </td></tr>`),
+    '✅ Nenhum pedido aguardando você');
+
+  if (retirada.length) html += _tabelaSecao('🙋 Aguardando retirada do cliente', retirada.length,
+    ['Pedido', 'Cliente', 'Previsão', 'Parado', ''],
+    retirada.map(p => {
+      const vencida = p.retirada_prevista && p.retirada_prevista < hojeISO();
+      return `<tr>
+        <td><strong>${esc(p.numero_pedido)}</strong></td>
+        <td>${esc(p.cliente_nome)}${tampas(p)}</td>
+        <td style="${vencida ? 'color:var(--danger);font-weight:700' : ''}">${p.retirada_prevista ? fmtDate(p.retirada_prevista) + (vencida ? ' · vencida' : '') : '—'}</td>
+        <td>${vencida ? seloDias(99, (p.dias_na_etapa || 0) + ' dias') : seloDias(p.retirada_prevista ? 0 : p.dias_na_etapa, p.retirada_prevista ? 'no prazo' : null)}</td>
+        <td style="text-align:right"><button class="btn btn-sm btn-secondary" onclick="mpAbrirEnvio(${p.id},'retirada')">✏️ Alterar</button></td>
+      </tr>`;
+    }), '');
+
+  if (expedicao.length) html += _tabelaSecao('🧾 Com a Expedição — aguardando NF', expedicao.length,
+    ['Pedido', 'Cliente', 'Transportadora', 'Frete', 'Aguardando há', ''],
+    expedicao.map(p => `<tr>
+      <td><strong>${esc(p.numero_pedido)}</strong></td>
+      <td>${esc(p.cliente_nome)}${tampas(p)}</td>
+      <td>${esc(p.transportadora || '—')}</td>
+      <td>${fmtBRL(p.frete)}</td>
+      <td>${seloDias(p.dias_na_etapa)}</td>
+      <td style="text-align:right"><button class="btn btn-sm btn-secondary" onclick="mpAbrirEnvio(${p.id},'transportadora')">✏️ Alterar</button></td>
+    </tr>`), '');
+
+  if (concluidos.length) html += _tabelaSecao('✅ Concluídos nos últimos 15 dias', concluidos.length,
+    ['Pedido', 'Cliente', 'Saída', 'NF', 'Data'],
+    concluidos.map(p => `<tr>
+      <td><strong>${esc(p.numero_pedido)}</strong></td>
+      <td>${esc(p.cliente_nome)}</td>
+      <td><span class="pill ${STATUS_PILL_PEDIDO[p.status] || ''}">${STATUS_LABEL_PEDIDO[p.status] || esc(p.status)}</span>${p.status === 'enviado' && p.transportadora ? ' <span style="color:var(--muted);font-size:12px">' + esc(p.transportadora) + '</span>' : ''}</td>
+      <td>${esc(p.nota_fiscal || '—')}</td>
+      <td>${fmtDate(p.data_despacho)}</td>
+    </tr>`), '');
+
+  el.innerHTML = html;
+}
+
+function mpEscolherModo(modo) {
+  mpModo = modo;
+  const t = document.getElementById('mp-modo-transportadora');
+  const r = document.getElementById('mp-modo-retirada');
+  [[t, 'transportadora'], [r, 'retirada']].forEach(([b, m]) => {
+    if (!b) return;
+    b.style.borderColor = modo === m ? 'var(--accent)' : '';
+    b.style.color = modo === m ? 'var(--accent)' : '';
+    b.style.fontWeight = modo === m ? '700' : '';
+  });
+  document.getElementById('mp-campos-transportadora').style.display = modo === 'transportadora' ? '' : 'none';
+  document.getElementById('mp-campos-retirada').style.display = modo === 'retirada' ? '' : 'none';
+  document.getElementById('mp-envio-rodape').innerHTML = modo === 'transportadora'
+    ? 'O pedido passa para <strong style="color:var(--accent)">Aguardando NF</strong> e aparece na fila da Expedição.'
+    : 'O pedido passa para <strong style="color:var(--accent)">Aguardando retirada</strong>. A Expedição lança a NF quando o cliente vier.';
+}
+
+function mpAbrirEnvio(id, modo) {
+  const p = (mpDados.pedidos || []).find(x => x.id === id);
+  if (!p) return;
+  document.getElementById('mp-envio-id').value = id;
+  document.getElementById('mp-envio-cab').innerHTML = `Pedido <strong style="color:var(--accent)">${esc(p.numero_pedido)}</strong> — ${esc(p.cliente_nome)}<br><span style="color:var(--muted)">Valor: ${fmtBRL(p.valor_total)}</span>`;
+  document.getElementById('mp-transportadora').value = p.transportadora && p.transportadora !== 'Retirada pelo cliente' ? p.transportadora : '';
+  document.getElementById('mp-frete').value = p.status === 'aguardando_nf' ? (p.frete || 0) : 0;
+  document.getElementById('mp-previsao').value = p.previsao_entrega || '';
+  document.getElementById('mp-retirada-prevista').value = p.retirada_prevista || '';
+  document.getElementById('mp-obs').value = p.obs_vendedor || '';
+  document.getElementById('mp-btn-voltar').style.display = ['aguardando_nf', 'aguardando_retirada'].includes(p.status) ? '' : 'none';
+  // sugestões de transportadora a partir dos meus pedidos
+  const nomes = Array.from(new Set((mpDados.pedidos || []).map(x => (x.transportadora || '').trim()).filter(n => n && n !== 'Retirada pelo cliente'))).sort();
+  document.getElementById('mp-transp-list').innerHTML = nomes.map(n => `<option value="${esc(n)}"></option>`).join('');
+  mpEscolherModo(modo);
+  openModal('modal-mp-envio');
+}
+
+async function mpSalvarEnvio() {
+  const id = +document.getElementById('mp-envio-id').value;
+  const body = { modo: mpModo, obs_vendedor: document.getElementById('mp-obs').value.trim() };
+  if (mpModo === 'transportadora') {
+    body.transportadora = document.getElementById('mp-transportadora').value.trim();
+    body.frete = parseFloat(document.getElementById('mp-frete').value) || 0;
+    body.previsao_entrega = document.getElementById('mp-previsao').value;
+    if (!body.transportadora) { showAlert('Informe a transportadora', 'danger'); return; }
+  } else {
+    body.retirada_prevista = document.getElementById('mp-retirada-prevista').value;
+  }
+  try {
+    const r = await req('/pedidos/' + id + '/definir-envio', 'POST', body);
+    closeModal('modal-mp-envio');
+    showAlert('✅ ' + r.mensagem);
+    loadMeusPedidos();
+    loadPedidosCom();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+
+async function mpVoltarAguardando() {
+  const id = +document.getElementById('mp-envio-id').value;
+  if (!confirm('Tirar este pedido da fila da Expedição e voltar para "Aguardando vendedor"?')) return;
+  try {
+    const r = await req('/pedidos/' + id + '/definir-envio', 'POST', { modo: 'voltar' });
+    closeModal('modal-mp-envio');
+    showAlert(r.mensagem);
+    loadMeusPedidos();
+    loadPedidosCom();
+  } catch (e) { showAlert(e.message, 'danger'); }
 }
 
 // ── LISTA PEDIDOS
@@ -396,7 +648,8 @@ async function loadPedidosCom() {
   const busca = document.getElementById('com-busca').value.toLowerCase();
   let url = '/pedidos/';
   if (status) url += '?status=' + status;
-  const rows = await req(url);
+  const meuId = window.meuUsuario ? window.meuUsuario.id : null;
+  const rows = (await req(url) || []).filter(p => meuId != null && p.vendedor_usuario_id === meuId);
   const filtrados = busca ? rows.filter(p =>
     p.numero_pedido.toLowerCase().includes(busca) ||
     p.cliente_nome.toLowerCase().includes(busca)
@@ -416,7 +669,7 @@ async function loadPedidosCom() {
       <td>${fmtDate(p.prazo_entrega)}</td>
       <td style="color:${diasCor};font-weight:700">${dias < 0 ? 'Vencido' : dias + 'd'}</td>
       <td style="color:var(--muted)">${p.itens_entregues}/${p.total_itens}</td>
-      <td><span class="pill ${STATUS_PILL[p.status]}">${STATUS_LABEL[p.status]}</span></td>
+      <td><span class="pill ${STATUS_PILL_PEDIDO[p.status] || ''}">${STATUS_LABEL_PEDIDO[p.status] || p.status}</span></td>
       <td class="flex gap-2">
         <button class="btn btn-sm btn-secondary" onclick="verDetalhe(${p.id})">Ver</button>
       </td>
@@ -443,7 +696,8 @@ async function verDetalhe(id) {
       </div>
       <div class="card">
         <div class="card-label">Status</div>
-        <span class="pill ${STATUS_PILL[p.status]}">${STATUS_LABEL[p.status]}</span>
+        <span class="pill ${STATUS_PILL_PEDIDO[p.status] || ''}">${STATUS_LABEL_PEDIDO[p.status] || p.status}</span>
+        ${p.transportadora ? `<div style="font-size:12px;color:var(--muted);margin-top:4px">${esc(p.transportadora)}${p.nota_fiscal ? ' · NF ' + esc(p.nota_fiscal) : ''}</div>` : ''}
       </div>
       ${p.vendedor ? `<div class="card"><div class="card-label">Vendedor</div><div style="font-weight:600">${p.vendedor}</div></div>` : ''}
     </div>
@@ -849,6 +1103,7 @@ async function verificarAcessoComercial() {
       return false;
     }
     if (me) {
+      window.meuUsuario = me;
       const elNome = document.getElementById('topbar-user-name-txt');
       if (elNome) elNome.textContent = me.nome;
     }
