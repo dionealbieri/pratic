@@ -285,7 +285,7 @@ async function carregarAcessoPrincipal() {
     
     const path = window.location.pathname;
     const params = new URLSearchParams(window.location.search);
-    const temPaginaSolicitada = params.has('page') || params.has('pagina') || params.has('perfil') || params.has('setor');
+    const temPaginaSolicitada = params.has('page') || params.has('pagina') || params.has('perfil') || params.has('setor') || params.has('importar');
 
     if ((path === '/' || path === '/index.html') && !temPaginaSolicitada) {
       if (me.role === 'producao') {
@@ -361,7 +361,7 @@ function paginaPermitida(name) {
 
 function showPage(name) {
   // Vendedor (Comercial) trabalha os pedidos no portal /comercial (Meus Pedidos)
-  if (name === 'pedidos' && window.usuarioLogado && window.usuarioLogado.role === 'comercial') {
+  if (name === 'pedidos' && window.usuarioLogado && window.usuarioLogado.role === 'comercial' && !window._modoImportarVendedor) {
     window.location.href = '/comercial';
     return;
   }
@@ -6443,6 +6443,7 @@ async function importarPedidosLote() {
   if (!pedidosArquivosSelecionados.length) { showAlert('Selecione um ou mais arquivos de pedido', 'danger'); return; }
   const btn = document.getElementById('btn-importar-pedido-lote');
   const preview = document.getElementById('pedido-import-preview');
+  window._impOcupado = true;
   try {
     if (btn) { btn.disabled = true; btn.textContent = 'Importando...'; }
     const fd = new FormData();
@@ -6477,6 +6478,7 @@ async function importarPedidosLote() {
       preview.innerHTML = `<strong>Resumo:</strong> ${rs.criados} criado(s), ${rs.duplicados} duplicado(s), ${rs.erros} com erro — de ${rs.total} arquivo(s).<hr style="border-color:rgba(255,255,255,.1)">${linhas}${blocoAlertas}`;
     }
     showAlert(`Importação concluída: ${rs.criados} pedido(s) criado(s).`);
+    if (rs.criados > 0) window._impSalvou = true;
     const dups = (data.resultados || []).filter(it => it.status === 'duplicado').map(it => it.numero_pedido);
     const alertasEstoque = data.alertas_estoque || [];
     let avisoHtml = '';
@@ -6499,6 +6501,7 @@ async function importarPedidosLote() {
   } catch (e) {
     showAlert(e.message || 'Erro ao importar em lote', 'danger');
   } finally {
+    window._impOcupado = false;
     if (btn) { btn.disabled = false; btn.textContent = 'Importar em lote'; }
   }
 }
@@ -6580,6 +6583,7 @@ function handleDropPedidoArquivo(ev) {
 async function importarPedidoArquivo() {
   if (!pedidoArquivoSelecionado) { showAlert('Selecione ou solte um arquivo do pedido', 'danger'); return; }
   const btn = document.getElementById('btn-importar-pedido');
+  window._impOcupado = true;
   try {
     if (btn) { btn.disabled = true; btn.textContent = 'Analisando arquivo...'; }
     const fd = new FormData();
@@ -6644,6 +6648,7 @@ async function importarPedidoArquivo() {
   } catch (e) {
     showAlert(e.message || 'Erro ao importar arquivo', 'danger');
   } finally {
+    window._impOcupado = false;
     if (btn) { btn.disabled = false; btn.textContent = 'Importar e Cadastrar'; }
   }
 }
@@ -7091,7 +7096,9 @@ async function salvarPedido() {
         showAlert('Pedido salvo!');
       }
     }
+    window._impSalvou = true;
     closeModal('modal-pedido');
+    if (window._modoImportarVendedor) return;
     loadFila();
     loadPedidos();
     checkAlertasPedidos();
@@ -7442,10 +7449,50 @@ document.addEventListener('DOMContentLoaded', async () => {
   await carregarMetaGlobal();
   loadTopbarWidgets();
   const params = new URLSearchParams(window.location.search);
+  if (params.get('importar') === '1' && window.usuarioLogado && window.usuarioLogado.role === 'comercial') {
+    iniciarModoImportarVendedor();
+    return;
+  }
   const paginaSolicitada = params.get('page') || params.get('pagina');
   const paginaInicial = (paginaSolicitada && paginasLiberadas.includes(paginaSolicitada)) ? paginaSolicitada : (paginasLiberadas[0] || 'dashboard');
   showPage(paginaInicial);
 });
+
+// ─── MODO IMPORTAÇÃO DO VENDEDOR ──────────────────────────────────────────────
+// O portal /comercial abre o painel em /?importar=1: o vendedor usa exatamente a
+// mesma importação da tela de Pedidos (Importar e Cadastrar com a tela de
+// confirmação, ou Importar em lote). Ao terminar ou cancelar, volta para /comercial.
+window._impOcupado = false;
+function iniciarModoImportarVendedor() {
+  window._modoImportarVendedor = true;
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  const pg = document.getElementById('page-pedidos');
+  if (pg) {
+    pg.classList.add('active');
+    Array.from(pg.children).forEach(ch => { ch.style.display = 'none'; });
+    const ban = document.createElement('div');
+    ban.innerHTML = `<div class="card" style="max-width:640px;margin:40px auto;text-align:center">
+      <div style="font-family:var(--font-head);font-weight:700;font-size:18px;margin-bottom:8px">📥 Importação de pedido</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:16px">Ao salvar ou cancelar, você volta para Meus Pedidos.</div>
+      <div class="flex gap-2" style="justify-content:center">
+        <button class="btn btn-primary" onclick="openModalImportarPedido()">Abrir importação</button>
+        <button class="btn btn-secondary" onclick="window.location.href='/comercial'">← Voltar para Meus Pedidos</button>
+      </div></div>`;
+    pg.appendChild(ban);
+  }
+  const titulo = document.getElementById('page-title');
+  if (titulo) titulo.textContent = 'Importar Pedido';
+  openModalImportarPedido();
+  let vazios = 0, abriu = false;
+  setInterval(() => {
+    const aberto = document.querySelector('.modal-overlay.open') || document.getElementById('popup-overlay-dyn');
+    if (aberto) { abriu = true; vazios = 0; return; }
+    if (!abriu || window._impOcupado) { vazios = 0; return; }
+    vazios++;
+    if (vazios >= 3) window.location.href = '/comercial' + (window._impSalvou ? '?importado=1' : '');
+  }, 400);
+}
+window.iniciarModoImportarVendedor = iniciarModoImportarVendedor;
 
 // ─── GRÁFICOS ─────────────────────────────────────────────────────────────────
 

@@ -178,25 +178,13 @@
   <!-- ── TAB IMPORTAR ── -->
   <div id="tab-importar" style="display:none">
     <div class="section-title">Importar Pedido por Arquivo</div>
-    <p style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.6">
-      Envie um ou vários PDFs de pedido (também aceita JPG, PNG, TXT, CSV). O sistema cria os pedidos automaticamente —
-      identificando código, cliente, vendedor, observações e itens — e pula os já cadastrados.
-      É a mesma importação da tela de Pedidos do painel.
-    </p>
-    <div id="com-imp-drop" onclick="document.getElementById('com-imp-input').click()"
-         ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
-         ondragleave="this.style.borderColor='var(--border)'"
-         ondrop="this.style.borderColor='var(--border)';comImpDrop(event)"
-         style="border:2px dashed var(--border);border-radius:14px;padding:40px 20px;text-align:center;cursor:pointer;background:var(--surface)">
-      <div style="font-size:34px;margin-bottom:8px">📄</div>
-      <div style="font-family:var(--font-head);font-weight:700;font-size:17px;margin-bottom:6px">Solte os arquivos aqui ou clique para buscar</div>
-      <div style="font-size:13px;color:var(--muted)" id="com-imp-nome">Nenhum arquivo selecionado</div>
-      <input type="file" id="com-imp-input" multiple accept=".pdf,.jpg,.jpeg,.png,.txt,.csv" style="display:none" onchange="comImpAdicionar(this.files)">
-    </div>
-    <div id="com-imp-preview" style="display:none;margin:14px 0;font-size:13px;line-height:1.7;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px"></div>
-    <div class="flex gap-2" style="justify-content:flex-end;margin-top:12px">
-      <button class="btn btn-secondary" onclick="comImpLimpar()">Limpar</button>
-      <button class="btn btn-primary" id="com-imp-btn" onclick="comImportarLote()">Importar em lote</button>
+    <div class="card" style="max-width:720px">
+      <p style="font-size:13px;color:var(--muted);margin-bottom:16px;line-height:1.6">
+        Usa a <strong style="color:var(--text)">mesma importação da tela de Pedidos</strong>: envie o PDF do pedido (também aceita JPG, PNG, TXT, CSV).
+        Em <strong style="color:var(--text)">Importar e Cadastrar</strong> abre a tela de conferência do pedido (cliente, itens e produtos do estoque) antes de salvar;
+        em <strong style="color:var(--text)">Importar em lote</strong> cria vários pedidos direto. Ao terminar, você volta para Meus Pedidos.
+      </p>
+      <button class="btn btn-primary" onclick="window.location.href='/?importar=1'">📥 Abrir importação de pedido</button>
     </div>
   </div>
 </div>
@@ -1633,6 +1621,10 @@ async function loadTopbarWidgets() {
 
 // INIT
 verificarAcessoComercial().then(ok => {
+  if (ok && new URLSearchParams(location.search).get('importado') === '1') {
+    setTimeout(() => showAlert('✅ Pedido importado com sucesso.'), 600);
+    history.replaceState(null, '', '/comercial');
+  }
   if (!ok) return;
 
   // Set current month/year in header

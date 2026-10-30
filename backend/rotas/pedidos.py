@@ -2195,7 +2195,7 @@ def historico_producao_pedido(id: int):
             "resumo": resumo_lista, "total_produzido": total_produzido}
 
 @router.post("/")
-def criar_pedido(p: PedidoIn):
+def criar_pedido(p: PedidoIn, current_user: dict = Depends(get_current_user)):
     conn = get_conn()
     cur = conn.cursor()
     if not p.numero_pedido or not str(p.numero_pedido).strip():
@@ -2213,7 +2213,9 @@ def criar_pedido(p: PedidoIn):
         VALUES (?,?,?,?,?,?,?,?,'aberto',?)""",
         (p.numero_pedido, p.cliente_id, (p.prazo_entrega or ""), p.vendedor, p.observacoes, p.acrescimo or 0, p.frete or 0, p.desconto_global or 0, 1 if p.precisa_pintura else 0))
     pedido_id = cur.lastrowid
-    vincular_pedido(conn, pedido_id)
+    if not vincular_pedido(conn, pedido_id) and current_user.get("role") == "comercial":
+        # Vendedor cadastrando/importando: sem vendedor reconhecido, o pedido fica com ele
+        cur.execute("UPDATE pedidos SET vendedor_usuario_id=? WHERE id=?", (current_user["id"], pedido_id))
     for item in p.itens:
         vunit = item.valor_unitario or 0.0
         if vunit == 0.0 and item.produto_id:
