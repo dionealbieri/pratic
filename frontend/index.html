@@ -1313,6 +1313,18 @@
 
           <div id="perm-alert"></div>
 
+          <div class="card" style="margin-bottom:20px">
+            <div style="font-family:var(--font-head);font-weight:700;margin-bottom:6px">🧾 Portal do Vendedor</div>
+            <div style="font-size:13px;color:var(--muted);margin-bottom:12px">Mostrar ao vendedor (e no aviso “pedidos sem vendedor vinculado”) apenas pedidos lançados no sistema a partir desta data. Deixe em branco para mostrar todos.</div>
+            <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+              <label for="cfg-vendedor-desde" style="font-size:13px">Mostrar pedidos a partir de</label>
+              <input type="date" id="cfg-vendedor-desde" style="max-width:180px">
+              <button class="btn btn-sm btn-primary" onclick="salvarVendedorDesde()">💾 Salvar data</button>
+              <button class="btn btn-sm btn-secondary" onclick="document.getElementById('cfg-vendedor-desde').value='';salvarVendedorDesde()">Mostrar todos</button>
+              <span id="cfg-vendedor-desde-info" style="font-size:12px;color:var(--muted)"></span>
+            </div>
+          </div>
+
           <div class="table-wrap">
             <div class="table-head">
               <span class="table-head-title">Páginas × Perfis</span>
@@ -3067,7 +3079,7 @@
   </div>
 </div>
 
-<script src="js/app.js?v=20261030-fase2-1-vendedor"></script>
+<script src="js/app.js?v=20261030-fase2-3-portal-vendedor"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');

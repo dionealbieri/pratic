@@ -65,6 +65,15 @@ def _revenda_pendente(conn, pedido_id: int) -> int:
     """, (pedido_id,)).fetchone()[0]
 
 
+def _vendedor_desde(conn) -> str:
+    """Data de corte (AAAA-MM-DD) configurada pelo Gestor: pedidos lançados antes
+    dela não aparecem no portal do vendedor nem no aviso 'sem vendedor'."""
+    row = conn.execute("SELECT valor FROM configuracoes WHERE chave='vendedor_mostrar_desde'").fetchone()
+    v = (row["valor"] if row else "") or ""
+    v = v.strip()[:10]
+    return v if len(v) == 10 else ""
+
+
 SQL_VALOR_PEDIDO = """(
     COALESCE((SELECT SUM(COALESCE(it.quantidade,0) * COALESCE(it.valor_unitario,0) - COALESCE(it.desconto,0))
               FROM pedidos_itens it WHERE it.pedido_id = p.id), 0)
@@ -1237,8 +1246,13 @@ def listar_pedidos(status: Optional[str] = None, cliente_id: Optional[int] = Non
         params.append(cliente_id)
     query += " GROUP BY p.id ORDER BY p.prazo_entrega ASC"
     if so_do_vendedor:
-        query = query.replace(" GROUP BY p.id ", " AND p.vendedor_usuario_id = ? GROUP BY p.id ", 1)
+        desde = _vendedor_desde(conn)
+        filtro_v = " AND p.vendedor_usuario_id = ? "
         params.append(current_user["id"])
+        if desde:
+            filtro_v += " AND date(p.created_at) >= ? "
+            params.append(desde)
+        query = query.replace(" GROUP BY p.id ", filtro_v + "GROUP BY p.id ", 1)
     rows = conn.execute(query, params).fetchall()
     conn.close()
     result = []
@@ -1303,8 +1317,9 @@ def pedidos_sem_vendedor(current_user: dict = Depends(get_current_user)):
             JOIN pedidos_clientes c ON c.id = p.cliente_id
             WHERE p.vendedor_usuario_id IS NULL
               AND COALESCE(p.status, 'aberto') NOT IN ('enviado', 'retirado', 'entregue')
+              AND (? = '' OR date(p.created_at) >= ?)
             ORDER BY p.created_at DESC, p.id DESC
-        """).fetchall()
+        """, (_vendedor_desde(conn), _vendedor_desde(conn))).fetchall()
         return [dict(r) for r in rows]
     finally:
         conn.close()
@@ -1368,10 +1383,11 @@ def meus_pedidos(current_user: dict = Depends(get_current_user)):
     conn = get_conn()
     try:
         uid = current_user["id"]
+        desde = _vendedor_desde(conn)
         rows = conn.execute(f"""
             SELECT p.id, p.numero_pedido, p.status, p.status_desde, p.prazo_entrega,
                    p.transportadora, p.frete, p.previsao_entrega, p.retirada_prevista,
-                   p.obs_vendedor, p.nota_fiscal, p.data_despacho, p.envio_definido_em,
+                   p.obs_vendedor, p.nota_fiscal, p.data_despacho, p.data_entrega, p.envio_definido_em,
                    c.razao_social AS cliente_nome, c.nome_fantasia,
                    CAST(julianday('now','localtime') - julianday(p.status_desde) AS INTEGER) AS dias_na_etapa,
                    julianday(p.prazo_entrega) - julianday('now') AS dias_restantes,
@@ -1384,10 +1400,13 @@ def meus_pedidos(current_user: dict = Depends(get_current_user)):
             FROM pedidos p
             JOIN pedidos_clientes c ON c.id = p.cliente_id
             WHERE p.vendedor_usuario_id = ?
+              AND (? = '' OR date(p.created_at) >= ?)
               AND (COALESCE(p.status,'aberto') NOT IN ('enviado','retirado','entregue')
-                   OR p.status_desde >= datetime('now','localtime','-15 days'))
+                   -- Concluídos: só os com data real de despacho/entrega nos últimos 15 dias
+                   -- (pedidos antigos sem data ficam só na lista geral)
+                   OR COALESCE(NULLIF(p.data_entrega,''), NULLIF(p.data_despacho,'')) >= date('now','localtime','-15 days'))
             ORDER BY p.status_desde ASC, p.id ASC
-        """, (uid,)).fetchall()
+        """, (uid, desde, desde)).fetchall()
         visto = conn.execute("SELECT meus_pedidos_visto_em FROM usuarios WHERE id=?", (uid,)).fetchone()
         visto_em = visto["meus_pedidos_visto_em"] if visto else None
         novidades = conn.execute("""
@@ -1397,15 +1416,17 @@ def meus_pedidos(current_user: dict = Depends(get_current_user)):
             JOIN pedidos p ON p.id = h.pedido_id
             JOIN pedidos_clientes c ON c.id = p.cliente_id
             WHERE p.vendedor_usuario_id = ?
+              AND (? = '' OR date(p.created_at) >= ?)
               AND h.status IN ('produzido','enviado','retirado')
               AND h.em > COALESCE(?, datetime('now','localtime','-3 days'))
             ORDER BY h.id DESC
             LIMIT 30
-        """, (uid, visto_em)).fetchall()
+        """, (uid, desde, desde, visto_em)).fetchall()
         return {
             "pedidos": [dict(r) for r in rows],
             "novidades": [dict(r) for r in novidades],
             "visto_em": visto_em,
+            "mostrar_desde": desde,
         }
     finally:
         conn.close()

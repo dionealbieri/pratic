@@ -401,7 +401,7 @@ function showPage(name) {
     epi: loadEPI,
     comunicacao: loadComunicacao,
     empresa: loadEmpresa,
-    permissoes: loadPermissoes,
+    permissoes: () => { loadPermissoes(); carregarVendedorDesde(); },
     'perm-usuarios': loadPermUsuarios
   };
   if (handlers[name]) handlers[name]();
@@ -9543,8 +9543,31 @@ function switchPermissoesTab(tab) {
   });
   if (tab === 'usuarios') loadUsuarios();
   if (tab === 'permissoes-usr') loadPermUsuarios();
-  if (tab === 'config') loadPermissoes();
+  if (tab === 'config') { loadPermissoes(); carregarVendedorDesde(); }
 }
+
+async function carregarVendedorDesde() {
+  const el = document.getElementById('cfg-vendedor-desde');
+  if (!el) return;
+  try {
+    const r = await api('/configuracoes/vendedor_mostrar_desde');
+    el.value = (r && r.valor) ? String(r.valor).slice(0, 10) : '';
+  } catch (e) { el.value = ''; }
+  const info = document.getElementById('cfg-vendedor-desde-info');
+  if (info) info.textContent = el.value ? 'Atual: a partir de ' + fmtDate(el.value) : 'Atual: todos os pedidos';
+}
+
+async function salvarVendedorDesde() {
+  const el = document.getElementById('cfg-vendedor-desde');
+  if (!el) return;
+  try {
+    await api('/configuracoes/vendedor_mostrar_desde', 'PUT', { valor: el.value || '' });
+    showAlert(el.value ? 'O vendedor passa a ver pedidos a partir de ' + fmtDate(el.value) : 'O vendedor passa a ver todos os pedidos');
+    carregarVendedorDesde();
+  } catch (e) { showAlert('Erro: ' + e.message, 'danger'); }
+}
+window.carregarVendedorDesde = carregarVendedorDesde;
+window.salvarVendedorDesde = salvarVendedorDesde;
 
 let _usuariosCache = [];
 
