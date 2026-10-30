@@ -4832,7 +4832,7 @@ async function abrirDespacho(id) {
     ${p.envio_definido_em ? `<br><span style="color:var(--muted);font-size:12px">Frete definido por ${_escHtml(p.envio_definido_por || 'vendedor')} em ${fmtDate(String(p.envio_definido_em).slice(0,10))}${p.obs_vendedor ? ' · 💬 ' + _escHtml(p.obs_vendedor) : ''}</span>` : ''}
   `;
   
-  document.getElementById('desp-transportadora').value = p.transportadora || '';
+  await _preencherSelectTransp(document.getElementById('desp-transportadora'), p.transportadora || '');
   document.getElementById('desp-nf').value = p.nota_fiscal || '';
   document.getElementById('desp-rastreio').value = p.rastreio || '';
   document.getElementById('desp-volumes').value = p.volumes || 1;
@@ -4954,6 +4954,110 @@ async function salvarRetirada() {
 }
 window.salvarRetirada = salvarRetirada;
 
+// ─── CADASTRO DE TRANSPORTADORAS ──────────────────────────────────────────────
+let _transpCache = [];
+
+function _podeEditarTransp() {
+  const r = window.usuarioLogado && window.usuarioLogado.role;
+  return r === 'gestor' || r === 'expedicao';
+}
+
+async function _preencherSelectTransp(sel, atual) {
+  if (!sel) return;
+  let lista = [];
+  try { lista = await api('/pedidos/transportadoras?ativos=1'); } catch (e) { lista = []; }
+  const nomes = lista.map(t => t.nome);
+  let html = '<option value="">— Selecione a transportadora —</option>' + nomes.map(n => `<option value="${_escHtml(n)}">${_escHtml(n)}</option>`).join('');
+  if (atual && !nomes.some(n => n.toLowerCase() === String(atual).toLowerCase())) {
+    html += `<option value="${_escHtml(atual)}">${_escHtml(atual)} (fora do cadastro)</option>`;
+  }
+  sel.innerHTML = html;
+  const achado = nomes.find(n => n.toLowerCase() === String(atual || '').toLowerCase());
+  sel.value = achado || atual || '';
+}
+
+async function loadCadastroTransp() {
+  const tbody = document.getElementById('transp-cad-tbody');
+  if (!tbody) return;
+  const btnNovo = document.getElementById('transp-cad-novo');
+  if (btnNovo) btnNovo.style.display = _podeEditarTransp() ? '' : 'none';
+  try { _transpCache = await api('/pedidos/transportadoras'); } catch (e) { tbody.innerHTML = `<tr><td colspan="9" style="color:var(--danger);padding:16px">${_escHtml(e.message)}</td></tr>`; return; }
+  const busca = (document.getElementById('transp-cad-busca')?.value || '').trim().toLowerCase();
+  const lista = busca ? _transpCache.filter(t => (t.nome + ' ' + (t.cnpj || '') + ' ' + (t.contato || '')).toLowerCase().includes(busca)) : _transpCache;
+  if (!lista.length) { tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:24px">Nenhuma transportadora cadastrada</td></tr>'; return; }
+  const pode = _podeEditarTransp();
+  tbody.innerHTML = lista.map(t => `<tr style="${t.ativo ? '' : 'opacity:.55'}">
+    <td><strong>${_escHtml(t.nome)}</strong>${t.observacoes ? `<div style="font-size:11px;color:var(--muted)">${_escHtml(t.observacoes)}</div>` : ''}</td>
+    <td>${_escHtml(t.cnpj || '—')}</td>
+    <td>${_escHtml(t.telefone || '—')}${t.contato ? `<div style="font-size:11px;color:var(--muted)">${_escHtml(t.contato)}</div>` : ''}</td>
+    <td>${t.site_rastreio ? `<a href="${_escHtml(/^https?:\/\//i.test(t.site_rastreio) ? t.site_rastreio : 'https://' + t.site_rastreio)}" target="_blank" rel="noopener" style="color:var(--accent2)">abrir ↗</a>` : '—'}</td>
+    <td>${t.envios || 0}</td>
+    <td>${t.ultimo_envio ? fmtDate(t.ultimo_envio) : '—'}</td>
+    <td>${fmtBRL(t.total_frete || 0)}</td>
+    <td><span class="pill ${t.ativo ? 'pill-success' : 'pill-danger'}">${t.ativo ? 'Ativa' : 'Inativa'}</span></td>
+    <td class="flex gap-2" style="flex-wrap:wrap">${pode ? `<button class="btn btn-sm btn-secondary" onclick="abrirModalTransp(${t.id})">✏️ Editar</button><button class="btn btn-sm btn-secondary" title="Juntar com outra transportadora repetida" onclick="abrirUnificarTransp(${t.id})">🔗 Unificar</button>` : ''}</td>
+  </tr>`).join('');
+}
+
+function abrirModalTransp(id) {
+  const t = id ? _transpCache.find(x => x.id === id) : null;
+  document.getElementById('transp-modal-title').textContent = t ? '🚚 Editar transportadora' : '🚚 Nova transportadora';
+  document.getElementById('transp-id').value = t ? t.id : '';
+  const campos = { nome: 'nome', cnpj: 'cnpj', telefone: 'telefone', contato: 'contato', email: 'email', site: 'site_rastreio', obs: 'observacoes' };
+  Object.entries(campos).forEach(([el, k]) => { document.getElementById('transp-' + el).value = t ? (t[k] || '') : ''; });
+  document.getElementById('transp-ativo').value = t ? String(t.ativo ? 1 : 0) : '1';
+  openModal('modal-transportadora');
+}
+
+async function salvarTransp() {
+  const id = document.getElementById('transp-id').value;
+  const body = {
+    nome: document.getElementById('transp-nome').value.trim(),
+    cnpj: document.getElementById('transp-cnpj').value.trim(),
+    telefone: document.getElementById('transp-telefone').value.trim(),
+    contato: document.getElementById('transp-contato').value.trim(),
+    email: document.getElementById('transp-email').value.trim(),
+    site_rastreio: document.getElementById('transp-site').value.trim(),
+    observacoes: document.getElementById('transp-obs').value.trim(),
+    ativo: +document.getElementById('transp-ativo').value
+  };
+  if (!body.nome) { showAlert('Informe o nome da transportadora', 'danger'); return; }
+  try {
+    if (id) await api('/pedidos/transportadoras/' + id, 'PUT', body);
+    else await api('/pedidos/transportadoras', 'POST', body);
+    closeModal('modal-transportadora');
+    showAlert('Transportadora salva!');
+    loadCadastroTransp();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+
+function abrirUnificarTransp(id) {
+  const t = _transpCache.find(x => x.id === id);
+  if (!t) return;
+  document.getElementById('unif-de-id').value = id;
+  document.getElementById('unif-texto').innerHTML = `Os pedidos de <strong style="color:var(--text)">${_escHtml(t.nome)}</strong> passam para a transportadora escolhida abaixo, e o cadastro de <strong style="color:var(--text)">${_escHtml(t.nome)}</strong> é removido. Use para juntar nomes repetidos (ex.: “BRASPRESS” e “Braspress Ltda”).`;
+  document.getElementById('unif-para').innerHTML = _transpCache.filter(x => x.id !== id).map(x => `<option value="${x.id}">${_escHtml(x.nome)}${x.ativo ? '' : ' (inativa)'}</option>`).join('');
+  openModal('modal-unificar-transp');
+}
+
+async function confirmarUnificarTransp() {
+  const de = document.getElementById('unif-de-id').value;
+  const para = document.getElementById('unif-para').value;
+  if (!para) return;
+  try {
+    const r = await api('/pedidos/transportadoras/' + de + '/unificar', 'POST', { para_id: +para });
+    closeModal('modal-unificar-transp');
+    showAlert(r.mensagem);
+    loadCadastroTransp();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+
+window.loadCadastroTransp = loadCadastroTransp;
+window.abrirModalTransp = abrirModalTransp;
+window.salvarTransp = salvarTransp;
+window.abrirUnificarTransp = abrirUnificarTransp;
+window.confirmarUnificarTransp = confirmarUnificarTransp;
+
 async function verProdutosEnviados(id) {
   let p;
   try { p = await api('/pedidos/' + id); } catch(e) { showAlert('Erro ao carregar pedido: ' + e.message, 'danger'); return; }
@@ -5022,7 +5126,7 @@ window.confirmarEntrega = confirmarEntrega;
 // ─── TRANSPORTADORA / RELATÓRIOS ──────────────────────────────────────────────
 
 function switchTranspTab(tab) {
-  ['fila', 'entregues', 'relatorios'].forEach(t => {
+  ['fila', 'entregues', 'relatorios', 'cadastro'].forEach(t => {
     const el = document.getElementById('transp-content-' + t);
     const btn = document.getElementById('transp-btn-' + t);
     const flt = document.getElementById('transp-filter-' + t);
@@ -5035,6 +5139,8 @@ function switchTranspTab(tab) {
   });
   if (tab === 'fila') {
     loadTransportadora();
+  } else if (tab === 'cadastro') {
+    loadCadastroTransp();
   } else if (tab === 'entregues') {
     loadPedidosEntregues();
   } else if (tab === 'relatorios') {
@@ -5414,6 +5520,8 @@ async function loadPedidos_init() {
       const b = document.getElementById('ptab-' + t);
       if (b) b.style.display = 'none';
     });
+    const linha = document.getElementById('ped-tabs-row');
+    if (linha) linha.style.display = 'none';
     switchPedidosTab('transportadora');
     return;
   }
@@ -5427,7 +5535,7 @@ async function checkAlertasPedidos() {
   try {
     const al=await api('/pedidos/alertas/resumo');
     const badge=document.getElementById('nav-pedidos-badge');
-    const total=(al.vencidos||0)+(al.urgentes||0);
+    const total=(window.usuarioLogado && window.usuarioLogado.role==='expedicao') ? 0 : (al.vencidos||0)+(al.urgentes||0);
     if(badge){badge.style.display=total>0?'inline':'none';badge.textContent=total;}
     const dashEl=document.getElementById('dash-alerta-pedidos');
     if(dashEl&&total>0){

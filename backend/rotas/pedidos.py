@@ -1376,6 +1376,123 @@ class RetiradaIn(BaseModel):
     obs: Optional[str] = ""
 
 
+# ─── CADASTRO DE TRANSPORTADORAS ─────────────────────────────────────────────
+
+class TransportadoraIn(BaseModel):
+    nome: str
+    cnpj: Optional[str] = ""
+    telefone: Optional[str] = ""
+    contato: Optional[str] = ""
+    email: Optional[str] = ""
+    site_rastreio: Optional[str] = ""
+    observacoes: Optional[str] = ""
+    ativo: Optional[int] = 1
+
+
+class UnificarTranspIn(BaseModel):
+    para_id: int
+
+
+def _pode_editar_transportadoras(current_user: dict):
+    if current_user.get("role") not in ("gestor", "expedicao"):
+        raise HTTPException(403, "Só o Gestor ou a Expedição podem alterar o cadastro de transportadoras.")
+
+
+@router.get("/transportadoras")
+def listar_transportadoras(ativos: Optional[int] = 0, current_user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    try:
+        rows = conn.execute(f"""
+            SELECT t.*,
+                   (SELECT COUNT(*) FROM pedidos p WHERE p.transportadora = t.nome COLLATE NOCASE
+                       AND p.status IN ('enviado','entregue')) AS envios,
+                   (SELECT MAX(p.data_despacho) FROM pedidos p WHERE p.transportadora = t.nome COLLATE NOCASE
+                       AND p.status IN ('enviado','entregue')) AS ultimo_envio,
+                   (SELECT COALESCE(SUM(COALESCE(NULLIF(p.frete_pago,0), p.frete, 0)),0) FROM pedidos p
+                     WHERE p.transportadora = t.nome COLLATE NOCASE AND p.status IN ('enviado','entregue')) AS total_frete
+            FROM transportadoras t
+            {"WHERE t.ativo = 1" if ativos else ""}
+            ORDER BY t.ativo DESC, t.nome COLLATE NOCASE
+        """).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+@router.post("/transportadoras")
+def criar_transportadora(body: TransportadoraIn, current_user: dict = Depends(get_current_user)):
+    _pode_editar_transportadoras(current_user)
+    nome = " ".join((body.nome or "").split())
+    if not nome:
+        raise HTTPException(400, "Informe o nome da transportadora.")
+    conn = get_conn()
+    try:
+        if conn.execute("SELECT 1 FROM transportadoras WHERE nome = ? COLLATE NOCASE", (nome,)).fetchone():
+            raise HTTPException(400, "Já existe uma transportadora com esse nome.")
+        cur = conn.execute("""INSERT INTO transportadoras (nome, cnpj, telefone, contato, email, site_rastreio, observacoes, ativo)
+                              VALUES (?,?,?,?,?,?,?,?)""",
+                           (nome, (body.cnpj or "").strip(), (body.telefone or "").strip(), (body.contato or "").strip(),
+                            (body.email or "").strip(), (body.site_rastreio or "").strip(), (body.observacoes or "").strip(),
+                            1 if body.ativo is None else int(body.ativo)))
+        conn.commit()
+        return {"id": cur.lastrowid, "mensagem": "Transportadora cadastrada"}
+    finally:
+        conn.close()
+
+
+@router.put("/transportadoras/{tid}")
+def atualizar_transportadora(tid: int, body: TransportadoraIn, current_user: dict = Depends(get_current_user)):
+    """Edita o cadastro. Se o nome mudar, os pedidos com o nome antigo são atualizados junto."""
+    _pode_editar_transportadoras(current_user)
+    nome = " ".join((body.nome or "").split())
+    if not nome:
+        raise HTTPException(400, "Informe o nome da transportadora.")
+    conn = get_conn()
+    try:
+        atual = conn.execute("SELECT * FROM transportadoras WHERE id=?", (tid,)).fetchone()
+        if not atual:
+            raise HTTPException(404, "Transportadora não encontrada")
+        if conn.execute("SELECT 1 FROM transportadoras WHERE nome = ? COLLATE NOCASE AND id != ?", (nome, tid)).fetchone():
+            raise HTTPException(400, "Já existe outra transportadora com esse nome. Use 'Unificar' para juntar as duas.")
+        conn.execute("""UPDATE transportadoras SET nome=?, cnpj=?, telefone=?, contato=?, email=?, site_rastreio=?,
+                        observacoes=?, ativo=? WHERE id=?""",
+                     (nome, (body.cnpj or "").strip(), (body.telefone or "").strip(), (body.contato or "").strip(),
+                      (body.email or "").strip(), (body.site_rastreio or "").strip(), (body.observacoes or "").strip(),
+                      1 if body.ativo is None else int(body.ativo), tid))
+        if atual["nome"] != nome:
+            conn.execute("UPDATE pedidos SET transportadora=? WHERE transportadora = ? COLLATE NOCASE", (nome, atual["nome"]))
+        conn.commit()
+        return {"mensagem": "Transportadora atualizada"}
+    finally:
+        conn.close()
+
+
+@router.post("/transportadoras/{tid}/unificar")
+def unificar_transportadora(tid: int, body: UnificarTranspIn, current_user: dict = Depends(get_current_user)):
+    """Junta duas transportadoras repetidas: os pedidos da 'tid' passam para a 'para_id'
+    e o cadastro 'tid' é removido."""
+    _pode_editar_transportadoras(current_user)
+    if tid == body.para_id:
+        raise HTTPException(400, "Escolha uma transportadora diferente.")
+    conn = get_conn()
+    try:
+        de = conn.execute("SELECT * FROM transportadoras WHERE id=?", (tid,)).fetchone()
+        para = conn.execute("SELECT * FROM transportadoras WHERE id=?", (body.para_id,)).fetchone()
+        if not de or not para:
+            raise HTTPException(404, "Transportadora não encontrada")
+        n = conn.execute("UPDATE pedidos SET transportadora=? WHERE transportadora = ? COLLATE NOCASE",
+                         (para["nome"], de["nome"])).rowcount
+        conn.execute("DELETE FROM transportadoras WHERE id=?", (tid,))
+        conn.execute("""INSERT INTO auditoria (usuario, acao, entidade, entidade_id, descricao, valor_anterior, valor_novo)
+                       VALUES (?, 'unificar_transportadora', 'transportadoras', ?, ?, ?, ?)""",
+                     (_nome_usuario(current_user), body.para_id, f"{n} pedido(s) passaram de '{de['nome']}' para '{para['nome']}'",
+                      de["nome"], para["nome"]))
+        conn.commit()
+        return {"mensagem": f"Unificado: {n} pedido(s) passaram para {para['nome']}"}
+    finally:
+        conn.close()
+
+
 @router.get("/meus")
 def meus_pedidos(current_user: dict = Depends(get_current_user)):
     """Pedidos do vendedor logado: em andamento + concluídos nos últimos 15 dias,
@@ -1468,6 +1585,11 @@ def definir_envio(id: int, body: DefinirEnvioIn, current_user: dict = Depends(ge
             transp = (body.transportadora or "").strip()
             if not transp:
                 raise HTTPException(400, "Informe a transportadora.")
+            cad = conn.execute("SELECT nome FROM transportadoras WHERE nome = ? COLLATE NOCASE AND ativo = 1",
+                               (transp,)).fetchone()
+            if not cad:
+                raise HTTPException(400, "Escolha uma transportadora cadastrada.")
+            transp = cad["nome"]
             conn.execute("""UPDATE pedidos SET status='aguardando_nf', transportadora=?, frete=?,
                             previsao_entrega=?, retirada_prevista=NULL, obs_vendedor=?,
                             envio_definido_em=datetime('now','localtime'), envio_definido_por=?

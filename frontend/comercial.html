@@ -210,7 +210,7 @@
       <button type="button" class="btn btn-secondary" id="mp-modo-retirada" onclick="mpEscolherModo('retirada')">🙋 Cliente retira</button>
     </div>
     <div id="mp-campos-transportadora" class="form-grid">
-      <div class="form-group" style="grid-column:1/-1"><label>Transportadora escolhida</label><input type="text" id="mp-transportadora" list="mp-transp-list" placeholder="Ex.: Braspress, Jamef..."><datalist id="mp-transp-list"></datalist></div>
+      <div class="form-group" style="grid-column:1/-1"><label>Transportadora escolhida</label><select id="mp-transportadora"></select><span id="mp-transp-aviso" style="font-size:11px;color:var(--muted)"></span></div>
       <div class="form-group"><label>Valor do frete combinado (R$)</label><input type="number" id="mp-frete" min="0" step="0.01" value="0"></div>
       <div class="form-group"><label>Previsão de entrega</label><input type="date" id="mp-previsao"></div>
     </div>
@@ -850,20 +850,30 @@ function mpEscolherModo(modo) {
     : 'O pedido passa para <strong style="color:var(--accent)">Aguardando retirada</strong>. A Expedição lança a NF quando o cliente vier.';
 }
 
-function mpAbrirEnvio(id, modo) {
+let mpTranspCadastradas = null;
+async function mpCarregarTransportadoras() {
+  try { mpTranspCadastradas = (await req('/pedidos/transportadoras?ativos=1') || []).map(t => t.nome); }
+  catch (e) { mpTranspCadastradas = []; }
+  return mpTranspCadastradas;
+}
+
+async function mpAbrirEnvio(id, modo) {
   const p = (mpDados.pedidos || []).find(x => x.id === id);
   if (!p) return;
+  const nomes = await mpCarregarTransportadoras();
+  const sel = document.getElementById('mp-transportadora');
+  const atual = p.status === 'aguardando_nf' ? (p.transportadora || '') : '';
+  sel.innerHTML = '<option value="">— Selecione a transportadora —</option>' + nomes.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  const achado = nomes.find(n => n.toLowerCase() === atual.toLowerCase());
+  sel.value = achado || '';
+  document.getElementById('mp-transp-aviso').textContent = nomes.length ? '' : 'Nenhuma transportadora cadastrada. Peça ao Gestor ou à Expedição para cadastrar.';
   document.getElementById('mp-envio-id').value = id;
   document.getElementById('mp-envio-cab').innerHTML = `Pedido <strong style="color:var(--accent)">${esc(p.numero_pedido)}</strong> — ${esc(p.cliente_nome)}<br><span style="color:var(--muted)">Valor: ${fmtBRL(p.valor_total)}</span>`;
-  document.getElementById('mp-transportadora').value = p.transportadora && p.transportadora !== 'Retirada pelo cliente' ? p.transportadora : '';
   document.getElementById('mp-frete').value = p.status === 'aguardando_nf' ? (p.frete || 0) : 0;
   document.getElementById('mp-previsao').value = p.previsao_entrega || '';
   document.getElementById('mp-retirada-prevista').value = p.retirada_prevista || '';
   document.getElementById('mp-obs').value = p.obs_vendedor || '';
   document.getElementById('mp-btn-voltar').style.display = ['aguardando_nf', 'aguardando_retirada'].includes(p.status) ? '' : 'none';
-  // sugestões de transportadora a partir dos meus pedidos
-  const nomes = Array.from(new Set((mpDados.pedidos || []).map(x => (x.transportadora || '').trim()).filter(n => n && n !== 'Retirada pelo cliente'))).sort();
-  document.getElementById('mp-transp-list').innerHTML = nomes.map(n => `<option value="${esc(n)}"></option>`).join('');
   mpEscolherModo(modo);
   openModal('modal-mp-envio');
 }
@@ -875,7 +885,7 @@ async function mpSalvarEnvio() {
     body.transportadora = document.getElementById('mp-transportadora').value.trim();
     body.frete = parseFloat(document.getElementById('mp-frete').value) || 0;
     body.previsao_entrega = document.getElementById('mp-previsao').value;
-    if (!body.transportadora) { showAlert('Informe a transportadora', 'danger'); return; }
+    if (!body.transportadora) { showAlert('Escolha a transportadora', 'danger'); return; }
   } else {
     body.retirada_prevista = document.getElementById('mp-retirada-prevista').value;
   }

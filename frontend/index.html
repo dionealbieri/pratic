@@ -512,7 +512,7 @@
 
     <!-- PEDIDOS -->
     <div class="page" id="page-pedidos">
-      <div style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap">
+      <div id="ped-tabs-row" style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap">
         <button class="btn btn-secondary" id="ptab-fila" onclick="switchPedidosTab('fila')" style="border-color:var(--accent);color:var(--accent)">🏭 Fila de Produção</button>
         <button class="btn btn-secondary" id="ptab-programacao" onclick="switchPedidosTab('programacao')">🗓️ Programar Separação <span style="font-size:10px;background:var(--danger);color:#fff;padding:1px 6px;border-radius:4px;margin-left:4px;font-weight:700;vertical-align:1px">NOVO</span></button>
         <button class="btn btn-secondary" id="ptab-pedidos" onclick="switchPedidosTab('pedidos')">🧾 Pedidos</button>
@@ -636,6 +636,7 @@
             <button class="btn btn-sm btn-secondary" id="transp-btn-fila" onclick="switchTranspTab('fila')" style="border-color:var(--accent);color:var(--accent)">📦 Fila de Expedição</button>
             <button class="btn btn-sm btn-secondary" id="transp-btn-entregues" onclick="switchTranspTab('entregues')">✅ Entregues / Retirados</button>
             <button class="btn btn-sm btn-secondary" id="transp-btn-relatorios" onclick="switchTranspTab('relatorios')">📊 Relatórios</button>
+            <button class="btn btn-sm btn-secondary" id="transp-btn-cadastro" onclick="switchTranspTab('cadastro')">🚚 Transportadoras</button>
           </div>
           
           <!-- Filtros Dinâmicos (Direita) -->
@@ -667,6 +668,12 @@
             
             <!-- Filtros de Relatórios -->
             <div id="transp-filter-relatorios" style="display:none;"></div>
+
+            <!-- Filtros do cadastro de transportadoras -->
+            <div id="transp-filter-cadastro" style="display:none; align-items:center; gap:8px;">
+              <input type="text" id="transp-cad-busca" placeholder="Buscar transportadora..." oninput="loadCadastroTransp()" style="max-width:200px; height:32px; font-size:12px; padding:4px 8px;">
+              <button class="btn btn-sm btn-primary" id="transp-cad-novo" onclick="abrirModalTransp()">+ Nova transportadora</button>
+            </div>
           </div>
         </div>
 
@@ -677,6 +684,17 @@
             <table>
               <thead><tr><th>Nº Pedido</th><th>Cliente</th><th>Vendedor</th><th>Transportadora</th><th>Frete</th><th>Previsão</th><th>NF</th><th>Na etapa / Data</th><th>Status</th><th></th></tr></thead>
               <tbody id="ped-transp-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Cadastro de Transportadoras -->
+        <div id="transp-content-cadastro" style="display:none">
+          <div class="table-wrap">
+            <div class="table-head"><span class="table-head-title">Transportadoras cadastradas</span><span style="font-size:12px;color:var(--muted)">São as opções que o vendedor escolhe ao informar o frete</span></div>
+            <table>
+              <thead><tr><th>Nome</th><th>CNPJ</th><th>Telefone / Contato</th><th>Rastreio</th><th>Envios</th><th>Último envio</th><th>Frete total</th><th>Situação</th><th></th></tr></thead>
+              <tbody id="transp-cad-tbody"></tbody>
             </table>
           </div>
         </div>
@@ -749,7 +767,7 @@
         <input type="hidden" id="desp-pedido-id">
         <div id="desp-cabecalho" style="font-size:14px;color:var(--text);margin-bottom:16px;background:rgba(255,255,255,0.05);padding:10px 12px;border-radius:8px;border-left:4px solid var(--accent);line-height:1.6;"></div>
         <div class="form-grid" style="margin-bottom:12px">
-          <div class="form-group" style="grid-column:1/-1"><label>Transportadora</label><input type="text" id="desp-transportadora" placeholder="Ex.: Jamef, Braspress, retirada..."></div>
+          <div class="form-group" style="grid-column:1/-1"><label>Transportadora</label><select id="desp-transportadora"></select></div>
           <div class="form-group"><label>Nota Fiscal (NF-e) *</label><input type="text" id="desp-nf"></div>
           <div class="form-group"><label>Código de rastreio/cotação</label><input type="text" id="desp-rastreio"></div>
           <div class="form-group"><label>Volumes</label><input type="number" id="desp-volumes" min="0" step="1" value="1"></div>
@@ -780,6 +798,40 @@
         <div class="flex gap-2 justify-end">
           <button class="btn btn-secondary" onclick="closeModal('modal-despacho')">Cancelar</button>
           <button class="btn btn-primary" onclick="salvarDespacho()">📦 Salvar como despachado</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="modal-transportadora">
+      <div class="modal" style="max-width:560px;width:95vw">
+        <div class="modal-title" id="transp-modal-title">🚚 Nova transportadora</div>
+        <input type="hidden" id="transp-id">
+        <div class="form-grid" style="margin-bottom:12px">
+          <div class="form-group" style="grid-column:1/-1"><label>Nome *</label><input type="text" id="transp-nome" placeholder="Ex.: Braspress"></div>
+          <div class="form-group"><label>CNPJ</label><input type="text" id="transp-cnpj"></div>
+          <div class="form-group"><label>Telefone</label><input type="text" id="transp-telefone"></div>
+          <div class="form-group"><label>Contato</label><input type="text" id="transp-contato"></div>
+          <div class="form-group"><label>E-mail</label><input type="text" id="transp-email"></div>
+          <div class="form-group" style="grid-column:1/-1"><label>Site de rastreio</label><input type="text" id="transp-site" placeholder="https://..."></div>
+          <div class="form-group" style="grid-column:1/-1"><label>Observações</label><textarea id="transp-obs" rows="2"></textarea></div>
+          <div class="form-group"><label>Situação</label><select id="transp-ativo"><option value="1">Ativa — aparece para o vendedor</option><option value="0">Inativa — não aparece</option></select></div>
+        </div>
+        <div class="flex gap-2 justify-end">
+          <button class="btn btn-secondary" onclick="closeModal('modal-transportadora')">Cancelar</button>
+          <button class="btn btn-primary" onclick="salvarTransp()">💾 Salvar</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-overlay" id="modal-unificar-transp">
+      <div class="modal" style="max-width:480px;width:95vw">
+        <div class="modal-title">🔗 Unificar transportadora</div>
+        <input type="hidden" id="unif-de-id">
+        <div id="unif-texto" style="font-size:13px;color:var(--muted);margin-bottom:12px;line-height:1.6"></div>
+        <div class="form-group"><label>Juntar com</label><select id="unif-para"></select></div>
+        <div class="flex gap-2 justify-end" style="margin-top:14px">
+          <button class="btn btn-secondary" onclick="closeModal('modal-unificar-transp')">Cancelar</button>
+          <button class="btn btn-primary" onclick="confirmarUnificarTransp()">🔗 Unificar</button>
         </div>
       </div>
     </div>
@@ -3079,7 +3131,7 @@
   </div>
 </div>
 
-<script src="js/app.js?v=20261030-fase2-3-portal-vendedor"></script>
+<script src="js/app.js?v=20261030-fase2-5-transportadoras"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');

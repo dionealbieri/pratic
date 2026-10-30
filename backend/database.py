@@ -1524,7 +1524,53 @@ def init_db():
     conn.commit()
     _migrar_fluxo_expedicao(conn)
     conn.commit()
+    _migrar_transportadoras(conn)
+    conn.commit()
     conn.close()
+
+
+def _migrar_transportadoras(conn):
+    """Cadastro de transportadoras. Na primeira vez, importa os nomes já usados
+    nos pedidos (sem diferenciar maiúsculas/espaços) para o cadastro."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS transportadoras (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT NOT NULL,
+            cnpj TEXT,
+            telefone TEXT,
+            contato TEXT,
+            email TEXT,
+            site_rastreio TEXT,
+            observacoes TEXT,
+            ativo INTEGER DEFAULT 1,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        )
+    """)
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_transportadoras_nome ON transportadoras(nome COLLATE NOCASE)")
+    conn.execute("""CREATE TABLE IF NOT EXISTS sistema_migracoes (
+        chave TEXT PRIMARY KEY, aplicada_em TEXT DEFAULT (datetime('now','localtime')))""")
+    chave = "transportadoras_importar_nomes_v1"
+    if conn.execute("SELECT 1 FROM sistema_migracoes WHERE chave=?", (chave,)).fetchone():
+        return
+    import re
+    vistos = set()
+    rows = conn.execute("""SELECT transportadora, COUNT(*) n FROM pedidos
+                           WHERE transportadora IS NOT NULL AND TRIM(transportadora) != ''
+                           GROUP BY transportadora ORDER BY n DESC""").fetchall()
+    for r in rows:
+        nome = re.sub(r"\s+", " ", r["transportadora"]).strip()
+        chave_nome = nome.upper()
+        if not nome or chave_nome in vistos or chave_nome == "RETIRADA PELO CLIENTE":
+            continue
+        vistos.add(chave_nome)
+        conn.execute("INSERT OR IGNORE INTO transportadoras (nome) VALUES (?)", (nome,))
+    # Padroniza a grafia nos pedidos (ex.: 'BRASPRESS ' e 'braspress' viram 'Braspress'),
+    # para os relatórios contarem como a mesma transportadora.
+    for t in conn.execute("SELECT nome FROM transportadoras").fetchall():
+        conn.execute("""UPDATE pedidos SET transportadora = ?
+                        WHERE transportadora IS NOT NULL AND UPPER(TRIM(transportadora)) = UPPER(?)
+                          AND transportadora != ?""", (t["nome"], t["nome"], t["nome"]))
+    conn.execute("INSERT OR IGNORE INTO sistema_migracoes (chave) VALUES (?)", (chave,))
 
 
 def _migrar_fluxo_expedicao(conn):
