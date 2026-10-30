@@ -95,6 +95,8 @@ class ClienteIn(BaseModel):
     cidade: Optional[str] = None
     uf: Optional[str] = None
     observacoes: Optional[str] = None
+    # 1 = cliente com estoque programado (deixamos estoque). None = não mexer.
+    estoque_programado: Optional[int] = None
 
 class ItemPedidoIn(BaseModel):
     id: Optional[int] = None  # id do item já existente (edição): permite atualizar em vez de recriar
@@ -889,7 +891,7 @@ async def importar_clientes(file: UploadFile = File(...)):
 
 
 @router.post("/importar-arquivos-lote")
-async def importar_pedidos_lote(files: List[UploadFile] = File(...)):
+async def importar_pedidos_lote(files: List[UploadFile] = File(...), current_user: dict = Depends(get_current_user)):
     """Importa vários PDFs de pedido de uma vez: cria cliente+pedido+itens, pula duplicados (por número) e devolve um resumo."""
     if not files:
         raise HTTPException(400, "Selecione ao menos um arquivo")
@@ -933,7 +935,14 @@ async def importar_pedidos_lote(files: List[UploadFile] = File(...)):
                     (str(numero), cliente_id, parsed.get("prazo_entrega") or datetime.date.today().isoformat(),
                      parsed.get("vendedor"), parsed.get("observacoes")))
                 pedido_id = cur.lastrowid
-                vincular_pedido(conn, pedido_id)
+                uid_vend = vincular_pedido(conn, pedido_id)
+                vendedor_outro = None
+                if current_user.get("role") == "comercial":
+                    if not uid_vend:
+                        # Vendedor importando: pedido sem vendedor reconhecido fica com quem importou
+                        cur.execute("UPDATE pedidos SET vendedor_usuario_id=? WHERE id=?", (current_user["id"], pedido_id))
+                    elif uid_vend != current_user["id"]:
+                        vendedor_outro = parsed.get("vendedor")
                 for it in parsed.get("itens", []):
                     cur.execute("""INSERT INTO pedidos_itens
                         (pedido_id, produto_id, descricao, quantidade, unidade, valor_unitario, desconto, qtd_produzida, status)
@@ -945,6 +954,7 @@ async def importar_pedidos_lote(files: List[UploadFile] = File(...)):
                 criados_ids.append(pedido_id)
                 resultados.append({"arquivo": nome, "numero_pedido": numero, "status": "criado",
                                    "pedido_id": pedido_id, "cliente": parsed["cliente"].get("razao_social"),
+                                   "vendedor_outro": vendedor_outro,
                                    "qtd_itens": len(parsed.get("itens", [])),
                                    "faltando": parsed.get("faltando", [])})
             except Exception as e:
@@ -1130,10 +1140,11 @@ def criar_cliente(c: ClienteIn):
     cur = conn.cursor()
     cur.execute("""INSERT INTO pedidos_clientes
         (cnpj, razao_social, nome_fantasia, ie, email, telefone,
-         cep, logradouro, numero, complemento, bairro, cidade, uf, observacoes)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+         cep, logradouro, numero, complemento, bairro, cidade, uf, observacoes, estoque_programado)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (c.cnpj, c.razao_social, c.nome_fantasia, c.ie, c.email, c.telefone,
-         c.cep, c.logradouro, c.numero, c.complemento, c.bairro, c.cidade, c.uf, c.observacoes))
+         c.cep, c.logradouro, c.numero, c.complemento, c.bairro, c.cidade, c.uf, c.observacoes,
+         1 if c.estoque_programado else 0))
     conn.commit()
     id = cur.lastrowid
     conn.close()
@@ -1148,6 +1159,8 @@ def atualizar_cliente(id: int, c: ClienteIn):
         WHERE id=?""",
         (c.cnpj, c.razao_social, c.nome_fantasia, c.ie, c.email, c.telefone,
          c.cep, c.logradouro, c.numero, c.complemento, c.bairro, c.cidade, c.uf, c.observacoes, id))
+    if c.estoque_programado is not None:
+        conn.execute("UPDATE pedidos_clientes SET estoque_programado=? WHERE id=?", (1 if c.estoque_programado else 0, id))
     conn.commit()
     conn.close()
     return {"mensagem": "Cliente atualizado"}
@@ -1636,7 +1649,7 @@ def acompanhamento(current_user: dict = Depends(get_current_user)):
 
 @router.get("/meus/estoque-clientes")
 def estoque_dos_meus_clientes(current_user: dict = Depends(get_current_user)):
-    """Produtos (personalizados) que os clientes do vendedor já pediram, com saldo,
+    """Produtos que os clientes do vendedor MARCADOS como 'estoque programado' já pediram, com saldo,
     mínimo, consumo médio mensal (saídas dos últimos 6 meses), cobertura em dias e
     última saída. Itens de revenda (tampas etc.) ficam de fora."""
     conn = get_conn()
@@ -1652,6 +1665,7 @@ def estoque_dos_meus_clientes(current_user: dict = Depends(get_current_user)):
             LEFT JOIN estoque_saldo es ON es.produto_id = ep.id
             JOIN pedidos_clientes c ON c.id = p.cliente_id
             WHERE p.vendedor_usuario_id = ? AND ep.ativo = 1
+              AND COALESCE(c.estoque_programado, 0) = 1
               AND (ec.tipo IS NULL OR ec.tipo != 'revenda')
             GROUP BY ep.id
         """, (current_user["id"],)).fetchall()

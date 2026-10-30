@@ -71,7 +71,7 @@
   <!-- ── TAB ESTOQUE DOS MEUS CLIENTES ── -->
   <div id="tab-estoque" style="display:none">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
-      <div style="font-size:13px;color:var(--muted)">Produtos que seus clientes já pediram (sem itens de revenda). Consumo = média das saídas dos últimos 6 meses.</div>
+      <div style="font-size:13px;color:var(--muted)">Só clientes marcados como <strong>📦 estoque programado</strong> (o Gestor marca no cadastro do cliente). Consumo = média das saídas dos últimos 6 meses.</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <select id="est-cli-filtro" onchange="renderEstoqueClientes()" style="min-width:200px">
           <option value="atencao">⚠ Precisam de atenção</option>
@@ -177,45 +177,26 @@
 
   <!-- ── TAB IMPORTAR ── -->
   <div id="tab-importar" style="display:none">
-    <div class="section-title">Importar Pedidos</div>
-
-    <div class="drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()"
-         ondragover="event.preventDefault();this.classList.add('drag')"
-         ondragleave="this.classList.remove('drag')"
-         ondrop="handleDrop(event)">
-      <div class="drop-zone-icon">📥</div>
-      <div class="drop-zone-title">Arraste o arquivo aqui ou clique para selecionar</div>
-      <div class="drop-zone-sub">Suporta Excel (.xlsx, .xls) e CSV (.csv)</div>
-      <input type="file" id="file-input" accept=".xlsx,.xls,.csv" style="display:none" onchange="handleFile(this.files[0])">
+    <div class="section-title">Importar Pedido por Arquivo</div>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:14px;line-height:1.6">
+      Envie um ou vários PDFs de pedido (também aceita JPG, PNG, TXT, CSV). O sistema cria os pedidos automaticamente —
+      identificando código, cliente, vendedor, observações e itens — e pula os já cadastrados.
+      É a mesma importação da tela de Pedidos do painel.
+    </p>
+    <div id="com-imp-drop" onclick="document.getElementById('com-imp-input').click()"
+         ondragover="event.preventDefault();this.style.borderColor='var(--accent)'"
+         ondragleave="this.style.borderColor='var(--border)'"
+         ondrop="this.style.borderColor='var(--border)';comImpDrop(event)"
+         style="border:2px dashed var(--border);border-radius:14px;padding:40px 20px;text-align:center;cursor:pointer;background:var(--surface)">
+      <div style="font-size:34px;margin-bottom:8px">📄</div>
+      <div style="font-family:var(--font-head);font-weight:700;font-size:17px;margin-bottom:6px">Solte os arquivos aqui ou clique para buscar</div>
+      <div style="font-size:13px;color:var(--muted)" id="com-imp-nome">Nenhum arquivo selecionado</div>
+      <input type="file" id="com-imp-input" multiple accept=".pdf,.jpg,.jpeg,.png,.txt,.csv" style="display:none" onchange="comImpAdicionar(this.files)">
     </div>
-
-    <div id="imp-preview" style="display:none">
-      <div class="section-title">Pré-visualização dos dados</div>
-      <div id="imp-info" class="alert alert-warn mb-4"></div>
-      <div class="table-wrap mb-4" style="overflow-x:auto">
-        <table id="imp-table">
-          <thead id="imp-thead"></thead>
-          <tbody id="imp-tbody"></tbody>
-        </table>
-      </div>
-
-      <div class="section-title">Mapeamento de Colunas</div>
-      <div class="form-grid mb-4" id="imp-mapeamento"></div>
-
-      <div id="imp-alert"></div>
-      <div class="flex gap-2">
-        <button class="btn btn-primary" onclick="confirmarImportacao()" style="flex:1">✓ Importar Pedidos</button>
-        <button class="btn btn-secondary" onclick="cancelarImportacao()">Cancelar</button>
-      </div>
-    </div>
-
-    <div class="section-title">Modelo de importação</div>
-    <div class="card">
-      <div class="card-label" style="margin-bottom:12px">Baixe o modelo para preencher e importar</div>
-      <p style="font-size:13px;color:var(--muted);margin-bottom:16px">
-        O arquivo deve conter as colunas: <strong style="color:var(--text)">numero_pedido, cliente, prazo_entrega, item_descricao, item_quantidade, item_unidade</strong>
-      </p>
-      <button class="btn btn-secondary" onclick="baixarModelo()">⬇ Baixar modelo Excel</button>
+    <div id="com-imp-preview" style="display:none;margin:14px 0;font-size:13px;line-height:1.7;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 14px"></div>
+    <div class="flex gap-2" style="justify-content:flex-end;margin-top:12px">
+      <button class="btn btn-secondary" onclick="comImpLimpar()">Limpar</button>
+      <button class="btn btn-primary" id="com-imp-btn" onclick="comImportarLote()">Importar em lote</button>
     </div>
   </div>
 </div>
@@ -698,6 +679,77 @@ async function imprimirPedidoVendedor(id) {
   }
 }
 
+// ── IMPORTAR PEDIDOS POR ARQUIVO (mesma importação em lote do painel de Pedidos)
+let comImpArquivos = [];
+function comImpDrop(ev) {
+  ev.preventDefault();
+  comImpAdicionar(ev.dataTransfer.files);
+}
+function comImpAdicionar(files) {
+  Array.from(files || []).forEach(f => {
+    if (!comImpArquivos.some(x => x.name === f.name && x.size === f.size)) comImpArquivos.push(f);
+  });
+  comImpRender();
+}
+function comImpLimpar() {
+  comImpArquivos = [];
+  const i = document.getElementById('com-imp-input'); if (i) i.value = '';
+  comImpRender();
+}
+function comImpRender() {
+  const nome = document.getElementById('com-imp-nome');
+  const prev = document.getElementById('com-imp-preview');
+  const n = comImpArquivos.length;
+  if (nome) nome.textContent = !n ? 'Nenhum arquivo selecionado' : n === 1 ? comImpArquivos[0].name : n + ' arquivos selecionados';
+  if (!prev) return;
+  if (!n) { prev.style.display = 'none'; prev.innerHTML = ''; return; }
+  prev.style.display = 'block';
+  prev.innerHTML = `<strong>${n} arquivo(s) prontos:</strong><br>` + comImpArquivos.map(f => '• ' + esc(f.name)).join('<br>')
+    + '<br><span style="color:var(--muted)">Arraste mais arquivos para somar ao lote.</span>';
+}
+async function comImportarLote() {
+  if (!comImpArquivos.length) { showAlert('Selecione um ou mais arquivos de pedido', 'danger'); return; }
+  const btn = document.getElementById('com-imp-btn');
+  const prev = document.getElementById('com-imp-preview');
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Importando...'; }
+    const fd = new FormData();
+    comImpArquivos.forEach(f => fd.append('files', f));
+    const r = await fetch(API + '/pedidos/importar-arquivos-lote', { method: 'POST', body: fd });
+    if (r.status === 401) { window.location.href = '/login?redirect=/comercial'; return; }
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Erro ao importar');
+    const rs = data.resumo || { criados: 0, duplicados: 0, erros: 0, total: 0 };
+    const linhas = (data.resultados || []).map(it => {
+      if (it.status === 'criado') {
+        const falta = (it.faltando && it.faltando.length) ? ` <span style="color:#f4b400">(revisar: ${esc(it.faltando.join(', '))})</span>` : '';
+        const dono = it.vendedor_outro ? ` <span style="color:var(--muted)">— vendedor no pedido: ${esc(it.vendedor_outro)}</span>` : '';
+        return `<div style="color:#46d369">✅ Pedido ${esc(it.numero_pedido)} — ${esc(it.cliente || 'cliente')} (${it.qtd_itens} item(ns))${falta}${dono}</div>`;
+      }
+      if (it.status === 'duplicado') return `<div style="color:var(--muted)">↪️ Pedido ${esc(it.numero_pedido)} já existia — ignorado</div>`;
+      return `<div style="color:#ff6b6b">⚠️ ${esc(it.arquivo)}: ${esc(it.motivo || 'não foi possível ler')}</div>`;
+    }).join('');
+    const alertas = data.alertas_estoque || [];
+    const blocoAlertas = alertas.length
+      ? '<hr style="border-color:rgba(255,255,255,.1)"><div style="color:#f4b400;font-weight:600;margin:4px 0">⚠️ Estoque insuficiente para a demanda dos pedidos abertos:</div>'
+        + alertas.map(a => `<div style="color:#f4b400;font-size:13px">• ${esc(a.produto)}: saldo ${fmtNum(a.saldo)} ${esc(a.unidade || '')}, demanda ${fmtNum(a.demanda)} — faltam <strong>${fmtNum(a.falta)}</strong></div>`).join('')
+      : '';
+    if (prev) {
+      prev.style.display = 'block';
+      prev.innerHTML = `<strong>Resumo:</strong> ${rs.criados} criado(s), ${rs.duplicados} duplicado(s), ${rs.erros} com erro — de ${rs.total} arquivo(s).<hr style="border-color:rgba(255,255,255,.1)">${linhas}${blocoAlertas}`;
+    }
+    showAlert(`Importação concluída: ${rs.criados} pedido(s) criado(s).`);
+    comImpArquivos = [];
+    const i = document.getElementById('com-imp-input'); if (i) i.value = '';
+    const nome = document.getElementById('com-imp-nome'); if (nome) nome.textContent = 'Nenhum arquivo selecionado';
+    loadMeusPedidos(); loadPedidosCom();
+  } catch (e) {
+    showAlert(e.message || 'Erro ao importar', 'danger');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Importar em lote'; }
+  }
+}
+
 // ── MEUS PEDIDOS (fluxo pós-produção)
 let mpDados = { pedidos: [], novidades: [] };
 let mpModo = 'transportadora';
@@ -744,7 +796,7 @@ function renderEstoqueClientes() {
   if (filtro === 'atencao') lista = lista.filter(x => x.situacao !== 'ok');
   if (busca) lista = lista.filter(x => (String(x.nome) + ' ' + (x.codigo || '') + ' ' + (x.marca || '') + ' ' + (x.clientes || '')).toLowerCase().includes(busca));
   if (!lista.length) {
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">${filtro === 'atencao' && estCliDados.length ? '✅ Nenhum produto precisando de atenção' : 'Nenhum produto encontrado'}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">${filtro === 'atencao' && estCliDados.length ? '✅ Nenhum produto precisando de atenção' : (estCliDados.length ? 'Nenhum produto encontrado' : 'Nenhum cliente seu está marcado como “estoque programado”. Peça ao Gestor para marcar no cadastro do cliente.')}</td></tr>`;
     return;
   }
   const SIT = {

@@ -7122,7 +7122,7 @@ async function loadClientes() {
   const tbody=document.getElementById('ped-clientes-tbody');
   if(!tbody) return;
   tbody.innerHTML=rows.map(c=>`<tr>
-    <td><strong>${c.razao_social}</strong></td>
+    <td><strong>${c.razao_social}</strong>${c.estoque_programado ? ' <span class="pill pill-warn" title="Cliente com estoque programado" style="font-size:11px">📦 Estoque</span>' : ''}</td>
     <td>${nomeFantasiaCurto(c)}</td>
     <td>${c.cnpj?c.cnpj.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/,'$1.$2.$3/$4-$5'):'—'}</td>
     <td>${c.cidade?c.cidade+'/'+c.uf:'—'}</td>
@@ -7137,6 +7137,7 @@ async function loadClientes() {
 function openModalCliente(){
   ['cnpj','razao','fantasia','ie','email','telefone','cep','numero','logradouro','bairro','complemento','cidade','uf','obs'].forEach(f=>{const el=document.getElementById('cli-'+f);if(el)el.value='';});
   document.getElementById('cli-id').value='';
+  const ckEp=document.getElementById('cli-estoque-programado'); if(ckEp) ckEp.checked=false;
   document.getElementById('modal-cli-title').textContent='Cadastrar Cliente';
   openModal('modal-cliente');
 }
@@ -7148,6 +7149,7 @@ async function editCliente(id) {
   setV('ie',c.ie);setV('email',c.email);setV('telefone',c.telefone);setV('cep',c.cep);
   setV('numero',c.numero);setV('logradouro',c.logradouro);setV('bairro',c.bairro);
   setV('complemento',c.complemento);setV('cidade',c.cidade);setV('uf',c.uf);setV('obs',c.observacoes);
+  const ckEp=document.getElementById('cli-estoque-programado'); if(ckEp) ckEp.checked=!!c.estoque_programado;
   document.getElementById('modal-cli-title').textContent='Editar Cliente';
   openModal('modal-cliente');
 }
@@ -7198,6 +7200,7 @@ async function salvarCliente() {
   const getV=k=>{const el=document.getElementById('cli-'+k);return el?el.value:'';};
   const fantasia = (getV('fantasia').trim()) || _abreviarRazao(getV('razao'));
   const body={cnpj:getV('cnpj').replace(/\D/g,''),razao_social:getV('razao'),nome_fantasia:fantasia,ie:getV('ie'),email:getV('email'),telefone:getV('telefone'),cep:getV('cep').replace(/\D/g,''),logradouro:getV('logradouro'),numero:getV('numero'),complemento:getV('complemento'),bairro:getV('bairro'),cidade:getV('cidade'),uf:getV('uf'),observacoes:getV('obs')};
+  const ckEp=document.getElementById('cli-estoque-programado'); if(ckEp) body.estoque_programado = ckEp.checked ? 1 : 0;
   if(!body.razao_social){showAlert('Informe a razão social','danger');return;}
   const id=getV('id');
   try {

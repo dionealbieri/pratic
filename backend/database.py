@@ -1547,6 +1547,11 @@ def _migrar_transportadoras(conn):
         )
     """)
     conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_transportadoras_nome ON transportadoras(nome COLLATE NOCASE)")
+    # Cliente para quem a empresa produz e deixa estoque (exceção) — só esses entram
+    # em "Estoque dos meus clientes" no portal do vendedor.
+    cols_cli = [r[1] for r in conn.execute("PRAGMA table_info(pedidos_clientes)").fetchall()]
+    if "estoque_programado" not in cols_cli:
+        conn.execute("ALTER TABLE pedidos_clientes ADD COLUMN estoque_programado INTEGER DEFAULT 0")
     conn.execute("""CREATE TABLE IF NOT EXISTS sistema_migracoes (
         chave TEXT PRIMARY KEY, aplicada_em TEXT DEFAULT (datetime('now','localtime')))""")
     chave = "transportadoras_importar_nomes_v1"
