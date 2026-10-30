@@ -1526,8 +1526,41 @@ def init_db():
     conn.commit()
     _migrar_transportadoras(conn)
     _migrar_volumes(conn)
+    _migrar_estoque_cliente(conn)
     conn.commit()
     conn.close()
+
+
+def _migrar_estoque_cliente(conn):
+    """Estoque do cliente (copo personalizado guardado para o cliente):
+    - pedidos.para_estoque_cliente: pedido produzido para ficar no estoque do cliente;
+      ao terminar a produção vira 'em_estoque' e a quantidade entra no estoque do cliente;
+    - pedidos.origem_estoque_cliente: pedido de ENTREGA tirado do estoque do cliente;
+    - estoque_cliente_mov: razão de entradas/saídas (quantidade com sinal: + entra, - sai)."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(pedidos)").fetchall()]
+    if "para_estoque_cliente" not in cols:
+        conn.execute("ALTER TABLE pedidos ADD COLUMN para_estoque_cliente INTEGER DEFAULT 0")
+    if "origem_estoque_cliente" not in cols:
+        conn.execute("ALTER TABLE pedidos ADD COLUMN origem_estoque_cliente INTEGER DEFAULT 0")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS estoque_cliente_mov (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cliente_id INTEGER NOT NULL,
+            produto_id INTEGER,
+            descricao TEXT NOT NULL,
+            tipo TEXT NOT NULL,              -- entrada | entrega | baixa | ajuste
+            quantidade REAL NOT NULL,        -- com sinal: + entra, - sai
+            valor_unitario REAL DEFAULT 0,
+            pedido_id INTEGER,               -- pedido de origem (entrada) ou de entrega (saída)
+            pedido_item_id INTEGER,
+            usuario TEXT,
+            observacao TEXT,
+            created_at TEXT DEFAULT (datetime('now','localtime'))
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_estcli_cliente ON estoque_cliente_mov(cliente_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_estcli_pedido ON estoque_cliente_mov(pedido_id)")
+    conn.commit()
 
 
 def _migrar_volumes(conn):

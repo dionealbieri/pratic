@@ -581,6 +581,7 @@
               <option value="aberto">Aberto</option>
               <option value="em_producao">Em produção</option>
               <option value="produzido">Produzido (aguardando vendedor)</option>
+              <option value="em_estoque">Em estoque do cliente</option>
               <option value="aguardando_nf">Aguardando NF</option>
               <option value="aguardando_retirada">Aguardando retirada</option>
               <option value="enviado">Enviado (em trânsito)</option>
@@ -868,8 +869,12 @@
         <button class="btn btn-secondary" id="tab-separacao" onclick="switchEstoqueTab('separacao')">🗓️ Separação de Produção <span style="font-size:10px;background:var(--danger);color:#fff;padding:1px 6px;border-radius:4px;margin-left:4px;font-weight:700;vertical-align:1px">NOVO</span></button>
         <button class="btn btn-secondary" id="tab-movimentacoes" onclick="switchEstoqueTab('movimentacoes')">📋 Movimentações</button>
         <button class="btn btn-secondary" id="tab-perdas" onclick="switchEstoqueTab('perdas')">⚠️ Perdas</button>
+        <button class="btn btn-secondary" id="tab-estcliente" onclick="switchEstoqueTab('estcliente')">🏷️ Estoque de clientes</button>
         <button class="btn btn-secondary" id="tab-categorias" onclick="switchEstoqueTab('categorias')">🏷️ Categorias</button>
       </div>
+
+      <!-- ESTOQUE DE CLIENTES (copo personalizado guardado para o cliente) -->
+      <div id="est-tab-estcliente" style="display:none"><div id="ec-painel-adm"></div></div>
 
       <!-- PRODUTOS -->
       <div id="est-tab-produtos">
@@ -2140,6 +2145,11 @@
             <input type="text" id="prod-pedido-manual" placeholder="Ou número manual" style="width: 150px; flex-shrink: 0;" onchange="buscarPedidoManual()">
           </div>
           <div id="prod-pedido-aviso" style="font-size:11px;margin-top:5px;min-height:14px;color:var(--muted)"></div>
+          <label id="prod-para-estoque-wrap" style="display:none;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600;margin-top:6px;background:rgba(240,180,41,.08);border:1px solid rgba(240,180,41,.3);border-radius:8px;padding:8px 10px">
+            <input type="checkbox" id="prod-para-estoque" style="width:16px;height:16px;accent-color:var(--accent)">
+            🏷️ Este pedido vai para o estoque do cliente
+            <span id="prod-para-estoque-dica" style="font-weight:400;color:var(--muted);font-size:12px"></span>
+          </label>
         </div>
       </div>
       <!-- Toggle Lançamento Simplificado -->
@@ -3157,7 +3167,8 @@
 </div>
 
 <script src="js/cotacao.js?v=20261030-embalagem"></script>
-<script src="js/app.js?v=20261030-fase3-7-embalagem"></script>
+<script src="js/estoque-cliente.js?v=20261030-estcli"></script>
+<script src="js/app.js?v=20261030-fase3-8-estoque-cliente"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');

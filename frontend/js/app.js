@@ -2127,6 +2127,7 @@ let revendaProdutos = [];
 const TIPOS_PERDA_MOD = ['Quebra','Defeito','Erro na Produção','Mal formado','Fora de especificação','Falta na embalagem','Outros'];
 
 async function openModalProducao() {
+  if (typeof _prodParaEstoqueReset === 'function') _prodParaEstoqueReset();
   const [mqs, cols, prods, pedidos] = await Promise.all([
     api('/maquinas/'),
     api('/colaboradores/?contexto=producao'),
@@ -2345,8 +2346,16 @@ async function buscarPedidoManual() {
   } catch (e) { if (aviso) aviso.textContent = ''; }
 }
 
+function _prodParaEstoqueReset() {
+  const w = document.getElementById('prod-para-estoque-wrap');
+  if (w) w.style.display = 'none';
+  const ck = document.getElementById('prod-para-estoque');
+  if (ck) { ck.checked = false; ck.dataset.original = ''; ck.dataset.pedidoId = ''; }
+}
+
 async function onProdPedidoChange() {
   const pedId = document.getElementById('prod-pedido').value;
+  _prodParaEstoqueReset();
   if (!pedId) {
     prodItens = [{ produto_id: null, producao: 0, sobra: 0, perdas: [] }];
     document.getElementById('prod-pedido-manual').value = '';
@@ -2360,6 +2369,19 @@ async function onProdPedidoChange() {
     
     // Auto-preencher o número manual para compatibilidade de visualização
     document.getElementById('prod-pedido-manual').value = p.numero_pedido;
+
+    // Destino da produção: estoque do cliente (só para pedidos ainda não liberados para a Expedição)
+    const ck = document.getElementById('prod-para-estoque');
+    const wrap = document.getElementById('prod-para-estoque-wrap');
+    if (ck && wrap && !p.origem_estoque_cliente && ['aberto', 'em_producao', 'produzido', 'em_estoque'].includes(p.status || 'aberto')) {
+      const marcado = !!p.para_estoque_cliente;
+      ck.checked = marcado;
+      ck.dataset.original = marcado ? '1' : '0';
+      ck.dataset.pedidoId = String(p.id);
+      const dica = document.getElementById('prod-para-estoque-dica');
+      if (dica) dica.textContent = p.cliente_estoque_programado && !marcado ? '(cliente com estoque programado)' : '';
+      wrap.style.display = 'flex';
+    }
     
     // Itens de revenda não são produzidos — não entram em "Produtos Produzidos"
     const itensProducao = (p.itens || []).filter(i => !_itemEhRevenda(i));
@@ -2987,6 +3009,13 @@ async function executarSalvarProducao() {
             perdas: (i.perdas || []).map(pl => ({ quantidade: pl.quantidade || 0, tipo_perda: pl.tipo_perda, observacao: pl.observacao || null, nao_baixar_estoque: !!pl.nao_baixar_estoque }))
           }))
         });
+      }
+
+      // Destino do pedido (estoque do cliente) antes de atualizar o progresso, para o status sair certo
+      const ckEst = document.getElementById('prod-para-estoque');
+      if (ckEst && ckEst.dataset.pedidoId && (ckEst.checked ? '1' : '0') !== ckEst.dataset.original) {
+        try { await api('/pedidos/' + ckEst.dataset.pedidoId + '/para-estoque', 'PUT', { ativo: ckEst.checked }); }
+        catch (err) { showAlert('Produção salva, mas não deu para marcar o estoque do cliente: ' + err.message, 'warn'); }
       }
 
       // Atualizar o progresso de produção dos itens do pedido associado
@@ -4675,8 +4704,8 @@ function imprimirComprovante() {
 
 // ─── PEDIDOS ──────────────────────────────────────────────────────────────────
 
-const STATUS_LABEL_PED={aberto:'📋 Aberto',em_producao:'🏭 Em produção',produzido:'✅ Produzido',aguardando_nf:'🧾 Aguardando NF',aguardando_retirada:'🙋 Aguardando retirada',enviado:'🚚 Enviado',retirado:'✅ Retirado',entregue:'📦 Entregue'};
-const STATUS_PILL_PED={aberto:'pill-info',em_producao:'pill-warn',produzido:'pill-success',aguardando_nf:'pill-warn',aguardando_retirada:'pill-warn',enviado:'pill-info',retirado:'pill-success',entregue:'pill-success'};
+const STATUS_LABEL_PED={aberto:'📋 Aberto',em_producao:'🏭 Em produção',produzido:'✅ Produzido',em_estoque:'🏷️ Em estoque do cliente',aguardando_nf:'🧾 Aguardando NF',aguardando_retirada:'🙋 Aguardando retirada',enviado:'🚚 Enviado',retirado:'✅ Retirado',entregue:'📦 Entregue'};
+const STATUS_PILL_PED={aberto:'pill-info',em_producao:'pill-warn',produzido:'pill-success',em_estoque:'pill-info',aguardando_nf:'pill-warn',aguardando_retirada:'pill-warn',enviado:'pill-info',retirado:'pill-success',entregue:'pill-success'};
 const STATUS_NEXT_PED={aberto:'em_producao',em_producao:'produzido',produzido:null,entregue:null};
 const STATUS_NEXT_LABEL_PED={aberto:'→ Iniciar',em_producao:'→ Produzido',produzido:null,entregue:null};
 // Considera o item como produzido pela quantidade real, não só pelo campo status (evita divergência)
@@ -8532,7 +8561,7 @@ async function gerarCodigoProdutoAutomatico(categoriaId, excluirId = '') {
 
 function switchEstoqueTab(tab) {
   estoqueTabAtual = tab || 'produtos';
-  ['produtos', 'separacao', 'movimentacoes', 'perdas', 'categorias'].forEach(t => {
+  ['produtos', 'separacao', 'movimentacoes', 'perdas', 'estcliente', 'categorias'].forEach(t => {
     const pane = document.getElementById('est-tab-' + t);
     const btn = document.getElementById('tab-' + t);
     if (pane) pane.style.display = (t === estoqueTabAtual) ? '' : 'none';
@@ -8549,6 +8578,7 @@ function switchEstoqueTab(tab) {
   }
   if (estoqueTabAtual === 'perdas') loadPerdas();
   if (estoqueTabAtual === 'categorias') loadCategoriasEstoque();
+  if (estoqueTabAtual === 'estcliente' && typeof ecMontar === 'function') ecMontar('ec-painel-adm');
 }
 
 async function loadEstoque() {

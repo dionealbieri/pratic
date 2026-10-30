@@ -41,7 +41,8 @@ def exigir_gestor(current_user: dict):
 STATUS_LIBERADOS = ("aguardando_nf", "aguardando_retirada")
 STATUS_CONCLUIDOS = ("enviado", "retirado", "entregue")
 STATUS_POS_PRODUCAO = ("produzido",) + STATUS_LIBERADOS + STATUS_CONCLUIDOS
-STATUS_VALIDOS_PEDIDO = ["aberto", "em_producao"] + list(STATUS_POS_PRODUCAO)
+STATUS_VALIDOS_PEDIDO = ["aberto", "em_producao"] + list(STATUS_POS_PRODUCAO) + ["em_estoque"]
+# em_estoque: pedido produzido para ficar no estoque do cliente (não vai para vendedor/Expedição)
 
 
 def _nome_usuario(current_user: dict) -> str:
@@ -1207,8 +1208,9 @@ def deletar_cliente(id: int):
 def _recalc_status_pedido(cur, pedido_id):
     """Recalcula o status do pedido a partir do progresso real dos itens (qtd_produzida)."""
     # Obter status atual para preservar 'enviado' se for o caso
-    pedido = cur.execute("SELECT status FROM pedidos WHERE id=?", (pedido_id,)).fetchone()
+    pedido = cur.execute("SELECT * FROM pedidos WHERE id=?", (pedido_id,)).fetchone()
     current_status = pedido["status"] if pedido else "aberto"
+    para_estoque = bool(pedido and "para_estoque_cliente" in pedido.keys() and pedido["para_estoque_cliente"])
 
     counts = cur.execute("""
         SELECT COUNT(*) as total,
@@ -1245,9 +1247,44 @@ def _recalc_status_pedido(cur, pedido_id):
         novo = 'em_producao'
     else:
         novo = 'aberto'
+    # Pedido para o estoque do cliente: terminou a produção → entra no estoque do cliente
+    if para_estoque and novo in ('produzido', 'entregue') and current_status not in STATUS_LIBERADOS + STATUS_CONCLUIDOS:
+        novo = 'em_estoque'
     cur.execute("UPDATE pedidos SET status=? WHERE id=?", (novo, pedido_id))
+    if novo == 'em_estoque' and current_status != 'em_estoque':
+        _entrada_estoque_cliente(cur, pedido_id)
+    elif current_status == 'em_estoque' and novo != 'em_estoque':
+        cur.execute("DELETE FROM estoque_cliente_mov WHERE pedido_id=? AND tipo='entrada'", (pedido_id,))
     _checar_bloqueio_revenda(cur, pedido_id, novo)
     return novo
+
+
+def _entrada_estoque_cliente(cur, pedido_id):
+    """Lança no estoque do cliente o que foi produzido no pedido (itens de produção; revenda fica de fora)."""
+    ped = cur.execute("SELECT cliente_id, numero_pedido FROM pedidos WHERE id=?", (pedido_id,)).fetchone()
+    if not ped:
+        return
+    cur.execute("DELETE FROM estoque_cliente_mov WHERE pedido_id=? AND tipo='entrada'", (pedido_id,))
+    itens = cur.execute("""
+        SELECT i.id, i.produto_id, i.descricao, i.quantidade, i.qtd_produzida, i.valor_unitario
+        FROM pedidos_itens i
+        LEFT JOIN estoque_produtos ep ON ep.id = i.produto_id
+        LEFT JOIN estoque_categorias ec ON ec.id = ep.categoria_id
+        WHERE i.pedido_id = ? AND (ec.tipo IS NULL OR ec.tipo != 'revenda')
+    """, (pedido_id,)).fetchall()
+    for it in itens:
+        qtd = float(it["qtd_produzida"] or 0) or float(it["quantidade"] or 0)
+        if qtd <= 0:
+            continue
+        cur.execute("""INSERT INTO estoque_cliente_mov
+                       (cliente_id, produto_id, descricao, tipo, quantidade, valor_unitario, pedido_id, pedido_item_id, usuario, observacao)
+                       VALUES (?, ?, ?, 'entrada', ?, ?, ?, ?, 'Produção', ?)""",
+                    (ped["cliente_id"], it["produto_id"], _desc_estoque(it["descricao"]), qtd,
+                     it["valor_unitario"] or 0, pedido_id, it["id"], f"Produzido no pedido {ped['numero_pedido']}"))
+
+
+def _desc_estoque(d) -> str:
+    return re.sub(r"\s+", " ", str(d or "").strip()).upper() or "(SEM DESCRIÇÃO)"
 
 
 def _checar_bloqueio_revenda(cur, pedido_id, status):
@@ -1330,7 +1367,7 @@ def listar_pedidos(status: Optional[str] = None, cliente_id: Optional[int] = Non
         entr = d.get("itens_entregues") or 0
         ini_prod = d.get("itens_iniciados") or 0
         stored = d.get("status") or "aberto"
-        if stored in STATUS_LIBERADOS + STATUS_CONCLUIDOS:
+        if stored in STATUS_LIBERADOS + STATUS_CONCLUIDOS + ("em_estoque",):
             d["status_efetivo"] = stored
         elif tot > 0 and entr == tot:
             d["status_efetivo"] = "entregue"
@@ -1706,68 +1743,288 @@ def acompanhamento(current_user: dict = Depends(get_current_user)):
         conn.close()
 
 
-@router.get("/meus/estoque-clientes")
-def estoque_dos_meus_clientes(current_user: dict = Depends(get_current_user)):
-    """Produtos que os clientes do vendedor MARCADOS como 'estoque programado' já pediram, com saldo,
-    mínimo, consumo médio mensal (saídas dos últimos 6 meses), cobertura em dias e
-    última saída. Itens de revenda (tampas etc.) ficam de fora."""
+# ─── ESTOQUE DO CLIENTE (copo personalizado guardado para o cliente) ─────────
+
+class EntregaEstoqueItemIn(BaseModel):
+    produto_id: Optional[int] = None
+    descricao: str
+    quantidade: float
+
+
+class EntregaEstoqueIn(BaseModel):
+    cliente_id: int
+    itens: List[EntregaEstoqueItemIn]
+    observacao: Optional[str] = ""
+
+
+class AjusteEstoqueClienteIn(BaseModel):
+    cliente_id: int
+    produto_id: Optional[int] = None
+    descricao: str
+    quantidade: float          # + entra / - baixa
+    observacao: Optional[str] = ""
+
+
+class ParaEstoqueIn(BaseModel):
+    ativo: bool
+
+
+def _pode_mexer_estoque_cliente(current_user: dict) -> bool:
+    if current_user.get("role") == "gestor":
+        return True
+    if current_user.get("role") == "comercial":
+        return False
+    return verificar_permissao("estoque", "movimentar", current_user)
+
+
+def _clientes_do_vendedor(conn, uid: int) -> set:
+    return {r[0] for r in conn.execute(
+        "SELECT DISTINCT cliente_id FROM pedidos WHERE vendedor_usuario_id = ?", (uid,)).fetchall()}
+
+
+def _saldos_estoque_cliente(conn, cliente_ids=None) -> list:
+    """Saldo por cliente + produto + descrição, com consumo dos últimos 6 meses e cobertura."""
+    filtro, params = "", []
+    if cliente_ids is not None:
+        if not cliente_ids:
+            return []
+        filtro = f"WHERE m.cliente_id IN ({','.join('?' * len(cliente_ids))})"
+        params = list(cliente_ids)
+    rows = conn.execute(f"""
+        SELECT m.cliente_id, c.razao_social AS cliente_nome, c.nome_fantasia, m.produto_id, m.descricao,
+               ep.nome AS produto_nome, ep.unidade,
+               SUM(m.quantidade) AS saldo,
+               SUM(CASE WHEN m.quantidade > 0 THEN m.quantidade ELSE 0 END) AS total_entradas,
+               SUM(CASE WHEN m.tipo = 'entrega' AND m.created_at >= datetime('now','localtime','-6 months')
+                        THEN -m.quantidade ELSE 0 END) AS saidas_6m,
+               MIN(CASE WHEN m.tipo = 'entrega' AND m.created_at >= datetime('now','localtime','-6 months')
+                        THEN m.created_at END) AS primeira_saida_6m,
+               MAX(CASE WHEN m.tipo = 'entrega' THEN m.created_at END) AS ultima_entrega,
+               MAX(CASE WHEN m.tipo = 'entrada' THEN m.created_at END) AS ultima_entrada,
+               MAX(m.created_at) AS ultimo_mov
+        FROM estoque_cliente_mov m
+        JOIN pedidos_clientes c ON c.id = m.cliente_id
+        LEFT JOIN estoque_produtos ep ON ep.id = m.produto_id
+        {filtro}
+        GROUP BY m.cliente_id, COALESCE(m.produto_id, 0), m.descricao
+        ORDER BY c.razao_social, m.descricao
+    """, params).fetchall()
+    hoje = datetime.datetime.now()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["saldo"] = round(d["saldo"] or 0, 2)
+        dias_hist = 180
+        if d["primeira_saida_6m"]:
+            ini = _parse_dt(d["primeira_saida_6m"])
+            if ini:
+                dias_hist = max(30, min(180, (hoje - ini).days or 1))
+        media_dia = (d["saidas_6m"] or 0) / dias_hist if (d["saidas_6m"] or 0) > 0 else 0
+        d["consumo_mensal"] = round(media_dia * 30, 1)
+        d["cobertura_dias"] = int(d["saldo"] / media_dia) if media_dia > 0 and d["saldo"] > 0 else None
+        ref = _parse_dt(d["ultima_entrega"] or d["ultima_entrada"])
+        d["dias_parado"] = (hoje - ref).days if ref else None
+        if d["saldo"] <= 0:
+            d["situacao"] = "zerado"
+        elif d["cobertura_dias"] is not None and d["cobertura_dias"] <= 30:
+            d["situacao"] = "acabando"
+        elif d["dias_parado"] is not None and d["dias_parado"] >= 60:
+            d["situacao"] = "parado"
+        else:
+            d["situacao"] = "ok"
+        out.append(d)
+    return out
+
+
+@router.get("/estoque-cliente")
+def listar_estoque_cliente(cliente_id: Optional[int] = None, com_zerados: bool = False,
+                           current_user: dict = Depends(get_current_user)):
     conn = get_conn()
     try:
-        prods = conn.execute("""
-            SELECT ep.id, ep.codigo, ep.nome, ep.marca, ep.unidade, COALESCE(ep.estoque_minimo,0) AS estoque_minimo,
-                   COALESCE(es.quantidade,0) AS saldo,
-                   GROUP_CONCAT(DISTINCT c.razao_social) AS clientes
-            FROM pedidos p
-            JOIN pedidos_itens i ON i.pedido_id = p.id
-            JOIN estoque_produtos ep ON ep.id = i.produto_id
-            LEFT JOIN estoque_categorias ec ON ec.id = ep.categoria_id
-            LEFT JOIN estoque_saldo es ON es.produto_id = ep.id
-            JOIN pedidos_clientes c ON c.id = p.cliente_id
-            WHERE p.vendedor_usuario_id = ? AND ep.ativo = 1
-              AND COALESCE(c.estoque_programado, 0) = 1
-              AND (ec.tipo IS NULL OR ec.tipo != 'revenda')
-            GROUP BY ep.id
-        """, (current_user["id"],)).fetchall()
-        meses = 6
-        saida = []
-        for p in prods:
-            linha = conn.execute("""
-                SELECT COALESCE(SUM(quantidade),0) AS total, MIN(data) AS primeira, MAX(data) AS ultima
-                FROM estoque_movimentacoes
-                WHERE produto_id = ? AND tipo = 'saida' AND data >= date('now', ? || ' months')
-            """, (p["id"], f"-{meses}")).fetchone()
-            ultima_geral = conn.execute(
-                "SELECT MAX(data) FROM estoque_movimentacoes WHERE produto_id=? AND tipo='saida'", (p["id"],)).fetchone()[0]
-            total = linha["total"] or 0
-            dias_hist = None
-            if linha["primeira"]:
-                d = conn.execute("SELECT CAST(julianday('now') - julianday(?) AS INTEGER)", (linha["primeira"],)).fetchone()[0]
-                dias_hist = max(d or 0, 1)
-            janela = min(dias_hist, meses * 30) if dias_hist else meses * 30
-            media_dia = total / janela if janela else 0
-            saldo = p["saldo"] or 0
-            minimo = p["estoque_minimo"] or 0
-            cobertura = int(saldo / media_dia) if media_dia > 0 else None
-            dias_sem_saida = None
-            if ultima_geral:
-                dias_sem_saida = conn.execute("SELECT CAST(julianday('now') - julianday(?) AS INTEGER)", (ultima_geral,)).fetchone()[0]
-            if minimo > 0 and saldo <= minimo:
-                situacao = "abaixo_minimo"
-            elif cobertura is not None and cobertura <= 30:
-                situacao = "acabando"
-            elif dias_sem_saida is not None and dias_sem_saida >= 60 and saldo > 0:
-                situacao = "parado"
-            else:
-                situacao = "ok"
-            saida.append({
-                "produto_id": p["id"], "codigo": p["codigo"], "nome": p["nome"], "marca": p["marca"],
-                "unidade": p["unidade"], "clientes": p["clientes"], "saldo": saldo, "estoque_minimo": minimo,
-                "consumo_mensal": round(media_dia * 30, 1), "cobertura_dias": cobertura,
-                "ultima_saida": ultima_geral, "dias_sem_saida": dias_sem_saida, "situacao": situacao,
-            })
-        ordem = {"abaixo_minimo": 0, "acabando": 1, "parado": 2, "ok": 3}
-        saida.sort(key=lambda x: (ordem[x["situacao"]], x["cobertura_dias"] if x["cobertura_dias"] is not None else 10**9))
-        return saida
+        ids = None
+        if current_user.get("role") == "comercial":
+            ids = _clientes_do_vendedor(conn, current_user["id"])
+        if cliente_id:
+            ids = {cliente_id} if ids is None or cliente_id in ids else set()
+        linhas = _saldos_estoque_cliente(conn, ids)
+        if not com_zerados:
+            linhas = [l for l in linhas if l["saldo"] > 0]
+        # Pedidos em produção para o estoque (o que ainda vai entrar)
+        filtro, params = "", []
+        if ids is not None:
+            if not ids:
+                return {"linhas": [], "a_caminho": [], "pode_mexer": False}
+            filtro = f"AND p.cliente_id IN ({','.join('?' * len(ids))})"
+            params = list(ids)
+        a_caminho = [dict(r) for r in conn.execute(f"""
+            SELECT p.id, p.numero_pedido, p.status, p.cliente_id, c.razao_social AS cliente_nome
+            FROM pedidos p JOIN pedidos_clientes c ON c.id = p.cliente_id
+            WHERE COALESCE(p.para_estoque_cliente,0) = 1 AND p.status IN ('aberto','em_producao') {filtro}
+            ORDER BY p.id
+        """, params).fetchall()]
+        return {"linhas": linhas, "a_caminho": a_caminho, "pode_mexer": _pode_mexer_estoque_cliente(current_user)}
+    finally:
+        conn.close()
+
+
+@router.get("/estoque-cliente/historico")
+def historico_estoque_cliente(cliente_id: int, descricao: str, produto_id: Optional[int] = None,
+                              current_user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    try:
+        if current_user.get("role") == "comercial" and cliente_id not in _clientes_do_vendedor(conn, current_user["id"]):
+            raise HTTPException(403, "Cliente não é seu.")
+        rows = conn.execute("""
+            SELECT m.*, p.numero_pedido, p.status AS pedido_status
+            FROM estoque_cliente_mov m LEFT JOIN pedidos p ON p.id = m.pedido_id
+            WHERE m.cliente_id = ? AND m.descricao = ? AND COALESCE(m.produto_id,0) = COALESCE(?,0)
+            ORDER BY m.id DESC LIMIT 200
+        """, (cliente_id, descricao, produto_id)).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def _saldo_linha(conn, cliente_id, produto_id, descricao) -> float:
+    return conn.execute("""SELECT COALESCE(SUM(quantidade),0) FROM estoque_cliente_mov
+                           WHERE cliente_id=? AND descricao=? AND COALESCE(produto_id,0)=COALESCE(?,0)""",
+                        (cliente_id, descricao, produto_id)).fetchone()[0]
+
+
+@router.post("/estoque-cliente/entrega")
+def criar_entrega_estoque_cliente(body: EntregaEstoqueIn, current_user: dict = Depends(get_current_user)):
+    """Tira do estoque do cliente e cria um pedido de entrega já pronto (status Produzido):
+    segue o fluxo normal — embalagem → vendedor define frete/retirada → Expedição emite NF."""
+    conn = get_conn()
+    try:
+        role = current_user.get("role")
+        if role == "comercial":
+            if body.cliente_id not in _clientes_do_vendedor(conn, current_user["id"]):
+                raise HTTPException(403, "Cliente não é seu.")
+        elif not _pode_mexer_estoque_cliente(current_user):
+            raise HTTPException(403, "Você não tem permissão para movimentar o estoque do cliente.")
+        itens = [i for i in body.itens if (i.quantidade or 0) > 0]
+        if not itens:
+            raise HTTPException(400, "Informe a quantidade de pelo menos um item.")
+        cli = conn.execute("SELECT id, razao_social FROM pedidos_clientes WHERE id=?", (body.cliente_id,)).fetchone()
+        if not cli:
+            raise HTTPException(404, "Cliente não encontrado")
+        for it in itens:
+            saldo = _saldo_linha(conn, body.cliente_id, it.produto_id, it.descricao)
+            if it.quantidade > saldo + 1e-9:
+                raise HTTPException(400, f"Saldo insuficiente de {it.descricao}: tem {saldo:g}, pediu {it.quantidade:g}.")
+        # Vendedor responsável: quem pediu (se vendedor) ou o do último pedido de estoque do cliente
+        if role == "comercial":
+            vend_id, vend_nome = current_user["id"], _nome_usuario(current_user)
+        else:
+            ult = conn.execute("""SELECT p.vendedor_usuario_id, p.vendedor FROM pedidos p
+                                  WHERE p.cliente_id=? AND p.vendedor_usuario_id IS NOT NULL
+                                  ORDER BY COALESCE(p.para_estoque_cliente,0) DESC, p.id DESC LIMIT 1""",
+                               (body.cliente_id,)).fetchone()
+            vend_id = ult["vendedor_usuario_id"] if ult else None
+            vend_nome = (ult["vendedor"] if ult else "") or ""
+        seq = conn.execute("SELECT COUNT(*) FROM pedidos WHERE COALESCE(origem_estoque_cliente,0)=1").fetchone()[0] + 1
+        numero = f"EST-{seq:04d}"
+        while conn.execute("SELECT 1 FROM pedidos WHERE numero_pedido=?", (numero,)).fetchone():
+            seq += 1
+            numero = f"EST-{seq:04d}"
+        usuario = _nome_usuario(current_user)
+        cur = conn.cursor()
+        cur.execute("""INSERT INTO pedidos (numero_pedido, cliente_id, prazo_entrega, vendedor, vendedor_usuario_id,
+                       observacoes, status, origem_estoque_cliente)
+                       VALUES (?, ?, date('now','localtime'), ?, ?, ?, 'produzido', 1)""",
+                    (numero, body.cliente_id, vend_nome, vend_id,
+                     ("Entrega do estoque do cliente. " + (body.observacao or "")).strip()))
+        pid = cur.lastrowid
+        for it in itens:
+            vu = conn.execute("""SELECT valor_unitario FROM estoque_cliente_mov
+                                 WHERE cliente_id=? AND descricao=? AND COALESCE(produto_id,0)=COALESCE(?,0)
+                                   AND tipo='entrada' ORDER BY id DESC LIMIT 1""",
+                              (body.cliente_id, it.descricao, it.produto_id)).fetchone()
+            cur.execute("""INSERT INTO pedidos_itens (pedido_id, produto_id, descricao, quantidade, unidade, status,
+                           qtd_produzida, valor_unitario) VALUES (?, ?, ?, ?, 'un', 'produzido', ?, ?)""",
+                        (pid, it.produto_id, it.descricao, it.quantidade, it.quantidade, (vu[0] if vu else 0) or 0))
+            item_id = cur.lastrowid
+            cur.execute("""INSERT INTO estoque_cliente_mov (cliente_id, produto_id, descricao, tipo, quantidade,
+                           pedido_id, pedido_item_id, usuario, observacao)
+                           VALUES (?, ?, ?, 'entrega', ?, ?, ?, ?, ?)""",
+                        (body.cliente_id, it.produto_id, it.descricao, -it.quantidade, pid, item_id, usuario,
+                         f"Entrega {numero}"))
+        _marcar_usuario_hist(conn, pid, current_user)
+        _checar_bloqueio_revenda(cur, pid, "produzido")
+        conn.execute("""INSERT INTO auditoria (usuario, acao, entidade, entidade_id, descricao, valor_anterior, valor_novo)
+                        VALUES (?, 'entrega_estoque_cliente', 'pedidos', ?, ?, '', '')""",
+                     (usuario, pid, f"Entrega {numero} do estoque de {cli['razao_social']}"))
+        conn.commit()
+        return {"mensagem": f"Entrega {numero} criada. Ela segue para embalagem e frete.", "pedido_id": pid,
+                "numero_pedido": numero}
+    finally:
+        conn.close()
+
+
+@router.post("/estoque-cliente/ajuste")
+def ajustar_estoque_cliente(body: AjusteEstoqueClienteIn, current_user: dict = Depends(get_current_user)):
+    """Baixa ou entrada manual (saldo inicial, perda, entrega feita por fora...)."""
+    if not _pode_mexer_estoque_cliente(current_user):
+        raise HTTPException(403, "Só o Gestor ou o Estoque podem ajustar o estoque do cliente.")
+    if not body.quantidade:
+        raise HTTPException(400, "Informe a quantidade.")
+    if not (body.observacao or "").strip():
+        raise HTTPException(400, "Informe o motivo do ajuste.")
+    conn = get_conn()
+    try:
+        if not conn.execute("SELECT 1 FROM pedidos_clientes WHERE id=?", (body.cliente_id,)).fetchone():
+            raise HTTPException(404, "Cliente não encontrado")
+        desc = _desc_estoque(body.descricao)
+        if body.quantidade < 0:
+            saldo = _saldo_linha(conn, body.cliente_id, body.produto_id, desc)
+            if -body.quantidade > saldo + 1e-9:
+                raise HTTPException(400, f"Saldo insuficiente: tem {saldo:g}.")
+        conn.execute("""INSERT INTO estoque_cliente_mov (cliente_id, produto_id, descricao, tipo, quantidade, usuario, observacao)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                     (body.cliente_id, body.produto_id, desc, "baixa" if body.quantidade < 0 else "ajuste",
+                      body.quantidade, _nome_usuario(current_user), body.observacao.strip()))
+        conn.commit()
+        return {"mensagem": "Estoque do cliente atualizado"}
+    finally:
+        conn.close()
+
+
+@router.put("/{id}/para-estoque")
+def marcar_para_estoque(id: int, body: ParaEstoqueIn, current_user: dict = Depends(get_current_user)):
+    """Marca/desmarca o pedido como produção para o estoque do cliente."""
+    if current_user.get("role") == "comercial" or not (
+            current_user.get("role") == "gestor"
+            or verificar_permissao("producao", "criar", current_user)
+            or verificar_permissao("pedidos", "editar", current_user)):
+        raise HTTPException(403, "Sem permissão para alterar o destino do pedido.")
+    conn = get_conn()
+    try:
+        ped = conn.execute("SELECT id, status, COALESCE(para_estoque_cliente,0) AS pe, COALESCE(origem_estoque_cliente,0) AS oe FROM pedidos WHERE id=?", (id,)).fetchone()
+        if not ped:
+            raise HTTPException(404, "Pedido não encontrado")
+        if ped["oe"]:
+            raise HTTPException(400, "Este pedido já é uma entrega do estoque do cliente.")
+        if bool(ped["pe"]) == bool(body.ativo):
+            return {"mensagem": "Sem alteração", "status": ped["status"]}
+        if ped["status"] in STATUS_LIBERADOS + STATUS_CONCLUIDOS:
+            raise HTTPException(400, "O pedido já foi liberado para a Expedição — não dá mais para mudar o destino.")
+        if not body.ativo and ped["status"] == "em_estoque":
+            neg = conn.execute("""
+                SELECT m.descricao FROM estoque_cliente_mov m
+                WHERE m.cliente_id = (SELECT cliente_id FROM pedidos WHERE id=?)
+                GROUP BY m.cliente_id, COALESCE(m.produto_id,0), m.descricao
+                HAVING SUM(CASE WHEN m.pedido_id = ? AND m.tipo = 'entrada' THEN 0 ELSE m.quantidade END) < 0
+            """, (id, id)).fetchone()
+            if neg:
+                raise HTTPException(400, f"Parte deste estoque ({neg['descricao']}) já foi entregue — não dá para desmarcar.")
+        cur = conn.cursor()
+        cur.execute("UPDATE pedidos SET para_estoque_cliente=? WHERE id=?", (1 if body.ativo else 0, id))
+        novo = _recalc_status_pedido(cur, id)
+        _marcar_usuario_hist(conn, id, current_user)
+        conn.commit()
+        return {"mensagem": "Pedido marcado para o estoque do cliente" if body.ativo else "Pedido volta para entrega normal",
+                "status": novo}
     finally:
         conn.close()
 
@@ -1796,6 +2053,7 @@ def meus_pedidos(current_user: dict = Depends(get_current_user)):
             SELECT p.id, p.numero_pedido, p.status, p.status_desde, p.prazo_entrega,
                    p.transportadora, p.frete, p.previsao_entrega, p.retirada_prevista,
                    p.obs_vendedor, p.nota_fiscal, p.data_despacho, p.data_entrega, p.envio_definido_em,
+                   COALESCE(p.origem_estoque_cliente,0) AS origem_estoque_cliente,
                    c.razao_social AS cliente_nome, c.nome_fantasia,
                    CAST(julianday('now','localtime') - julianday(p.status_desde) AS INTEGER) AS dias_na_etapa,
                    julianday(p.prazo_entrega) - julianday('now') AS dias_restantes,
@@ -1826,7 +2084,7 @@ def meus_pedidos(current_user: dict = Depends(get_current_user)):
             JOIN pedidos_clientes c ON c.id = p.cliente_id
             WHERE p.vendedor_usuario_id = ?
               AND (? = '' OR date(p.created_at) >= ?)
-              AND h.status IN ('produzido','enviado','retirado')
+              AND h.status IN ('produzido','enviado','retirado','em_estoque')
               AND NOT (h.status = 'produzido' AND p.status = 'produzido'
                        AND ({_sql_revenda_pendente('p')} + {_sql_embalagem_pendente('p')}) > 0)
               AND h.em > COALESCE(?, datetime('now','localtime','-3 days'))
@@ -2336,7 +2594,7 @@ def buscar_pedido(id: int, current_user: dict = Depends(get_current_user)):
                c.cep as cliente_cep, c.logradouro as cliente_logradouro,
                c.numero as cliente_numero, c.complemento as cliente_complemento,
                c.bairro as cliente_bairro, c.cidade as cliente_cidade, c.uf as cliente_uf,
-               c.email as cliente_email,
+               c.email as cliente_email, COALESCE(c.estoque_programado,0) as cliente_estoque_programado,
                julianday(p.prazo_entrega) - julianday('now') as dias_restantes
         FROM pedidos p
         JOIN pedidos_clientes c ON p.cliente_id = c.id
@@ -2771,7 +3029,11 @@ def deletar_pedido(id: int, current_user = Depends(get_current_user)):
         if current_user.get("role") == "comercial":
             if ped["vendedor_usuario_id"] != current_user["id"]:
                 raise HTTPException(403, "Este pedido não é seu.")
-            if (ped["status"] or "aberto") != "aberto":
+            eh_entrega_estoque = cur.execute("SELECT COALESCE(origem_estoque_cliente,0) FROM pedidos WHERE id=?", (id,)).fetchone()[0]
+            if eh_entrega_estoque:
+                if ped["status"] != "produzido":
+                    raise HTTPException(400, "Esta entrega já foi liberada para a Expedição. Volte o envio antes de excluir.")
+            elif (ped["status"] or "aberto") != "aberto":
                 raise HTTPException(400, "Só é possível excluir pedidos ainda em aberto. Peça ao Gestor.")
             if cur.execute("SELECT 1 FROM producao_diaria WHERE pedido_numero=? LIMIT 1", (numero_pedido,)).fetchone() \
                or cur.execute("SELECT 1 FROM pedidos_itens WHERE pedido_id=? AND COALESCE(qtd_produzida,0) > 0 LIMIT 1", (id,)).fetchone():
@@ -2839,6 +3101,17 @@ def deletar_pedido(id: int, current_user = Depends(get_current_user)):
         cur.execute("DELETE FROM pedidos_itens WHERE pedido_id=?", (id,))
         cur.execute("DELETE FROM pedidos_status_hist WHERE pedido_id=?", (id,))
         cur.execute("DELETE FROM pedidos_volumes WHERE pedido_id=?", (id,))
+        # Estoque do cliente: entrega excluída devolve o saldo; pedido de origem excluído tira a entrada
+        if cur.execute("SELECT 1 FROM estoque_cliente_mov WHERE pedido_id=? AND tipo='entrada' LIMIT 1", (id,)).fetchone():
+            neg = cur.execute("""
+                SELECT m.descricao FROM estoque_cliente_mov m
+                WHERE m.cliente_id = (SELECT cliente_id FROM pedidos WHERE id=?)
+                GROUP BY m.cliente_id, COALESCE(m.produto_id,0), m.descricao
+                HAVING SUM(CASE WHEN m.pedido_id = ? AND m.tipo = 'entrada' THEN 0 ELSE m.quantidade END) < 0
+            """, (id, id)).fetchone()
+            if neg:
+                raise HTTPException(400, f"Não dá para excluir: parte deste estoque ({neg['descricao']}) já foi entregue ao cliente.")
+        cur.execute("DELETE FROM estoque_cliente_mov WHERE pedido_id=?", (id,))
         cur.execute("DELETE FROM pedidos WHERE id=?", (id,))
         cur.execute("""INSERT INTO auditoria (usuario, acao, entidade, entidade_id, descricao, valor_anterior, valor_novo)
                        VALUES (?, 'excluir_pedido', 'pedidos', ?, ?, ?, '')""",

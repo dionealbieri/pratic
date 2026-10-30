@@ -14,6 +14,7 @@
 </script>
 <link rel="stylesheet" href="css/common.css?v=2">
 <script src="/js/cotacao.js?v=20261030-embalagem"></script>
+<script src="/js/estoque-cliente.js?v=20261030-estcli"></script>
 <style>
   body {
     display: flex !important;
@@ -64,30 +65,13 @@
   <!-- TABS (vendedor só acompanha: Novo Pedido e Importar ficam ocultos) -->
   <div class="tabs">
     <button class="tab-btn active" id="tabbtn-pedidos" onclick="switchTab('pedidos')">🧾 Meus Pedidos</button>
-    <button class="tab-btn" id="tabbtn-estoque" onclick="switchTab('estoque')">📦 Estoque dos meus clientes</button>
+    <button class="tab-btn" id="tabbtn-estoque" onclick="switchTab('estoque')">🏷️ Estoque dos meus clientes</button>
     <button class="tab-btn" id="tabbtn-novo" onclick="switchTab('novo')" style="display:none">➕ Novo Pedido</button>
     <button class="tab-btn" id="tabbtn-importar" onclick="switchTab('importar')">📥 Importar</button>
   </div>
 
-  <!-- ── TAB ESTOQUE DOS MEUS CLIENTES ── -->
-  <div id="tab-estoque" style="display:none">
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
-      <div style="font-size:13px;color:var(--muted)">Só clientes marcados como <strong>📦 estoque programado</strong> (o Gestor marca no cadastro do cliente). Consumo = média das saídas dos últimos 6 meses.</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <select id="est-cli-filtro" onchange="renderEstoqueClientes()" style="min-width:200px">
-          <option value="atencao">⚠ Precisam de atenção</option>
-          <option value="">Todos os produtos</option>
-        </select>
-        <input type="text" id="est-cli-busca" placeholder="Buscar produto ou cliente..." oninput="renderEstoqueClientes()" style="min-width:220px">
-      </div>
-    </div>
-    <div class="table-wrap">
-      <div style="overflow-x:auto"><table>
-        <thead><tr><th>Produto</th><th>Cliente(s)</th><th style="text-align:right">Saldo</th><th style="text-align:right">Mínimo</th><th style="text-align:right">Consumo/mês</th><th>Dura</th><th>Última saída</th><th>Situação</th></tr></thead>
-        <tbody id="est-cli-tbody"></tbody>
-      </table></div>
-    </div>
-  </div>
+  <!-- ── TAB ESTOQUE DOS MEUS CLIENTES (copo personalizado guardado para o cliente) ── -->
+  <div id="tab-estoque" style="display:none"><div id="ec-painel"></div></div>
 
   <!-- ── TAB PEDIDOS ── -->
   <div id="tab-pedidos">
@@ -348,12 +332,12 @@ const STATUS_PILL = {
 // Status do PEDIDO (os itens continuam usando STATUS_LABEL acima)
 const STATUS_LABEL_PEDIDO = {
   aberto: '📋 Aberto', em_producao: '🏭 Em produção',
-  produzido: '⏳ Aguardando vendedor', aguardando_nf: '🧾 Aguardando NF',
+  produzido: '⏳ Aguardando vendedor', em_estoque: '🏷️ Em estoque do cliente', aguardando_nf: '🧾 Aguardando NF',
   aguardando_retirada: '🙋 Aguardando retirada', enviado: '🚚 Enviado',
   retirado: '✅ Retirado', entregue: '📦 Entregue'
 };
 const STATUS_PILL_PEDIDO = {
-  aberto: 'pill-info', em_producao: 'pill-warn', produzido: 'pill-danger',
+  aberto: 'pill-info', em_producao: 'pill-warn', produzido: 'pill-danger', em_estoque: 'pill-info',
   aguardando_nf: 'pill-warn', aguardando_retirada: 'pill-warn',
   enviado: 'pill-info', retirado: 'pill-success', entregue: 'pill-success'
 };
@@ -772,43 +756,10 @@ async function loadCards() { await loadMeusPedidos(); }
 // ── ESTOQUE DOS MEUS CLIENTES
 let estCliDados = [];
 async function loadEstoqueClientes() {
-  const tbody = document.getElementById('est-cli-tbody');
-  if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">Carregando...</td></tr>';
-  try { estCliDados = await req('/pedidos/meus/estoque-clientes') || []; } catch (e) { estCliDados = []; }
-  renderEstoqueClientes();
+  if (typeof ecMontar === 'function') await ecMontar('ec-painel');
 }
-function renderEstoqueClientes() {
-  const tbody = document.getElementById('est-cli-tbody');
-  if (!tbody) return;
-  const filtro = document.getElementById('est-cli-filtro').value;
-  const busca = (document.getElementById('est-cli-busca').value || '').toLowerCase().trim();
-  let lista = estCliDados;
-  if (filtro === 'atencao') lista = lista.filter(x => x.situacao !== 'ok');
-  if (busca) lista = lista.filter(x => (String(x.nome) + ' ' + (x.codigo || '') + ' ' + (x.marca || '') + ' ' + (x.clientes || '')).toLowerCase().includes(busca));
-  if (!lista.length) {
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">${filtro === 'atencao' && estCliDados.length ? '✅ Nenhum produto precisando de atenção' : (estCliDados.length ? 'Nenhum produto encontrado' : 'Nenhum cliente seu está marcado como “estoque programado”. Peça ao Gestor para marcar no cadastro do cliente.')}</td></tr>`;
-    return;
-  }
-  const SIT = {
-    abaixo_minimo: ['rgba(239,68,68,.15)', 'var(--danger)', 'Abaixo do mínimo'],
-    acabando: ['rgba(240,180,41,.15)', 'var(--accent)', 'Acabando (≤30 dias)'],
-    parado: ['rgba(156,163,175,.15)', 'var(--muted)', 'Sem saída há 60+ dias'],
-    ok: ['rgba(16,185,129,.15)', 'var(--success)', 'Ok'],
-  };
-  tbody.innerHTML = lista.map(x => {
-    const [bg, cor, txt] = SIT[x.situacao] || SIT.ok;
-    return `<tr>
-      <td><strong>${esc(x.nome)}</strong><div style="font-size:11px;color:var(--muted)">${esc([x.codigo, x.marca].filter(Boolean).join(' · '))}</div></td>
-      <td style="font-size:13px">${esc((x.clientes || '').split(',').join(', '))}</td>
-      <td style="text-align:right;font-weight:700">${fmtNum(x.saldo)}</td>
-      <td style="text-align:right">${x.estoque_minimo ? fmtNum(x.estoque_minimo) : '—'}</td>
-      <td style="text-align:right">${x.consumo_mensal ? fmtNum(x.consumo_mensal) : '—'}</td>
-      <td>${x.cobertura_dias == null ? '—' : '~' + x.cobertura_dias + ' dias'}</td>
-      <td>${x.ultima_saida ? fmtDate(String(x.ultima_saida).slice(0, 10)) + (x.dias_sem_saida != null ? ` <span style="font-size:11px;color:var(--muted)">(${x.dias_sem_saida}d)</span>` : '') : '—'}</td>
-      <td><span style="display:inline-flex;align-items:center;gap:6px;background:${bg};color:${cor};border-radius:12px;padding:3px 10px;font-size:12px;font-weight:700;white-space:nowrap"><span style="width:7px;height:7px;border-radius:4px;background:${cor}"></span>${txt}</span></td>
-    </tr>`;
-  }).join('');
-}
+// Entrega criada pelo vendedor: aparece em "Meus Pedidos" para seguir embalagem → frete
+window.ecAoCriarEntrega = function () { loadMeusPedidos(); };
 
 async function loadMeusPedidos() {
   try {
@@ -828,6 +779,7 @@ function renderNovidades() {
   if (!nov.length) { el.innerHTML = ''; return; }
   const frase = n => {
     if (n.status === 'produzido') return `ficou <strong>produzido</strong> — defina o frete ou a retirada`;
+    if (n.status === 'em_estoque') return `foi produzido e <strong>guardado no estoque do cliente</strong>`;
     if (n.status === 'enviado') return `foi <strong>despachado</strong>${n.nota_fiscal ? ' · NF ' + esc(n.nota_fiscal) : ''}`;
     if (n.status === 'retirado') return `foi <strong>retirado</strong> pelo cliente${n.nota_fiscal ? ' · NF ' + esc(n.nota_fiscal) : ''}`;
     return esc(n.status);
@@ -884,7 +836,7 @@ function renderSecoesMeus() {
   const dataConcl = p => (p.status === 'entregue' ? (p.data_entrega || p.data_despacho) : p.data_despacho) || '';
   const concluidos = ps.filter(p => ['enviado', 'retirado', 'entregue'].includes(p.status))
                        .sort((a, b) => String(dataConcl(b)).localeCompare(String(dataConcl(a))));
-  const tampas = p => ((p.revenda_pendentes || 0) > 0 ? `<div style="font-size:11px;color:var(--warn)">⚠ ${p.revenda_pendentes} item(ns) de revenda a separar</div>` : '')
+  const tampas = p => (Number(p.origem_estoque_cliente) ? `<div style="font-size:11px;color:var(--info,#3b82f6)">🏷️ entrega do estoque do cliente</div>` : '') + ((p.revenda_pendentes || 0) > 0 ? `<div style="font-size:11px;color:var(--warn)">⚠ ${p.revenda_pendentes} item(ns) de revenda a separar</div>` : '')
     + (p.status === 'produzido' && (p.embalagem_pendentes || 0) > 0 ? `<div style="font-size:11px;color:var(--warn)">⚠ embalagem de ${p.embalagem_pendentes} item(ns) ainda não informada</div>` : '');
 
   let html = _tabelaSecao('⏳ Aguardando você — defina como o pedido vai sair', aguardando.length,
