@@ -87,6 +87,7 @@ const PERFIS = [
   { key:'producao',  label:'🏭 Produção' },
   { key:'comercial', label:'🏢 Comercial' },
   { key:'estoque',   label:'📦 Estoque' },
+  { key:'expedicao', label:'🚚 Expedição' },
 ];
 
 let permissoesAtuais = {};
@@ -319,7 +320,8 @@ async function carregarAcessoPrincipal() {
     gestor: '🖥️ Setor Gestor',
     producao: '🏭 Setor Produção',
     comercial: '🏢 Setor Comercial',
-    estoque: '📦 Setor Estoque'
+    estoque: '📦 Setor Estoque',
+    expedicao: '🚚 Setor Expedição'
   }[perfilAtual] || '🖥️ Setor Gestor';
 
   const sectorBadgeEl = document.getElementById('topbar-setor');
@@ -4194,7 +4196,7 @@ async function loadPermissoes() {
 
   // Regras de lançamento — mesmo padrão visual das páginas, mas controla uma
   // regra de negócio (obrigar número do pedido), não acesso a página.
-  html += `<tr><td colspan="5" class="perm-group-header">⚙️ Regras de Lançamento</td></tr>`;
+  html += `<tr><td colspan="${PERFIS.length + 1}" class="perm-group-header">⚙️ Regras de Lançamento</td></tr>`;
   html += (() => {
     const cols = PERFIS.map(perf => {
       const checked = perfisExigemPedido.includes(perf.key);
@@ -4210,7 +4212,7 @@ async function loadPermissoes() {
   })();
   
   // Section 1: Painel Principal
-  html += `<tr><td colspan="5" class="perm-group-header" style="border-top:1px solid var(--border)">🖥️ Módulos do Painel Principal (Gestor)</td></tr>`;
+  html += `<tr><td colspan="${PERFIS.length + 1}" class="perm-group-header" style="border-top:1px solid var(--border)">🖥️ Módulos do Painel Principal (Gestor)</td></tr>`;
   html += PAGINAS_SISTEMA.map(pg => {
     const cols = PERFIS.map(perf => {
       const chave = 'perm_' + perf.key;
@@ -4228,7 +4230,7 @@ async function loadPermissoes() {
   }).join('');
   
   // Section 2: Portais & Apps Mobile
-  html += `<tr><td colspan="5" class="perm-group-header" style="border-top:1px solid var(--border)">📱 Postos de Trabalho & Apps Mobile</td></tr>`;
+  html += `<tr><td colspan="${PERFIS.length + 1}" class="perm-group-header" style="border-top:1px solid var(--border)">📱 Postos de Trabalho & Apps Mobile</td></tr>`;
   html += PORTAIS_MOBILE.map(pg => {
     const cols = PERFIS.map(perf => {
       const chave = 'perm_' + perf.key;
@@ -4722,14 +4724,14 @@ async function loadTransportadora() {
   tbody.innerHTML = lista.map(p => {
     const s = st(p);
     let acoes = '';
-    if (s === 'produzido' && temPermissao('pedidos','editar')) {
+    if (s === 'produzido' && temPermissao('expedicao','despachar')) {
       const revPend = p.revenda_pendentes || 0;
       if (revPend > 0) {
         acoes = `<button class="btn btn-sm btn-secondary" style="color:var(--warn);border-color:var(--warn)" title="Separe as tampas/revenda antes de liberar para a transportadora" onclick="verDetalhesPedido(${p.id})">⚠ Separar ${revPend} revenda</button>`;
       } else {
         acoes = `<button class="btn btn-sm btn-primary" onclick="abrirDespacho(${p.id})">📦 Despachar</button> <button class="btn btn-sm btn-secondary" onclick="confirmarEntrega(${p.id})">✓ Entregue</button>`;
       }
-    } else if (s === 'enviado' && temPermissao('pedidos','editar')) {
+    } else if (s === 'enviado' && temPermissao('expedicao','despachar')) {
       acoes = `<button class="btn btn-sm btn-secondary" onclick="verProdutosEnviados(${p.id})">👁 Produtos</button> <button class="btn btn-sm btn-secondary" onclick="abrirDespacho(${p.id})">✏️</button> <button class="btn btn-sm btn-primary" onclick="confirmarEntrega(${p.id})">✓ Entregue</button>`;
     }
     return `<tr>
@@ -5274,6 +5276,7 @@ window.exportarRelatorioTransp = exportarRelatorioTransp;
 async function loadPedidos_init() {
   await loadFila();
   await checkAlertasPedidos();
+  carregarAvisoSemVendedor();
   try { const svd = await api('/estoque/saldo-vs-demanda'); checkSVDBadge(svd); } catch(e) {}
 }
 
@@ -9400,6 +9403,12 @@ function switchPermissoesTab(tab) {
   if (tab === 'config') loadPermissoes();
 }
 
+let _usuariosCache = [];
+
+function _escHtml(v) {
+  return String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+
 async function loadUsuarios() {
   const tbody = document.getElementById('usuarios-tbody');
   if (!tbody) return;
@@ -9417,12 +9426,14 @@ async function loadUsuarios() {
       gestor: '🖥️ Gestor',
       producao: '🏭 Produção',
       comercial: '🏢 Comercial',
-      estoque: '📦 Estoque'
+      estoque: '📦 Estoque',
+      expedicao: '🚚 Expedição'
     };
+    _usuariosCache = users;
     
     tbody.innerHTML = users.map(u => `
       <tr>
-        <td><strong>${u.nome}</strong></td>
+        <td><strong>${u.nome}</strong>${u.vendedor_nomes ? `<div style="font-size:11px;color:var(--muted);margin-top:2px" title="Nomes reconhecidos na importação de pedidos">🧾 ${_escHtml(u.vendedor_nomes)}</div>` : ''}</td>
         <td><code>${u.username}</code></td>
         <td>${roleLabels[u.role] || u.role}</td>
         <td>
@@ -9452,6 +9463,8 @@ function openModalUsuario() {
   document.getElementById('user-password-container').style.display = '';
   document.getElementById('user-ativo-container').style.display = 'none';
   document.getElementById('user-ativo').value = '1';
+  const vnNovo = document.getElementById('user-vendedor-nomes');
+  if (vnNovo) vnNovo.value = '';
   
   document.getElementById('modal-user-title').textContent = 'Novo Usuário';
   openModal('modal-usuario');
@@ -9467,6 +9480,11 @@ function editarUsuario(id, username, nome, role, ativo) {
   document.getElementById('user-password-container').style.display = 'none';
   document.getElementById('user-ativo-container').style.display = '';
   document.getElementById('user-ativo').value = ativo;
+  const vnEd = document.getElementById('user-vendedor-nomes');
+  if (vnEd) {
+    const u = (_usuariosCache || []).find(x => x.id == id);
+    vnEd.value = u && u.vendedor_nomes ? u.vendedor_nomes.split(';').map(x => x.trim()).filter(Boolean).join('\n') : '';
+  }
   
   document.getElementById('modal-user-title').textContent = 'Editar Usuário';
   openModal('modal-usuario');
@@ -9479,6 +9497,8 @@ async function salvarUsuario() {
   const role = document.getElementById('user-role').value;
   const password = document.getElementById('user-password').value;
   const ativo = +document.getElementById('user-ativo').value;
+  const vnEl = document.getElementById('user-vendedor-nomes');
+  const vendedor_nomes = vnEl ? vnEl.value.split(/[\n;]+/).map(x => x.trim()).filter(Boolean).join('; ') : undefined;
   
   if (!nome || !username) {
     showAlert('Preencha o nome e o usuário.', 'danger');
@@ -9487,15 +9507,15 @@ async function salvarUsuario() {
   
   try {
     if (id) {
-      await api('/auth/usuarios/' + id, 'PUT', { role, nome, ativo });
-      showAlert('Usuário atualizado com sucesso!');
+      const r = await api('/auth/usuarios/' + id, 'PUT', { role, nome, ativo, vendedor_nomes });
+      showAlert('Usuário atualizado com sucesso!' + (r && r.pedidos_vinculados ? ` ${r.pedidos_vinculados} pedido(s) vinculado(s) a este vendedor.` : ''));
     } else {
       if (!password || password.length < 3) {
         showAlert('A senha inicial deve conter pelo menos 3 caracteres.', 'danger');
         return;
       }
-      await api('/auth/usuarios', 'POST', { username, password, role, nome });
-      showAlert('Usuário cadastrado com sucesso!');
+      const r = await api('/auth/usuarios', 'POST', { username, password, role, nome, vendedor_nomes: vendedor_nomes || '' });
+      showAlert('Usuário cadastrado com sucesso!' + (r && r.pedidos_vinculados ? ` ${r.pedidos_vinculados} pedido(s) vinculado(s) a este vendedor.` : ''));
     }
     closeModal('modal-usuario');
     loadUsuarios();
@@ -11495,12 +11515,14 @@ const MODULOS_CONFIG = {
   backup:         { label:'💾 Backup',            acoes:['backup','restaurar','limpar'] },
   permissoes:     { label:'🔐 Controle de Acesso',acoes:['ver','editar'] },
   empresa:        { label:'🏢 Dados da Empresa',  acoes:['ver','editar'] },
+  expedicao:      { label:'🚚 Expedição',          acoes:['ver','despachar','desfazer'] },
 };
 
 const ACAO_LABEL = {
   ver:'Ver', criar:'Criar', editar:'Editar', deletar:'Deletar',
   importar:'Importar', movimentar:'Movimentar', exportar:'Exportar',
-  backup:'Backup', restaurar:'Restaurar', limpar:'Limpar'
+  backup:'Backup', restaurar:'Restaurar', limpar:'Limpar',
+  despachar:'Despachar', desfazer:'Desfazer'
 };
 
 let permUsuarioAtual = {};
@@ -11542,7 +11564,7 @@ function renderPermUsuarioGrid(perms) {
   if (!el) return;
 
   // Todas as ações possíveis para montar colunas fixas
-  const todasAcoes = ['ver','criar','editar','deletar','importar','movimentar','exportar','backup','restaurar','limpar'];
+  const todasAcoes = ['ver','criar','editar','deletar','importar','movimentar','exportar','backup','restaurar','limpar','despachar','desfazer'];
 
   // Cabeçalho
   let html = `
@@ -11683,7 +11705,90 @@ function aplicarPermissoesUI() {
     const modulo = el.getAttribute('data-perm-movimentar');
     if (!temPermissao(modulo, 'movimentar')) el.style.display = 'none';
   });
+  document.querySelectorAll('[data-perm-despachar]').forEach(el => {
+    const modulo = el.getAttribute('data-perm-despachar');
+    if (!temPermissao(modulo, 'despachar')) el.style.display = 'none';
+  });
+  document.querySelectorAll('[data-perm-desfazer]').forEach(el => {
+    const modulo = el.getAttribute('data-perm-desfazer');
+    if (!temPermissao(modulo, 'desfazer')) el.style.display = 'none';
+  });
 }
+
+// ─── PEDIDOS SEM VENDEDOR VINCULADO (Gestor) ──────────────────────────────────
+// O nome do vendedor que vem no PDF é ligado ao usuário pelo nome dele ou pelos
+// "nomes na importação" do cadastro. Quando não bate, o pedido aparece aqui.
+
+let _semVendedorLista = [];
+let _vendedoresLista = [];
+
+async function carregarAvisoSemVendedor() {
+  const el = document.getElementById('ped-sem-vendedor-banner');
+  if (!el) return;
+  if (!window.usuarioLogado || window.usuarioLogado.role !== 'gestor') { el.innerHTML = ''; return; }
+  try {
+    _semVendedorLista = await api('/pedidos/sem-vendedor');
+  } catch (e) { el.innerHTML = ''; return; }
+  const n = _semVendedorLista.length;
+  if (!n) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div style="background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.4);border-radius:10px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <span style="font-size:20px">🧾</span>
+    <div style="flex:1;min-width:220px"><strong style="color:var(--warn)">${n} pedido(s) sem vendedor vinculado</strong>
+      <div style="font-size:12px;color:var(--muted)">O nome do vendedor do pedido não corresponde a nenhum usuário. Atribua para o pedido aparecer para o vendedor certo.</div></div>
+    <button class="btn btn-sm btn-secondary" onclick="abrirModalSemVendedor()">Resolver →</button>
+  </div>`;
+}
+
+async function abrirModalSemVendedor() {
+  try {
+    const r = await Promise.all([api('/pedidos/sem-vendedor'), api('/auth/vendedores')]);
+    _semVendedorLista = r[0] || [];
+    _vendedoresLista = r[1] || [];
+  } catch (e) { showAlert('Erro ao carregar: ' + e.message, 'danger'); return; }
+  renderModalSemVendedor();
+  openModal('modal-sem-vendedor');
+}
+
+function renderModalSemVendedor() {
+  const tbody = document.getElementById('sem-vendedor-tbody');
+  if (!tbody) return;
+  if (!_semVendedorLista.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px">✅ Todos os pedidos em andamento têm vendedor vinculado</td></tr>';
+    return;
+  }
+  const opts = '<option value="">Escolher vendedor...</option>' + _vendedoresLista.map(v =>
+    `<option value="${v.id}">${_escHtml(v.nome)}${v.role !== 'comercial' ? ' (' + _escHtml(v.role) + ')' : ''}</option>`).join('');
+  tbody.innerHTML = _semVendedorLista.map(p => `
+    <tr>
+      <td><strong>${_escHtml(p.numero_pedido)}</strong></td>
+      <td>${_escHtml(p.cliente_nome || '—')}</td>
+      <td>${p.vendedor ? `<span style="color:var(--warn)">“${_escHtml(p.vendedor)}”</span>` : '<span style="color:var(--muted)">— sem nome no pedido —</span>'}</td>
+      <td><select id="semvend-sel-${p.id}" style="min-width:180px">${opts}</select></td>
+      <td style="white-space:nowrap">
+        ${p.vendedor ? `<label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;margin-right:8px" title="Nas próximas importações, esse nome já cai direto para o vendedor escolhido"><input type="checkbox" id="semvend-lembrar-${p.id}" checked> lembrar nome</label>` : ''}
+        <button class="btn btn-sm btn-primary" onclick="atribuirVendedorPedido(${p.id})">Atribuir</button>
+      </td>
+    </tr>`).join('');
+}
+
+async function atribuirVendedorPedido(pedidoId) {
+  const sel = document.getElementById('semvend-sel-' + pedidoId);
+  const usuarioId = sel ? sel.value : '';
+  if (!usuarioId) { showAlert('Escolha o vendedor', 'danger'); return; }
+  const lembrarEl = document.getElementById('semvend-lembrar-' + pedidoId);
+  const lembrar_nome = lembrarEl ? lembrarEl.checked : false;
+  try {
+    const r = await api('/pedidos/' + pedidoId + '/vendedor', 'PUT', { usuario_id: +usuarioId, lembrar_nome });
+    showAlert(r.mensagem + (r.outros_vinculados ? ` (+${r.outros_vinculados} outro(s) pedido(s) com o mesmo nome)` : ''));
+    _semVendedorLista = await api('/pedidos/sem-vendedor');
+    renderModalSemVendedor();
+    carregarAvisoSemVendedor();
+  } catch (e) { showAlert('Erro: ' + e.message, 'danger'); }
+}
+
+window.carregarAvisoSemVendedor = carregarAvisoSemVendedor;
+window.abrirModalSemVendedor = abrirModalSemVendedor;
+window.atribuirVendedorPedido = atribuirVendedorPedido;
 /* ===================== PDV (Bloco 2b) ===================== */
 let pdvCats=[], pdvProds=[], pdvClientes=[], pdvNivel=null, pdvCarrinho=[], pdvParcelas=[], pdvClienteId=null, pdvQaSel=-1, pdvCliSel=-1, pdvGerenciar=false;
 function pdvFmt(v){ return 'R$ ' + (Number(v)||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
