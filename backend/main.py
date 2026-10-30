@@ -112,7 +112,26 @@ def manual(request: Request):
         return RedirectResponse(url="/login")
     return FileResponse(os.path.join(frontend_path, "manual.html"))
 
-@app.get("/api/backup", dependencies=[Depends(get_current_user)])
+def _so_gestor_ou_pagina(pagina=None):
+    """Gestor sempre; outros perfis só com a página liberada no Controle de Acesso."""
+    def dep(current_user: dict = Depends(get_current_user)):
+        if current_user.get("role") == "gestor":
+            return current_user
+        if pagina:
+            conn = get_conn()
+            try:
+                r = conn.execute("SELECT valor FROM configuracoes WHERE chave = ?", (f"perm_{current_user.get('role')}",)).fetchone()
+                paginas = [p.strip() for p in ((r["valor"] if r else "") or "").split(",")]
+            finally:
+                conn.close()
+            if pagina in paginas:
+                return current_user
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail="Acesso restrito ao Gestor.")
+    return dep
+
+
+@app.get("/api/backup", dependencies=[Depends(_so_gestor_ou_pagina("backup"))])
 def fazer_backup():
     now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_name = f"pratic_backup_{now}.db"
@@ -130,7 +149,7 @@ def fazer_backup():
     
     return FileResponse(path=backup_path, filename=backup_name, media_type="application/octet-stream")
 
-@app.post("/api/restore", dependencies=[Depends(get_current_user)])
+@app.post("/api/restore", dependencies=[Depends(_so_gestor_ou_pagina())])
 async def restaurar_backup(file: UploadFile = File(...)):
     db_path = DB_PATH
     now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -165,7 +184,7 @@ async def restaurar_backup(file: UploadFile = File(...)):
 
     return {"mensagem": "Banco de dados restaurado com sucesso!"}
 
-@app.post("/api/empresa/logo", dependencies=[Depends(get_current_user)])
+@app.post("/api/empresa/logo", dependencies=[Depends(_so_gestor_ou_pagina("empresa"))])
 async def upload_logo(file: UploadFile = File(...)):
     contents = await file.read()
     ext = file.filename.split(".")[-1].lower()

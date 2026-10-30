@@ -1,10 +1,39 @@
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Dict
 from database import get_conn
+from auth_utils import get_current_user
 import socket
 
 router = APIRouter()
+
+# Chaves que só o Gestor pode alterar (controle de acesso e regras do fluxo de pedidos)
+CHAVES_SO_GESTOR = {
+    "vendedor_mostrar_desde", "prazo_amarelo_dias", "prazo_vermelho_dias",
+    "exigir_pedido_producao_perfis", "chat_p2p_permitido",
+}
+# Chaves ligadas a uma página específica: quem tem a página liberada no perfil pode alterar
+CHAVE_PAGINA = {
+    "svd_categorias_ocultas": "saldo-demanda",
+}
+
+
+def _paginas_do_perfil(role: str) -> list:
+    conn = get_conn()
+    try:
+        r = conn.execute("SELECT valor FROM configuracoes WHERE chave = ?", (f"perm_{role}",)).fetchone()
+        return [p.strip() for p in ((r["valor"] if r else "") or "").split(",") if p.strip()]
+    finally:
+        conn.close()
+
+
+def exigir_gestor_ou_pagina(current_user: dict, pagina: str = None):
+    """Gestor sempre pode. Outros perfis só se a página estiver liberada para o perfil."""
+    if current_user.get("role") == "gestor":
+        return
+    if pagina and pagina in _paginas_do_perfil(current_user.get("role") or ""):
+        return
+    raise HTTPException(403, "Acesso restrito ao Gestor.")
 
 class ConfigIn(BaseModel):
     valor: str
@@ -45,7 +74,8 @@ def get_local_ip():
             return {"ip": "127.0.0.1"}
 
 @router.post("/permissoes/salvar")
-async def salvar_permissoes(request: Request):
+async def salvar_permissoes(request: Request, current_user: dict = Depends(get_current_user)):
+    exigir_gestor_ou_pagina(current_user)
     body = await request.json()
     conn = get_conn()
     perfis = {
@@ -123,19 +153,22 @@ def _salvar_empresa_payload(body: Dict):
     return {"mensagem": "Dados da empresa salvos"}
 
 @router.post("/empresa")
-async def salvar_empresa(request: Request):
+async def salvar_empresa(request: Request, current_user: dict = Depends(get_current_user)):
+    exigir_gestor_ou_pagina(current_user, "empresa")
     body = await request.json()
     return _salvar_empresa_payload(body)
 
 @router.put("/empresa")
-async def salvar_empresa_put(request: Request):
+async def salvar_empresa_put(request: Request, current_user: dict = Depends(get_current_user)):
     # Rota de compatibilidade: evita erro 405 em versões do frontend/cache que enviem PUT.
+    exigir_gestor_ou_pagina(current_user, "empresa")
     body = await request.json()
     return _salvar_empresa_payload(body)
 
 @router.post("/empresa/salvar")
-async def salvar_empresa_alias(request: Request):
+async def salvar_empresa_alias(request: Request, current_user: dict = Depends(get_current_user)):
     # Alias para evitar conflito com rotas genéricas antigas em atualizações parciais.
+    exigir_gestor_ou_pagina(current_user, "empresa")
     body = await request.json()
     return _salvar_empresa_payload(body)
 
@@ -151,7 +184,8 @@ def listar():
     return [dict(r) for r in rows]
 
 @router.post("/limpar/{tipo}")
-def limpar_dados(tipo: str):
+def limpar_dados(tipo: str, current_user: dict = Depends(get_current_user)):
+    exigir_gestor_ou_pagina(current_user)
     conn = get_conn()
     try:
         if tipo == 'producao':
@@ -200,7 +234,12 @@ def limpar_dados(tipo: str):
         conn.close()
 
 @router.put("/{chave}")
-def atualizar(chave: str, config: ConfigIn):
+def atualizar(chave: str, config: ConfigIn, current_user: dict = Depends(get_current_user)):
+    if chave.startswith("perm_") or chave.startswith("empresa_") or chave in CHAVES_SO_GESTOR:
+        exigir_gestor_ou_pagina(current_user, "empresa" if chave.startswith("empresa_") else None)
+    else:
+        # Demais configurações (metas, bonificações...) são da página Configurações
+        exigir_gestor_ou_pagina(current_user, CHAVE_PAGINA.get(chave, "configuracoes"))
     conn = get_conn()
     conn.execute("""
         INSERT INTO configuracoes (chave, valor, descricao)
