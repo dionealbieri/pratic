@@ -4684,7 +4684,7 @@ const _itemProduzido = i => (((i.qtd_produzida||0) >= i.quantidade) && i.quantid
 const _itemStatusEf = i => i.status==='entregue' ? 'produzido' : (_itemProduzido(i) ? 'produzido' : (((i.qtd_produzida||0)>0 || i.status==='em_producao') ? 'em_producao' : 'aberto'));
 
 function switchPedidosTab(tab) {
-  ['fila','programacao','pedidos','clientes','transportadora'].forEach(t=>{
+  ['fila','programacao','pedidos','clientes','transportadora','acompanhamento'].forEach(t=>{
     const el=document.getElementById('ped-tab-'+t);
     const btn=document.getElementById('ptab-'+t);
     if(el) el.style.display=t===tab?'':'none';
@@ -4693,6 +4693,7 @@ function switchPedidosTab(tab) {
   if(tab==='fila') loadFila();
   if(tab==='pedidos') loadPedidos();
   if(tab==='clientes') loadClientes();
+  if(tab==='acompanhamento') loadAcompanhamento();
   if(tab==='transportadora') {
     switchTranspTab('fila');
     loadTransportadora();
@@ -4700,11 +4701,16 @@ function switchPedidosTab(tab) {
 }
 
 // Selo de tempo parado na etapa: verde até 1 dia, amarelo 2–3, vermelho 4+
+let _prazosParados = { amarelo: 2, vermelho: 4 };
+async function _carregarPrazosParados() {
+  try { _prazosParados = await api('/pedidos/prazos-parados'); } catch (e) {}
+  return _prazosParados;
+}
 function _seloDiasEtapa(dias) {
   const n = Math.max(0, Number(dias) || 0);
   let bg = 'rgba(16,185,129,.15)', cor = 'var(--success)';
-  if (n >= 4) { bg = 'rgba(239,68,68,.15)'; cor = 'var(--danger)'; }
-  else if (n >= 2) { bg = 'rgba(240,180,41,.15)'; cor = 'var(--accent)'; }
+  if (n >= _prazosParados.vermelho) { bg = 'rgba(239,68,68,.15)'; cor = 'var(--danger)'; }
+  else if (n >= _prazosParados.amarelo) { bg = 'rgba(240,180,41,.15)'; cor = 'var(--accent)'; }
   const txt = n === 0 ? 'hoje' : n === 1 ? '1 dia' : n + ' dias';
   return `<span style="display:inline-flex;align-items:center;gap:6px;background:${bg};color:${cor};border-radius:12px;padding:3px 10px;font-size:12px;font-weight:700;white-space:nowrap"><span style="width:7px;height:7px;border-radius:4px;background:${cor}"></span>${txt}</span>`;
 }
@@ -4724,6 +4730,7 @@ async function loadTransportadora() {
   let filtro = sel?.value || 'aguardando_nf';
   if (filtro === 'aguardando_vendedor' && !ehGestor) { filtro = 'aguardando_nf'; if (sel) sel.value = filtro; }
   const busca = (document.getElementById('ped-transp-busca')?.value || '').trim().toLowerCase();
+  await _carregarPrazosParados();
   let rows = await api('/pedidos/');
   const st = p => p.status_efetivo || p.status;
   const mapa = {
@@ -5515,6 +5522,8 @@ function exportarRelatorioTransp(formato) {
 window.exportarRelatorioTransp = exportarRelatorioTransp;
 
 async function loadPedidos_init() {
+  const btnAcomp = document.getElementById('ptab-acompanhamento');
+  if (btnAcomp) btnAcomp.style.display = (window.usuarioLogado && window.usuarioLogado.role === 'gestor') ? '' : 'none';
   if (window.usuarioLogado && window.usuarioLogado.role === 'expedicao') {
     ['fila', 'programacao', 'pedidos', 'clientes'].forEach(t => {
       const b = document.getElementById('ptab-' + t);
@@ -9663,7 +9672,87 @@ async function carregarVendedorDesde() {
   } catch (e) { el.value = ''; }
   const info = document.getElementById('cfg-vendedor-desde-info');
   if (info) info.textContent = el.value ? 'Atual: a partir de ' + fmtDate(el.value) : 'Atual: todos os pedidos';
+  const pz = await _carregarPrazosParados();
+  const a = document.getElementById('cfg-prazo-amarelo'), v = document.getElementById('cfg-prazo-vermelho');
+  if (a) a.value = pz.amarelo;
+  if (v) v.value = pz.vermelho;
 }
+
+async function salvarPrazosParados() {
+  const a = parseInt(document.getElementById('cfg-prazo-amarelo').value, 10);
+  const v = parseInt(document.getElementById('cfg-prazo-vermelho').value, 10);
+  if (isNaN(a) || isNaN(v) || a < 0 || v < 0) { showAlert('Informe os dias (números inteiros)', 'danger'); return; }
+  if (v < a) { showAlert('O vermelho precisa ser maior ou igual ao amarelo', 'danger'); return; }
+  try {
+    await api('/configuracoes/prazo_amarelo_dias', 'PUT', { valor: String(a) });
+    await api('/configuracoes/prazo_vermelho_dias', 'PUT', { valor: String(v) });
+    showAlert(`Prazos salvos: amarelo a partir de ${a} dia(s), vermelho a partir de ${v} dia(s)`);
+  } catch (e) { showAlert('Erro: ' + e.message, 'danger'); }
+}
+window.salvarPrazosParados = salvarPrazosParados;
+
+// ─── ACOMPANHAMENTO (Gestor) ──────────────────────────────────────────────────
+async function loadAcompanhamento() {
+  const el = document.getElementById('acomp-conteudo');
+  if (!el) return;
+  let d;
+  try { d = await api('/pedidos/acompanhamento'); } catch (e) { el.innerHTML = `<div class="alert alert-danger">${_escHtml(e.message)}</div>`; return; }
+  _prazosParados = d.prazos || _prazosParados;
+  const E = d.etapas || {};
+  const card = (titulo, e, cor, sub) => `<div class="card" style="border-top:3px solid ${cor}">
+      <div class="card-label">${titulo}</div>
+      <div class="card-value" style="color:${cor}">${e.qtd}</div>
+      <div style="font-size:12px;color:var(--muted)">${sub} · ${fmtBRL(e.valor)}</div>
+      <div style="font-size:12px;margin-top:4px">${e.qtd ? `mais antigo: <strong>${e.mais_antigo_dias} dia(s)</strong>` : '—'}${e.atrasados ? ` · <span style="color:var(--danger);font-weight:700">${e.atrasados} no vermelho</span>` : ''}</div>
+    </div>`;
+  const nomeEtapa = { produzido: '⏳ Aguardando vendedor', aguardando_nf: '🧾 Aguardando NF', aguardando_retirada: '🙋 Aguardando retirada' };
+  const parados = (d.parados || []).map(p => `<tr>
+      <td><strong>${_escHtml(p.numero_pedido)}</strong></td>
+      <td>${_escHtml(p.cliente_nome)}</td>
+      <td>${nomeEtapa[p.status] || p.status}</td>
+      <td>${_escHtml(p.responsavel)}${p.status === 'produzido' ? ' · ' + _escHtml(p.vendedor_nome || p.vendedor || 'sem vendedor') : ''}${p.status === 'aguardando_nf' && p.transportadora ? ' · ' + _escHtml(p.transportadora) : ''}</td>
+      <td>${fmtBRL(p.valor_total)}</td>
+      <td>${_seloDiasEtapa(p.dias_na_etapa)}</td>
+    </tr>`).join('');
+  const maxT = Math.max(1, ...(d.vendedores || []).map(v => v.tempo_medio_dias || 0));
+  const vend = (d.vendedores || []).map(v => {
+    const t = v.tempo_medio_dias;
+    const cor = t == null ? 'var(--muted)' : (t >= _prazosParados.vermelho ? 'var(--danger)' : (t >= _prazosParados.amarelo ? 'var(--accent)' : 'var(--success)'));
+    return `<div style="display:flex;flex-direction:column;gap:4px">
+      <div style="display:flex;justify-content:space-between;font-size:13px;gap:8px"><span>${_escHtml(v.vendedor_nome || '—')}</span><strong style="color:${cor}">${t == null ? 'sem dados' : String(t).replace('.', ',') + ' dia(s)'}</strong></div>
+      <div style="height:8px;background:var(--surface2);border-radius:4px"><div style="height:8px;width:${t == null ? 0 : Math.max(4, Math.round(t / maxT * 100))}%;background:${cor};border-radius:4px"></div></div>
+      <div style="font-size:11px;color:var(--muted)">${v.liberados_30d} liberado(s) em 30 dias · ${v.aguardando_agora} aguardando agora</div>
+    </div>`;
+  }).join('');
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+      <div style="font-size:13px;color:var(--muted)">Pedidos produzidos que ainda não saíram${d.mostrar_desde ? ' · lançados a partir de ' + fmtDate(d.mostrar_desde) : ''} · cores: amarelo a partir de ${_prazosParados.amarelo} dia(s), vermelho a partir de ${_prazosParados.vermelho}</div>
+      <button class="btn btn-sm btn-secondary" onclick="loadAcompanhamento()">↻ Atualizar</button>
+    </div>
+    <div class="cards-grid" style="margin-bottom:18px">
+      ${card('⏳ Aguardando vendedor', E.produzido || {qtd:0,valor:0}, 'var(--danger)', 'com o vendedor')}
+      ${card('🧾 Aguardando NF', E.aguardando_nf || {qtd:0,valor:0}, 'var(--accent)', 'com a Expedição')}
+      ${card('🙋 Aguardando retirada', E.aguardando_retirada || {qtd:0,valor:0}, 'var(--accent2)', 'com o cliente')}
+      <div class="card" style="border:1px solid var(--accent)"><div class="card-label">Pronto e não faturado</div><div class="card-value accent" style="font-size:22px">${fmtBRL(d.valor_nao_faturado)}</div><div style="font-size:12px;color:var(--muted)">soma das três etapas</div></div>
+    </div>
+    ${d.sem_vendedor ? `<div style="background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.4);border-radius:10px;padding:10px 14px;margin-bottom:16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap"><strong style="color:var(--warn)">🧾 ${d.sem_vendedor} pedido(s) sem vendedor vinculado</strong><span style="font-size:12px;color:var(--muted)">não aparecem para nenhum vendedor</span><button class="btn btn-sm btn-secondary" style="margin-left:auto" onclick="abrirModalSemVendedor()">Resolver →</button></div>` : ''}
+    <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start">
+      <div class="table-wrap" style="flex:2 1 560px;min-width:0">
+        <div class="table-head"><span class="table-head-title">Parados há mais tempo</span></div>
+        <table>
+          <thead><tr><th>Pedido</th><th>Cliente</th><th>Etapa</th><th>Com quem</th><th>Valor</th><th>Parado</th></tr></thead>
+          <tbody>${parados || '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:24px">✅ Nenhum pedido parado</td></tr>'}</tbody>
+        </table>
+      </div>
+      <div class="card" style="flex:1 1 300px;min-width:0;display:flex;flex-direction:column;gap:14px">
+        <div style="font-family:var(--font-head);font-weight:700">Tempo médio do vendedor</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:-8px">Do pedido ficar produzido até ele informar frete ou retirada · últimos 30 dias</div>
+        ${vend || '<div style="font-size:13px;color:var(--muted)">Ainda sem dados — aparece conforme os vendedores liberam pedidos.</div>'}
+        <div style="border-top:1px solid var(--border);padding-top:10px;font-size:13px">🚚 Expedição (liberado → NF): <strong>${d.expedicao_tempo_medio_dias == null ? 'sem dados' : String(d.expedicao_tempo_medio_dias).replace('.', ',') + ' dia(s)'}</strong> <span style="color:var(--muted);font-size:11px">· ${d.expedicao_concluidos_30d} concluído(s) em 30 dias</span></div>
+      </div>
+    </div>`;
+}
+window.loadAcompanhamento = loadAcompanhamento;
 
 async function salvarVendedorDesde() {
   const el = document.getElementById('cfg-vendedor-desde');

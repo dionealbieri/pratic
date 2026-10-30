@@ -1493,6 +1493,212 @@ def unificar_transportadora(tid: int, body: UnificarTranspIn, current_user: dict
         conn.close()
 
 
+# ─── PRAZOS DAS CORES / ACOMPANHAMENTO / ESTOQUE DOS CLIENTES ────────────────
+
+def _prazos_parados(conn) -> dict:
+    """Dias para o selo ficar amarelo / vermelho (configurável pelo Gestor)."""
+    def ler(chave, padrao):
+        r = conn.execute("SELECT valor FROM configuracoes WHERE chave=?", (chave,)).fetchone()
+        try:
+            v = int(float((r["valor"] if r else "") or padrao))
+            return v if v >= 0 else padrao
+        except (TypeError, ValueError):
+            return padrao
+    amarelo = ler("prazo_amarelo_dias", 2)
+    vermelho = ler("prazo_vermelho_dias", 4)
+    if vermelho < amarelo:
+        vermelho = amarelo
+    return {"amarelo": amarelo, "vermelho": vermelho}
+
+
+@router.get("/prazos-parados")
+def prazos_parados(current_user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    try:
+        return _prazos_parados(conn)
+    finally:
+        conn.close()
+
+
+def _parse_dt(s):
+    if not s:
+        return None
+    try:
+        return datetime.datetime.strptime(str(s)[:19], "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        try:
+            return datetime.datetime.strptime(str(s)[:10], "%Y-%m-%d")
+        except ValueError:
+            return None
+
+
+@router.get("/acompanhamento")
+def acompanhamento(current_user: dict = Depends(get_current_user)):
+    """Painel do Gestor: onde e com quem os pedidos pós-produção estão parados,
+    valor pronto e não faturado e tempo médio de reação de cada vendedor."""
+    exigir_gestor(current_user)
+    conn = get_conn()
+    try:
+        desde = _vendedor_desde(conn)
+        prazos = _prazos_parados(conn)
+        rows = conn.execute(f"""
+            SELECT p.id, p.numero_pedido, p.status, p.status_desde, p.transportadora, p.retirada_prevista,
+                   p.vendedor, p.vendedor_usuario_id, uv.nome AS vendedor_nome,
+                   c.razao_social AS cliente_nome,
+                   CAST(julianday('now','localtime') - julianday(p.status_desde) AS INTEGER) AS dias_na_etapa,
+                   {SQL_VALOR_PEDIDO} AS valor_total
+            FROM pedidos p
+            JOIN pedidos_clientes c ON c.id = p.cliente_id
+            LEFT JOIN usuarios uv ON uv.id = p.vendedor_usuario_id
+            WHERE p.status IN ('produzido','aguardando_nf','aguardando_retirada')
+              AND (? = '' OR date(p.created_at) >= ?)
+            ORDER BY p.status_desde ASC
+        """, (desde, desde)).fetchall()
+        pedidos = [dict(r) for r in rows]
+        responsavel = {"produzido": "Vendedor", "aguardando_nf": "Expedição", "aguardando_retirada": "Cliente (retirada)"}
+        etapas = {}
+        for st in ("produzido", "aguardando_nf", "aguardando_retirada"):
+            lst = [p for p in pedidos if p["status"] == st]
+            etapas[st] = {
+                "qtd": len(lst),
+                "valor": round(sum(p["valor_total"] or 0 for p in lst), 2),
+                "mais_antigo_dias": max([p["dias_na_etapa"] or 0 for p in lst], default=0),
+                "atrasados": sum(1 for p in lst if (p["dias_na_etapa"] or 0) >= prazos["vermelho"]),
+                "responsavel": responsavel[st],
+            }
+        for p in pedidos:
+            p["responsavel"] = responsavel[p["status"]]
+
+        # Tempo médio (últimos 30 dias): Produzido → vendedor definir o envio, por vendedor;
+        # e Aguardando NF/retirada → Expedição concluir.
+        hist = conn.execute("""
+            SELECT h.pedido_id, h.status_anterior, h.status, h.em, p.vendedor_usuario_id, uv.nome AS vendedor_nome
+            FROM pedidos_status_hist h
+            JOIN pedidos p ON p.id = h.pedido_id
+            LEFT JOIN usuarios uv ON uv.id = p.vendedor_usuario_id
+            WHERE h.em >= datetime('now','localtime','-60 days')
+            ORDER BY h.pedido_id, h.id
+        """).fetchall()
+        entrou = {}
+        por_vendedor = {}
+        expedicao = []
+        limite = datetime.datetime.now() - datetime.timedelta(days=30)
+        for h in hist:
+            em = _parse_dt(h["em"])
+            if em is None:
+                continue
+            chave = (h["pedido_id"], h["status"])
+            entrou[chave] = em
+            inicio = entrou.get((h["pedido_id"], h["status_anterior"]))
+            if not inicio or em < limite:
+                continue
+            dias = (em - inicio).total_seconds() / 86400
+            if h["status_anterior"] == "produzido" and h["status"] in STATUS_LIBERADOS and h["vendedor_usuario_id"]:
+                v = por_vendedor.setdefault(h["vendedor_usuario_id"], {"vendedor_nome": h["vendedor_nome"], "tempos": []})
+                v["tempos"].append(dias)
+            if h["status_anterior"] in STATUS_LIBERADOS and h["status"] in ("enviado", "retirado"):
+                expedicao.append(dias)
+        aguardando_por_vend = {}
+        for p in pedidos:
+            if p["status"] == "produzido" and p["vendedor_usuario_id"]:
+                a = aguardando_por_vend.setdefault(p["vendedor_usuario_id"], {"vendedor_nome": p["vendedor_nome"], "qtd": 0})
+                a["qtd"] += 1
+        vendedores = []
+        for uid in set(por_vendedor) | set(aguardando_por_vend):
+            t = por_vendedor.get(uid, {}).get("tempos", [])
+            vendedores.append({
+                "vendedor_id": uid,
+                "vendedor_nome": (por_vendedor.get(uid) or aguardando_por_vend.get(uid))["vendedor_nome"],
+                "tempo_medio_dias": round(sum(t) / len(t), 1) if t else None,
+                "liberados_30d": len(t),
+                "aguardando_agora": aguardando_por_vend.get(uid, {}).get("qtd", 0),
+            })
+        vendedores.sort(key=lambda v: (v["tempo_medio_dias"] is None, -(v["tempo_medio_dias"] or 0)))
+        sem_vendedor = conn.execute("""
+            SELECT COUNT(*) FROM pedidos p
+            WHERE p.vendedor_usuario_id IS NULL AND COALESCE(p.status,'aberto') NOT IN ('enviado','retirado','entregue')
+              AND (? = '' OR date(p.created_at) >= ?)
+        """, (desde, desde)).fetchone()[0]
+        return {
+            "prazos": prazos,
+            "mostrar_desde": desde,
+            "etapas": etapas,
+            "valor_nao_faturado": round(sum(e["valor"] for e in etapas.values()), 2),
+            "parados": pedidos[:40],
+            "vendedores": vendedores,
+            "expedicao_tempo_medio_dias": round(sum(expedicao) / len(expedicao), 1) if expedicao else None,
+            "expedicao_concluidos_30d": len(expedicao),
+            "sem_vendedor": sem_vendedor,
+        }
+    finally:
+        conn.close()
+
+
+@router.get("/meus/estoque-clientes")
+def estoque_dos_meus_clientes(current_user: dict = Depends(get_current_user)):
+    """Produtos (personalizados) que os clientes do vendedor já pediram, com saldo,
+    mínimo, consumo médio mensal (saídas dos últimos 6 meses), cobertura em dias e
+    última saída. Itens de revenda (tampas etc.) ficam de fora."""
+    conn = get_conn()
+    try:
+        prods = conn.execute("""
+            SELECT ep.id, ep.codigo, ep.nome, ep.marca, ep.unidade, COALESCE(ep.estoque_minimo,0) AS estoque_minimo,
+                   COALESCE(es.quantidade,0) AS saldo,
+                   GROUP_CONCAT(DISTINCT c.razao_social) AS clientes
+            FROM pedidos p
+            JOIN pedidos_itens i ON i.pedido_id = p.id
+            JOIN estoque_produtos ep ON ep.id = i.produto_id
+            LEFT JOIN estoque_categorias ec ON ec.id = ep.categoria_id
+            LEFT JOIN estoque_saldo es ON es.produto_id = ep.id
+            JOIN pedidos_clientes c ON c.id = p.cliente_id
+            WHERE p.vendedor_usuario_id = ? AND ep.ativo = 1
+              AND (ec.tipo IS NULL OR ec.tipo != 'revenda')
+            GROUP BY ep.id
+        """, (current_user["id"],)).fetchall()
+        meses = 6
+        saida = []
+        for p in prods:
+            linha = conn.execute("""
+                SELECT COALESCE(SUM(quantidade),0) AS total, MIN(data) AS primeira, MAX(data) AS ultima
+                FROM estoque_movimentacoes
+                WHERE produto_id = ? AND tipo = 'saida' AND data >= date('now', ? || ' months')
+            """, (p["id"], f"-{meses}")).fetchone()
+            ultima_geral = conn.execute(
+                "SELECT MAX(data) FROM estoque_movimentacoes WHERE produto_id=? AND tipo='saida'", (p["id"],)).fetchone()[0]
+            total = linha["total"] or 0
+            dias_hist = None
+            if linha["primeira"]:
+                d = conn.execute("SELECT CAST(julianday('now') - julianday(?) AS INTEGER)", (linha["primeira"],)).fetchone()[0]
+                dias_hist = max(d or 0, 1)
+            janela = min(dias_hist, meses * 30) if dias_hist else meses * 30
+            media_dia = total / janela if janela else 0
+            saldo = p["saldo"] or 0
+            minimo = p["estoque_minimo"] or 0
+            cobertura = int(saldo / media_dia) if media_dia > 0 else None
+            dias_sem_saida = None
+            if ultima_geral:
+                dias_sem_saida = conn.execute("SELECT CAST(julianday('now') - julianday(?) AS INTEGER)", (ultima_geral,)).fetchone()[0]
+            if minimo > 0 and saldo <= minimo:
+                situacao = "abaixo_minimo"
+            elif cobertura is not None and cobertura <= 30:
+                situacao = "acabando"
+            elif dias_sem_saida is not None and dias_sem_saida >= 60 and saldo > 0:
+                situacao = "parado"
+            else:
+                situacao = "ok"
+            saida.append({
+                "produto_id": p["id"], "codigo": p["codigo"], "nome": p["nome"], "marca": p["marca"],
+                "unidade": p["unidade"], "clientes": p["clientes"], "saldo": saldo, "estoque_minimo": minimo,
+                "consumo_mensal": round(media_dia * 30, 1), "cobertura_dias": cobertura,
+                "ultima_saida": ultima_geral, "dias_sem_saida": dias_sem_saida, "situacao": situacao,
+            })
+        ordem = {"abaixo_minimo": 0, "acabando": 1, "parado": 2, "ok": 3}
+        saida.sort(key=lambda x: (ordem[x["situacao"]], x["cobertura_dias"] if x["cobertura_dias"] is not None else 10**9))
+        return saida
+    finally:
+        conn.close()
+
+
 @router.get("/meus")
 def meus_pedidos(current_user: dict = Depends(get_current_user)):
     """Pedidos do vendedor logado: em andamento + concluídos nos últimos 15 dias,
@@ -1544,6 +1750,7 @@ def meus_pedidos(current_user: dict = Depends(get_current_user)):
             "novidades": [dict(r) for r in novidades],
             "visto_em": visto_em,
             "mostrar_desde": desde,
+            "prazos": _prazos_parados(conn),
         }
     finally:
         conn.close()

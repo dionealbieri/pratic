@@ -60,11 +60,32 @@
 <div class="content">
   <div id="alert-com"></div>
 
-  <!-- TABS (vendedor só acompanha pedidos: Novo Pedido e Importar ficam ocultos) -->
-  <div class="tabs" style="display:none">
-    <button class="tab-btn active" onclick="switchTab('pedidos')">🧾 Meus Pedidos</button>
-    <button class="tab-btn" onclick="switchTab('novo')">➕ Novo Pedido</button>
-    <button class="tab-btn" onclick="switchTab('importar')">📥 Importar</button>
+  <!-- TABS (vendedor só acompanha: Novo Pedido e Importar ficam ocultos) -->
+  <div class="tabs">
+    <button class="tab-btn active" id="tabbtn-pedidos" onclick="switchTab('pedidos')">🧾 Meus Pedidos</button>
+    <button class="tab-btn" id="tabbtn-estoque" onclick="switchTab('estoque')">📦 Estoque dos meus clientes</button>
+    <button class="tab-btn" id="tabbtn-novo" onclick="switchTab('novo')" style="display:none">➕ Novo Pedido</button>
+    <button class="tab-btn" id="tabbtn-importar" onclick="switchTab('importar')" style="display:none">📥 Importar</button>
+  </div>
+
+  <!-- ── TAB ESTOQUE DOS MEUS CLIENTES ── -->
+  <div id="tab-estoque" style="display:none">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+      <div style="font-size:13px;color:var(--muted)">Produtos que seus clientes já pediram (sem itens de revenda). Consumo = média das saídas dos últimos 6 meses.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <select id="est-cli-filtro" onchange="renderEstoqueClientes()" style="min-width:200px">
+          <option value="atencao">⚠ Precisam de atenção</option>
+          <option value="">Todos os produtos</option>
+        </select>
+        <input type="text" id="est-cli-busca" placeholder="Buscar produto ou cliente..." oninput="renderEstoqueClientes()" style="min-width:220px">
+      </div>
+    </div>
+    <div class="table-wrap">
+      <div style="overflow-x:auto"><table>
+        <thead><tr><th>Produto</th><th>Cliente(s)</th><th style="text-align:right">Saldo</th><th style="text-align:right">Mínimo</th><th style="text-align:right">Consumo/mês</th><th>Dura</th><th>Última saída</th><th>Situação</th></tr></thead>
+        <tbody id="est-cli-tbody"></tbody>
+      </table></div>
+    </div>
   </div>
 
   <!-- ── TAB PEDIDOS ── -->
@@ -417,11 +438,14 @@ function switchTab(tab) {
     const v = document.getElementById('np-vendedor');
     if (v && !v.value) v.value = window.meuUsuario.nome || '';
   }
-  ['pedidos','novo','importar'].forEach(t => {
-    document.getElementById('tab-' + t).style.display = t === tab ? '' : 'none';
-    document.querySelectorAll('.tab-btn')[['pedidos','novo','importar'].indexOf(t)].classList.toggle('active', t === tab);
+  ['pedidos','estoque','novo','importar'].forEach(t => {
+    const c = document.getElementById('tab-' + t);
+    if (c) c.style.display = t === tab ? '' : 'none';
+    const b = document.getElementById('tabbtn-' + t);
+    if (b) b.classList.toggle('active', t === tab);
   });
   if (tab === 'pedidos') { loadPedidosCom(); loadCards(); }
+  if (tab === 'estoque') loadEstoqueClientes();
   if (tab === 'novo') loadClientesSelect();
 }
 
@@ -690,17 +714,59 @@ function fmtDataHora(s) {
 }
 function hojeISO() { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
 
-// Selo de tempo parado: verde até 1 dia, amarelo 2–3, vermelho 4+
+// Selo de tempo parado: cores pelos prazos configurados pelo Gestor (padrão 2 e 4 dias)
 function seloDias(dias, textoForcado) {
   const n = Math.max(0, Number(dias) || 0);
+  const pz = (mpDados && mpDados.prazos) || { amarelo: 2, vermelho: 4 };
   let bg = 'rgba(16,185,129,.15)', cor = 'var(--success)';
-  if (n >= 4) { bg = 'rgba(239,68,68,.15)'; cor = 'var(--danger)'; }
-  else if (n >= 2) { bg = 'rgba(240,180,41,.15)'; cor = 'var(--accent)'; }
+  if (n >= pz.vermelho) { bg = 'rgba(239,68,68,.15)'; cor = 'var(--danger)'; }
+  else if (n >= pz.amarelo) { bg = 'rgba(240,180,41,.15)'; cor = 'var(--accent)'; }
   const txt = textoForcado || (n === 0 ? 'hoje' : n === 1 ? '1 dia' : n + ' dias');
   return `<span style="display:inline-flex;align-items:center;gap:6px;background:${bg};color:${cor};border-radius:12px;padding:3px 10px;font-size:12px;font-weight:700;white-space:nowrap"><span style="width:7px;height:7px;border-radius:4px;background:${cor}"></span>${txt}</span>`;
 }
 
 async function loadCards() { await loadMeusPedidos(); }
+
+// ── ESTOQUE DOS MEUS CLIENTES
+let estCliDados = [];
+async function loadEstoqueClientes() {
+  const tbody = document.getElementById('est-cli-tbody');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">Carregando...</td></tr>';
+  try { estCliDados = await req('/pedidos/meus/estoque-clientes') || []; } catch (e) { estCliDados = []; }
+  renderEstoqueClientes();
+}
+function renderEstoqueClientes() {
+  const tbody = document.getElementById('est-cli-tbody');
+  if (!tbody) return;
+  const filtro = document.getElementById('est-cli-filtro').value;
+  const busca = (document.getElementById('est-cli-busca').value || '').toLowerCase().trim();
+  let lista = estCliDados;
+  if (filtro === 'atencao') lista = lista.filter(x => x.situacao !== 'ok');
+  if (busca) lista = lista.filter(x => (String(x.nome) + ' ' + (x.codigo || '') + ' ' + (x.marca || '') + ' ' + (x.clientes || '')).toLowerCase().includes(busca));
+  if (!lista.length) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">${filtro === 'atencao' && estCliDados.length ? '✅ Nenhum produto precisando de atenção' : 'Nenhum produto encontrado'}</td></tr>`;
+    return;
+  }
+  const SIT = {
+    abaixo_minimo: ['rgba(239,68,68,.15)', 'var(--danger)', 'Abaixo do mínimo'],
+    acabando: ['rgba(240,180,41,.15)', 'var(--accent)', 'Acabando (≤30 dias)'],
+    parado: ['rgba(156,163,175,.15)', 'var(--muted)', 'Sem saída há 60+ dias'],
+    ok: ['rgba(16,185,129,.15)', 'var(--success)', 'Ok'],
+  };
+  tbody.innerHTML = lista.map(x => {
+    const [bg, cor, txt] = SIT[x.situacao] || SIT.ok;
+    return `<tr>
+      <td><strong>${esc(x.nome)}</strong><div style="font-size:11px;color:var(--muted)">${esc([x.codigo, x.marca].filter(Boolean).join(' · '))}</div></td>
+      <td style="font-size:13px">${esc((x.clientes || '').split(',').join(', '))}</td>
+      <td style="text-align:right;font-weight:700">${fmtNum(x.saldo)}</td>
+      <td style="text-align:right">${x.estoque_minimo ? fmtNum(x.estoque_minimo) : '—'}</td>
+      <td style="text-align:right">${x.consumo_mensal ? fmtNum(x.consumo_mensal) : '—'}</td>
+      <td>${x.cobertura_dias == null ? '—' : '~' + x.cobertura_dias + ' dias'}</td>
+      <td>${x.ultima_saida ? fmtDate(String(x.ultima_saida).slice(0, 10)) + (x.dias_sem_saida != null ? ` <span style="font-size:11px;color:var(--muted)">(${x.dias_sem_saida}d)</span>` : '') : '—'}</td>
+      <td><span style="display:inline-flex;align-items:center;gap:6px;background:${bg};color:${cor};border-radius:12px;padding:3px 10px;font-size:12px;font-weight:700;white-space:nowrap"><span style="width:7px;height:7px;border-radius:4px;background:${cor}"></span>${txt}</span></td>
+    </tr>`;
+  }).join('');
+}
 
 async function loadMeusPedidos() {
   try {
@@ -799,7 +865,7 @@ function renderSecoesMeus() {
         <td><strong>${esc(p.numero_pedido)}</strong></td>
         <td>${esc(p.cliente_nome)}${tampas(p)}</td>
         <td style="${vencida ? 'color:var(--danger);font-weight:700' : ''}">${p.retirada_prevista ? fmtDate(p.retirada_prevista) + (vencida ? ' · vencida' : '') : '—'}</td>
-        <td>${vencida ? seloDias(99, (p.dias_na_etapa || 0) + ' dias') : seloDias(p.retirada_prevista ? 0 : p.dias_na_etapa, p.retirada_prevista ? 'no prazo' : null)}</td>
+        <td>${vencida ? seloDias(99999, (p.dias_na_etapa || 0) + ' dias') : seloDias(p.retirada_prevista ? 0 : p.dias_na_etapa, p.retirada_prevista ? 'no prazo' : null)}</td>
         <td style="text-align:right;white-space:nowrap"><button class="btn btn-sm btn-secondary" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${p.id})">📄 PDF</button> <button class="btn btn-sm btn-secondary" onclick="mpAbrirEnvio(${p.id},'retirada')">✏️ Alterar</button></td>
       </tr>`;
     }), '');
