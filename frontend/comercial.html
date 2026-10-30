@@ -432,6 +432,248 @@ document.querySelectorAll('.modal-overlay').forEach(m => {
   m.addEventListener('click', e => { if (e.target === m) m.classList.remove('open'); });
 });
 
+// ── PDF DO PEDIDO (mesmo layout do botão 🖨️ do painel do Gestor) — só leitura, para conferência
+async function imprimirPedidoVendedor(id) {
+  try {
+    const p = await req('/pedidos/' + id);
+    let emp = window.empresaDados;
+    if (!emp) {
+      try {
+        emp = await req('/configuracoes/empresa');
+        window.empresaDados = emp;
+      } catch(e) {
+        emp = {};
+      }
+    }
+
+    const subtotal = p.itens.reduce((acc, i) => acc + ((Number(i.quantidade)||0) * (Number(i.valor_unitario)||0) - (Number(i.desconto)||0)), 0);
+    const acrescimo = Number(p.acrescimo) || 0;
+    const frete = Number(p.frete) || 0;
+    const descontoGlobal = Number(p.desconto_global) || 0;
+    const valorTotal = Math.max(0, subtotal + acrescimo + frete - descontoGlobal);
+    const qtdItens = p.itens.reduce((acc, i) => acc + (Number(i.quantidade) || 0), 0);
+
+    const statusLabel = {
+      aberto: 'Aberto',
+      em_producao: 'Em produção',
+      produzido: 'Produzido',
+      entregue: 'Entregue'
+    }[p.status] || p.status;
+
+    function formatDateTimeString(str) {
+      if(!str) return '—';
+      const clean = str.replace('T', ' ').split('.')[0];
+      const [datePart, timePart] = clean.split(' ');
+      if(!datePart) return '—';
+      const [y, m, d] = datePart.split('-');
+      const time = timePart ? timePart.slice(0, 5) : '';
+      return d + '/' + m + '/' + y + (time ? ' ' + time : '');
+    }
+
+    const itemsHtml = p.itens.map((i, idx) => {
+      const qty = Number(i.quantidade) || 0;
+      const unitPrice = Number(i.valor_unitario) || 0;
+      const desc = Number(i.desconto) || 0;
+      const total = qty * unitPrice - desc;
+      const bg = idx % 2 === 0 ? '#f4f7fc' : '#ffffff';
+      return '<tr style="background: ' + bg + '; font-size: 11px;">' +
+        '<td style="padding: 6px 8px; text-align: center; border-bottom: 1px solid #ddd;">' + (i.produto_codigo || i.produto_id || '—') + '</td>' +
+        '<td style="padding: 6px 8px; text-align: left; border-bottom: 1px solid #ddd;">' + (i.descricao || '—') + '</td>' +
+        '<td style="padding: 6px 8px; text-align: center; border-bottom: 1px solid #ddd;">' + (i.unidade || 'UND').toUpperCase() + '</td>' +
+        '<td style="padding: 6px 8px; text-align: right; border-bottom: 1px solid #ddd;">' + fmtNum(qty) + '</td>' +
+        '<td style="padding: 6px 8px; text-align: right; border-bottom: 1px solid #ddd;">R$ ' + unitPrice.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+        '<td style="padding: 6px 8px; text-align: right; border-bottom: 1px solid #ddd;">R$ ' + desc.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+        '<td style="padding: 6px 8px; text-align: right; border-bottom: 1px solid #ddd; font-weight: bold;">R$ ' + total.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+      '</tr>';
+    }).join('');
+
+    const parcelasHtml = p.parcelas && p.parcelas.length ? 
+      '<div style="display: flex; justify-content: center; margin-top: 25px;">' +
+        '<table style="width: 75%; border-collapse: collapse; border: 1px solid #ccc; font-size: 11px;">' +
+          '<thead>' +
+            '<tr style="background: #f4f7fc; border-bottom: 1px solid #ccc;">' +
+              '<th colspan="3" style="padding: 6px; text-align: center; font-weight: bold; font-size: 12px;">Parcelas</th>' +
+            '</tr>' +
+            '<tr style="background: #fdfdfd; border-bottom: 1px solid #ccc;">' +
+              '<th style="padding: 6px; text-align: left; font-weight: bold; border-right: 1px solid #ccc; font-size: 11px;">Forma de Pagamento</th>' +
+              '<th style="padding: 6px; text-align: center; font-weight: bold; border-right: 1px solid #ccc; font-size: 11px;">Data de Vencimento</th>' +
+              '<th style="padding: 6px; text-align: right; font-weight: bold; font-size: 11px;">Valor</th>' +
+            '</tr>' +
+          '</thead>' +
+          '<tbody>' +
+            p.parcelas.map(pa => 
+              '<tr style="border-bottom: 1px solid #ccc;">' +
+                '<td style="padding: 6px; text-align: left; border-right: 1px solid #ccc;">' + (pa.forma_pagamento || '—') + '</td>' +
+                '<td style="padding: 6px; text-align: center; border-right: 1px solid #ccc;">' + fmtDate(pa.vencimento) + '</td>' +
+                '<td style="padding: 6px; text-align: right; font-weight: bold;">R$ ' + (Number(pa.valor)||0).toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+              '</tr>'
+            ).join('') +
+          '</tbody>' +
+        '</table>' +
+      '</div>' : '';
+
+    const logoHtml = emp.logo 
+      ? '<img src="' + emp.logo + '" style="max-height: 55px; max-width: 160px; object-fit: contain; margin-right: 15px;">' 
+      : '';
+
+    const empNome = emp.razao_social || emp.nome || 'PRATIC';
+    const empCnpj = emp.cnpj ? 'Cnpj: ' + emp.cnpj : '';
+    const empTel = emp.telefone ? 'Telefone: ' + emp.telefone : '';
+    const empFantasia = emp.nome_fantasia ? 'Nome Fantasia: ' + emp.nome_fantasia : '';
+    
+    let empEndereco = '';
+    if (emp.logradouro) {
+      empEndereco = emp.logradouro;
+      if (emp.numero) empEndereco += ', ' + emp.numero;
+      if (emp.complemento) empEndereco += ' - ' + emp.complemento;
+      if (emp.bairro) empEndereco += ', ' + emp.bairro;
+      if (emp.cep) empEndereco += ' - CEP: ' + emp.cep;
+      if (emp.cidade) {
+        empEndereco += ', ' + emp.cidade;
+        if (emp.uf) empEndereco += '/' + emp.uf.toUpperCase();
+      }
+    }
+
+    const docContent = 
+      '<div style="font-family: Arial, sans-serif; color: #000; line-height: 1.4; font-size: 12px; padding: 20px 10px; max-width: 800px; margin: 0 auto; min-height: 270mm; position: relative;">' +
+        '<!-- CABECALHO -->' +
+        '<table style="width: 100%; border-collapse: collapse; margin-bottom: 10px;">' +
+          '<tr>' +
+            '<td style="vertical-align: middle; width: 80px;">' + logoHtml + '</td>' +
+            '<td style="vertical-align: top;">' +
+              '<div style="font-size: 15px; font-weight: bold; text-transform: uppercase;">' + empNome + '</div>' +
+              (empEndereco ? '<div style="font-size: 11px; color: #333; margin-top: 3px;">' + empEndereco + '</div>' : '') +
+              '<div style="font-size: 11px; color: #333; margin-top: 2px;">' +
+                [empCnpj, empTel].filter(Boolean).join('&nbsp;&nbsp;&nbsp;&nbsp;') +
+              '</div>' +
+              (empFantasia ? '<div style="font-size: 11px; color: #333; margin-top: 2px;">' + empFantasia + '</div>' : '') +
+            '</td>' +
+            '<td style="vertical-align: top; text-align: right; width: 120px;">' +
+              '<div style="font-size: 20px; font-weight: bold; color: #000; text-transform: uppercase;">Pedido</div>' +
+            '</td>' +
+          '</tr>' +
+        '</table>' +
+
+        '<!-- CODIGO / DATA / STATUS -->' +
+        '<hr style="border: 0; border-top: 1px solid #000; margin: 6px 0;">' +
+        '<div style="font-size: 11px; font-weight: bold; padding: 2px 0;">' +
+          'Código do Pedido : ' + p.numero_pedido + ' - Data de Lançamento: ' + formatDateTimeString(p.created_at) + ' - Status: ' + statusLabel +
+        '</div>' +
+        '<hr style="border: 0; border-top: 1px solid #000; margin: 6px 0;">' +
+
+        '<!-- CLIENTE INFO -->' +
+        '<table style="width: 100%; margin-top: 10px; font-size: 12px; border-collapse: collapse; line-height: 1.6;">' +
+          '<tr>' +
+            '<td style="width: 50%; vertical-align: top; padding: 2px 0;"><strong>Cliente:</strong> ' + (p.cliente_nome || '—') + '</td>' +
+            '<td style="width: 50%; vertical-align: top; padding: 2px 0;"><strong>Documento:</strong> ' + (p.cliente_cnpj || '—') + '</td>' +
+          '</tr>' +
+          '<tr>' +
+            '<td style="vertical-align: top; padding: 2px 0;"><strong>Telefone:</strong> ' + (p.cliente_telefone || '—') + '</td>' +
+            '<td style="vertical-align: top; padding: 2px 0;"><strong>Celular:</strong> —</td>' +
+          '</tr>' +
+          '<tr>' +
+            '<td style="vertical-align: top; padding: 2px 0;">' +
+              '<strong>Endereço:</strong> ' + [p.cliente_logradouro, p.cliente_numero].filter(Boolean).join(', ') + (p.cliente_complemento ? ' - ' + p.cliente_complemento : '') + (p.cliente_cep ? ' - ' + p.cliente_cep : '') +
+            '</td>' +
+            '<td style="vertical-align: top; padding: 2px 0;"><strong>Bairro:</strong> ' + (p.cliente_bairro || '—') + '</td>' +
+          '</tr>' +
+          '<tr>' +
+            '<td style="vertical-align: top; padding: 2px 0;"><strong>Cidade:</strong> ' + (p.cliente_cidade || '—') + '</td>' +
+            '<td style="vertical-align: top; padding: 2px 0;"><strong>Estado:</strong> ' + (p.cliente_uf || '—') + '</td>' +
+          '</tr>' +
+          '<tr>' +
+            '<td style="vertical-align: top; padding: 2px 0;"><strong>Vendedor:</strong> ' + (p.vendedor || '—') + '</td>' +
+            '<td style="vertical-align: top; padding: 2px 0;"><strong>Pessoa para Contato:</strong> —</td>' +
+          '</tr>' +
+        '</table>' +
+
+        '<!-- TABELA PRODUTOS -->' +
+        '<table style="width: 100%; border-collapse: collapse; margin-top: 18px;">' +
+          '<thead>' +
+            '<tr style="border-bottom: 2px solid #333; font-size: 11px; text-transform: uppercase;">' +
+              '<th style="padding: 6px 8px; text-align: center; font-weight: bold; border-bottom: 2px solid #333;">Produto</th>' +
+              '<th style="padding: 6px 8px; text-align: left; font-weight: bold; border-bottom: 2px solid #333; width: 42%;">Descrição</th>' +
+              '<th style="padding: 6px 8px; text-align: center; font-weight: bold; border-bottom: 2px solid #333;">Unidade</th>' +
+              '<th style="padding: 6px 8px; text-align: right; font-weight: bold; border-bottom: 2px solid #333;">Quantidade</th>' +
+              '<th style="padding: 6px 8px; text-align: right; font-weight: bold; border-bottom: 2px solid #333;">Valor Unitário</th>' +
+              '<th style="padding: 6px 8px; text-align: right; font-weight: bold; border-bottom: 2px solid #333;">Desconto</th>' +
+              '<th style="padding: 6px 8px; text-align: right; font-weight: bold; border-bottom: 2px solid #333;">Valor Total</th>' +
+            '</tr>' +
+          '</thead>' +
+          '<tbody>' +
+            itemsHtml +
+          '</tbody>' +
+        '</table>' +
+
+        '<!-- PARCELAS -->' +
+        parcelasHtml +
+
+        '<!-- OBSERVACOES E TOTAIS -->' +
+        '<table style="width: 100%; margin-top: 25px; font-size: 12px; border-collapse: collapse;">' +
+          '<tr>' +
+            '<td style="width: 50%; vertical-align: top; padding-right: 15px;">' +
+              (p.observacoes ? 
+                '<div style="border: 1px solid #ccc; padding: 10px; border-radius: 6px; background: #fafafa; font-size: 11px; line-height: 1.5;">' +
+                  '<strong>Observação:</strong><br>' +
+                  p.observacoes +
+                '</div>' : '') +
+            '</td>' +
+            '<td style="width: 50%; vertical-align: top;">' +
+              '<table style="width: 100%; border-collapse: collapse; font-size: 12px; text-align: right; line-height: 1.6;">' +
+                '<tr>' +
+                  '<td style="padding: 4px 8px; color: #333; font-weight: bold;">SubTotal</td>' +
+                  '<td style="padding: 4px 8px; width: 140px; font-weight: bold;">R$ ' + subtotal.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+                '</tr>' +
+                '<tr>' +
+                  '<td style="padding: 4px 8px; color: #333; font-weight: bold;">Acréscimo</td>' +
+                  '<td style="padding: 4px 8px;">R$ ' + acrescimo.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+                '</tr>' +
+                '<tr>' +
+                  '<td style="padding: 4px 8px; color: #333; font-weight: bold;">Frete</td>' +
+                  '<td style="padding: 4px 8px;">R$ ' + frete.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+                '</tr>' +
+                '<tr>' +
+                  '<td style="padding: 4px 8px; color: #333; font-weight: bold;">Desconto Global</td>' +
+                  '<td style="padding: 4px 8px;">R$ ' + descontoGlobal.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+                '</tr>' +
+                '<tr style="border-top: 1px solid #333; font-size: 13px;">' +
+                  '<td style="padding: 6px 8px; font-weight: bold; color: #000; text-transform: uppercase;">Valor Total</td>' +
+                  '<td style="padding: 6px 8px; font-weight: bold; color: #000;">R$ ' + valorTotal.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+                '</tr>' +
+                '<tr>' +
+                  '<td style="padding: 4px 8px; color: #333; font-weight: bold;">Quantidade Itens</td>' +
+                  '<td style="padding: 4px 8px; font-weight: bold;">' + fmtNum(qtdItens) + '</td>' +
+                '</tr>' +
+                '<tr>' +
+                  '<td style="padding: 4px 8px; color: #333; font-weight: bold;">Peso dos Produtos</td>' +
+                  '<td style="padding: 4px 8px; font-weight: bold;">0,00</td>' +
+                '</tr>' +
+              '</table>' +
+            '</td>' +
+          '</tr>' +
+        '</table>' +
+
+        '<!-- RODAPE -->' +
+        '<div style="position: absolute; bottom: 10px; left: 10px; right: 10px; border-top: 1px solid #ccc; padding-top: 6px; display: flex; justify-content: space-between; font-size: 10px; color: #777;">' +
+          '<span>Desenvolvido por criadorpro.com.br</span>' +
+          '<span>Página: 1</span>' +
+        '</div>' +
+      '</div>';
+
+    const win = window.open('', '_blank');
+    win.document.write('<html><head><title>Pedido ' + p.numero_pedido + '</title><style>' +
+      '@page { size: A4; margin: 0; }' +
+      '* { box-sizing: border-box; }' +
+      'body { margin: 0; background: #fff; }' +
+      '</style></head><body>' + docContent + '</body></html>');
+    win.document.close();
+    win.focus();
+    setTimeout(() => win.print(), 350);
+  } catch(e) {
+    showAlert('Erro ao gerar relatório do pedido: ' + e.message, 'danger');
+  }
+}
+
 // ── MEUS PEDIDOS (fluxo pós-produção)
 let mpDados = { pedidos: [], novidades: [] };
 let mpModo = 'transportadora';
@@ -543,6 +785,7 @@ function renderSecoesMeus() {
       <td>${seloDias(p.dias_na_etapa)}</td>
       <td>${fmtBRL(p.valor_total)}</td>
       <td style="white-space:nowrap;text-align:right">
+        <button class="btn btn-sm btn-secondary" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${p.id})">📄 PDF</button>
         <button class="btn btn-sm btn-primary" onclick="mpAbrirEnvio(${p.id},'transportadora')">🚚 Informar frete</button>
         <button class="btn btn-sm btn-secondary" onclick="mpAbrirEnvio(${p.id},'retirada')">🙋 Cliente retira</button>
       </td></tr>`),
@@ -557,7 +800,7 @@ function renderSecoesMeus() {
         <td>${esc(p.cliente_nome)}${tampas(p)}</td>
         <td style="${vencida ? 'color:var(--danger);font-weight:700' : ''}">${p.retirada_prevista ? fmtDate(p.retirada_prevista) + (vencida ? ' · vencida' : '') : '—'}</td>
         <td>${vencida ? seloDias(99, (p.dias_na_etapa || 0) + ' dias') : seloDias(p.retirada_prevista ? 0 : p.dias_na_etapa, p.retirada_prevista ? 'no prazo' : null)}</td>
-        <td style="text-align:right"><button class="btn btn-sm btn-secondary" onclick="mpAbrirEnvio(${p.id},'retirada')">✏️ Alterar</button></td>
+        <td style="text-align:right;white-space:nowrap"><button class="btn btn-sm btn-secondary" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${p.id})">📄 PDF</button> <button class="btn btn-sm btn-secondary" onclick="mpAbrirEnvio(${p.id},'retirada')">✏️ Alterar</button></td>
       </tr>`;
     }), '');
 
@@ -569,18 +812,19 @@ function renderSecoesMeus() {
       <td>${esc(p.transportadora || '—')}</td>
       <td>${fmtBRL(p.frete)}</td>
       <td>${seloDias(p.dias_na_etapa)}</td>
-      <td style="text-align:right"><button class="btn btn-sm btn-secondary" onclick="mpAbrirEnvio(${p.id},'transportadora')">✏️ Alterar</button></td>
+      <td style="text-align:right;white-space:nowrap"><button class="btn btn-sm btn-secondary" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${p.id})">📄 PDF</button> <button class="btn btn-sm btn-secondary" onclick="mpAbrirEnvio(${p.id},'transportadora')">✏️ Alterar</button></td>
     </tr>`), '');
 
   const concluidosVis = mpVerTodosConcluidos ? concluidos : concluidos.slice(0, 10);
   if (concluidos.length) html += _tabelaSecao('✅ Concluídos nos últimos 15 dias', concluidos.length,
-    ['Pedido', 'Cliente', 'Saída', 'NF', 'Data'],
+    ['Pedido', 'Cliente', 'Saída', 'NF', 'Data', ''],
     concluidosVis.map(p => `<tr>
       <td><strong>${esc(p.numero_pedido)}</strong></td>
       <td>${esc(p.cliente_nome)}</td>
       <td><span class="pill ${STATUS_PILL_PEDIDO[p.status] || ''}">${STATUS_LABEL_PEDIDO[p.status] || esc(p.status)}</span>${p.status === 'enviado' && p.transportadora ? ' <span style="color:var(--muted);font-size:12px">' + esc(p.transportadora) + '</span>' : ''}</td>
       <td>${esc(p.nota_fiscal || '—')}</td>
       <td>${fmtDate(dataConcl(p))}</td>
+      <td style="text-align:right"><button class="btn btn-sm btn-secondary" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${p.id})">📄 PDF</button></td>
     </tr>`), '');
   if (concluidos.length > 10) {
     html += `<div style="text-align:center;margin:-8px 0 18px"><button class="btn btn-sm btn-secondary" onclick="mpVerTodosConcluidos=!mpVerTodosConcluidos;renderSecoesMeus()">${mpVerTodosConcluidos ? 'Mostrar só os 10 mais recentes' : 'Ver todos os ' + concluidos.length + ' concluídos'}</button></div>`;
@@ -704,6 +948,7 @@ async function loadPedidosCom() {
       <td><span class="pill ${STATUS_PILL_PEDIDO[p.status] || ''}">${STATUS_LABEL_PEDIDO[p.status] || p.status}</span></td>
       <td class="flex gap-2">
         <button class="btn btn-sm btn-secondary" onclick="verDetalhe(${p.id})">Ver</button>
+        <button class="btn btn-sm btn-secondary" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${p.id})">📄 PDF</button>
       </td>
     </tr>`;
   }).join('');
