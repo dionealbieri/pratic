@@ -2861,14 +2861,31 @@ def criar_pedido(p: PedidoIn, current_user: dict = Depends(get_current_user)):
     conn.close()
     return {"id": pedido_id, "mensagem": "Pedido criado", "alertas_estoque": alertas}
 
+def _vendedor_pode_mexer(cur, ped, id: int, current_user: dict, acao: str):
+    """Vendedor (Comercial) só edita/exclui o próprio pedido, ainda Aberto e sem produção lançada."""
+    if ped["vendedor_usuario_id"] != current_user["id"]:
+        raise HTTPException(403, "Este pedido não é seu.")
+    if (ped["status"] or "aberto") != "aberto":
+        raise HTTPException(400, f"Só é possível {acao} pedidos ainda em aberto. Peça ao Gestor.")
+    if cur.execute("SELECT 1 FROM producao_diaria WHERE pedido_numero=? LIMIT 1", (ped["numero_pedido"],)).fetchone() \
+       or cur.execute("SELECT 1 FROM pedidos_itens WHERE pedido_id=? AND COALESCE(qtd_produzida,0) > 0 LIMIT 1", (id,)).fetchone():
+        raise HTTPException(400, f"Este pedido já tem produção lançada. Peça ao Gestor para {acao}.")
+
+
 @router.put("/{id}")
-def atualizar_pedido(id: int, p: PedidoIn):
+def atualizar_pedido(id: int, p: PedidoIn, current_user: dict = Depends(get_current_user)):
     conn = get_conn()
     cur = conn.cursor()
     atual = cur.execute("SELECT * FROM pedidos WHERE id=?", (id,)).fetchone()
     if not atual:
         conn.close()
         raise HTTPException(404, "Pedido não encontrado")
+    if current_user.get("role") == "comercial":
+        try:
+            _vendedor_pode_mexer(cur, atual, id, current_user, "editar")
+        except HTTPException:
+            conn.close()
+            raise
     numero_antigo = atual["numero_pedido"]
     if not p.numero_pedido or not str(p.numero_pedido).strip():
         last = cur.execute("SELECT numero_pedido FROM pedidos WHERE numero_pedido GLOB '[0-9]*' AND id<>? ORDER BY CAST(numero_pedido AS INTEGER) DESC LIMIT 1", (id,)).fetchone()
@@ -3125,8 +3142,8 @@ def atualizar_status_pedido(id: int, body: StatusItemIn, current_user: dict = De
 def deletar_pedido(id: int, current_user = Depends(get_current_user)):
     conn = get_conn()
     try:
-        # 1. Verificar permissão
-        if not verificar_permissao("pedidos", "deletar", current_user):
+        # 1. Verificar permissão (o vendedor exclui o próprio pedido em aberto sem precisar dela)
+        if current_user.get("role") != "comercial" and not verificar_permissao("pedidos", "deletar", current_user):
             raise HTTPException(403, "Você não tem permissão para excluir pedidos.")
 
         cur = conn.cursor()
@@ -3147,8 +3164,9 @@ def deletar_pedido(id: int, current_user = Depends(get_current_user)):
                     raise HTTPException(400, "Esta entrega já foi liberada para a Expedição. Volte o envio antes de excluir.")
             elif (ped["status"] or "aberto") != "aberto":
                 raise HTTPException(400, "Só é possível excluir pedidos ainda em aberto. Peça ao Gestor.")
-            if cur.execute("SELECT 1 FROM producao_diaria WHERE pedido_numero=? LIMIT 1", (numero_pedido,)).fetchone() \
-               or cur.execute("SELECT 1 FROM pedidos_itens WHERE pedido_id=? AND COALESCE(qtd_produzida,0) > 0 LIMIT 1", (id,)).fetchone():
+            if not eh_entrega_estoque and (
+                    cur.execute("SELECT 1 FROM producao_diaria WHERE pedido_numero=? LIMIT 1", (numero_pedido,)).fetchone()
+                    or cur.execute("SELECT 1 FROM pedidos_itens WHERE pedido_id=? AND COALESCE(qtd_produzida,0) > 0 LIMIT 1", (id,)).fetchone()):
                 raise HTTPException(400, "Este pedido já tem produção lançada. Peça ao Gestor para excluir.")
 
         # 3. Excluir lançamentos de produção vinculados a este pedido (pelo número),
