@@ -1527,8 +1527,18 @@ def init_db():
     _migrar_transportadoras(conn)
     _migrar_volumes(conn)
     _migrar_estoque_cliente(conn)
+    _migrar_nf_arquivo(conn)
     conn.commit()
     conn.close()
+
+
+def _migrar_nf_arquivo(conn):
+    """PDF da nota fiscal anexado pela Expedição (o arquivo fica na pasta banco/notas_fiscais)."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(pedidos)").fetchall()]
+    for col in ("nf_arquivo", "nf_arquivo_nome", "nf_arquivo_em", "nf_arquivo_por"):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE pedidos ADD COLUMN {col} TEXT")
+    conn.commit()
 
 
 def _migrar_estoque_cliente(conn):
