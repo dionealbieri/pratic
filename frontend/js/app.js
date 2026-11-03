@@ -285,7 +285,7 @@ async function carregarAcessoPrincipal() {
     
     const path = window.location.pathname;
     const params = new URLSearchParams(window.location.search);
-    const temPaginaSolicitada = params.has('page') || params.has('pagina') || params.has('perfil') || params.has('setor') || params.has('importar');
+    const temPaginaSolicitada = params.has('page') || params.has('pagina') || params.has('perfil') || params.has('setor') || params.has('importar') || params.has('editar');
 
     if ((path === '/' || path === '/index.html') && !temPaginaSolicitada) {
       if (me.role === 'producao') {
@@ -7613,6 +7613,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     iniciarModoImportarVendedor();
     return;
   }
+  if (params.get('editar') && window.usuarioLogado && window.usuarioLogado.role === 'comercial') {
+    iniciarModoImportarVendedor(parseInt(params.get('editar')));
+    return;
+  }
   const paginaSolicitada = params.get('page') || params.get('pagina');
   const paginaInicial = (paginaSolicitada && paginasLiberadas.includes(paginaSolicitada)) ? paginaSolicitada : (paginasLiberadas[0] || 'dashboard');
   showPage(paginaInicial);
@@ -7623,8 +7627,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 // mesma importação da tela de Pedidos (Importar e Cadastrar com a tela de
 // confirmação, ou Importar em lote). Ao terminar ou cancelar, volta para /comercial.
 window._impOcupado = false;
-function iniciarModoImportarVendedor() {
+function iniciarModoImportarVendedor(editarId) {
   window._modoImportarVendedor = true;
+  const editando = !!editarId;
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   const pg = document.getElementById('page-pedidos');
   if (pg) {
@@ -7632,24 +7637,25 @@ function iniciarModoImportarVendedor() {
     Array.from(pg.children).forEach(ch => { ch.style.display = 'none'; });
     const ban = document.createElement('div');
     ban.innerHTML = `<div class="card" style="max-width:640px;margin:40px auto;text-align:center">
-      <div style="font-family:var(--font-head);font-weight:700;font-size:18px;margin-bottom:8px">📥 Importação de pedido</div>
+      <div style="font-family:var(--font-head);font-weight:700;font-size:18px;margin-bottom:8px">${editando ? '✏️ Edição de pedido' : '📥 Importação de pedido'}</div>
       <div style="font-size:13px;color:var(--muted);margin-bottom:16px">Ao salvar ou cancelar, você volta para Meus Pedidos.</div>
       <div class="flex gap-2" style="justify-content:center">
-        <button class="btn btn-primary" onclick="openModalImportarPedido()">Abrir importação</button>
+        <button class="btn btn-primary" onclick="${editando ? `editPedido(${editarId})` : 'openModalImportarPedido()'}">${editando ? 'Abrir pedido' : 'Abrir importação'}</button>
         <button class="btn btn-secondary" onclick="window.location.href='/comercial'">← Voltar para Meus Pedidos</button>
       </div></div>`;
     pg.appendChild(ban);
   }
   const titulo = document.getElementById('page-title');
-  if (titulo) titulo.textContent = 'Importar Pedido';
-  openModalImportarPedido();
+  if (titulo) titulo.textContent = editando ? 'Editar Pedido' : 'Importar Pedido';
+  if (editando) editPedido(editarId).catch(e => { showAlert(e.message || 'Não foi possível abrir o pedido', 'danger'); });
+  else openModalImportarPedido();
   let vazios = 0, abriu = false;
   setInterval(() => {
     const aberto = document.querySelector('.modal-overlay.open') || document.getElementById('popup-overlay-dyn');
     if (aberto) { abriu = true; vazios = 0; return; }
     if (!abriu || window._impOcupado) { vazios = 0; return; }
     vazios++;
-    if (vazios >= 3) window.location.href = '/comercial' + (window._impSalvou ? '?importado=1' : '');
+    if (vazios >= 3) window.location.href = '/comercial' + (window._impSalvou ? (editando ? '?editado=1' : '?importado=1') : '');
   }, 400);
 }
 window.iniciarModoImportarVendedor = iniciarModoImportarVendedor;
