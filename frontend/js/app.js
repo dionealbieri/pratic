@@ -4775,7 +4775,9 @@ async function loadTransportadora() {
   // a partir da data de corte do Portal do Vendedor (pedidos antigos ficam de fora)
   const desdeVend = (_prazosParados && _prazosParados.mostrar_desde) || '';
   const aguardVend = p => p.status === 'produzido' && (!desdeVend || String(p.created_at || '').slice(0, 10) >= desdeVend);
-  let lista = filtro === 'aguardando_vendedor' ? rows.filter(aguardVend)
+  // Com algo digitado na busca, procura em TODOS os pedidos (qualquer status)
+  let lista = busca ? rows.slice()
+    : filtro === 'aguardando_vendedor' ? rows.filter(aguardVend)
     : rows.filter(p => (mapa[filtro] || ['aguardando_nf']).includes(st(p)));
   if (busca) lista = lista.filter(p =>
     String(p.numero_pedido || '').toLowerCase().includes(busca) ||
@@ -4813,6 +4815,12 @@ async function loadTransportadora() {
       acoes = `<button class="btn btn-sm btn-secondary" onclick="verProdutosEnviados(${p.id})">👁 Produtos</button> <button class="btn btn-sm btn-secondary" onclick="abrirDespacho(${p.id})">✏️</button> <button class="btn btn-sm btn-primary" onclick="confirmarEntrega(${p.id})">✓ Entregue</button>`;
     } else if (['enviado', 'retirado', 'entregue'].includes(s2)) {
       acoes = `<button class="btn btn-sm btn-secondary" onclick="verProdutosEnviados(${p.id})">👁 Produtos</button>`;
+    } else {
+      acoes = `<button class="btn btn-sm btn-secondary" onclick="verDetalhesPedido(${p.id})">👁 Ver</button>`;
+    }
+    // Gestor: tirar do sistema pedido que já saiu por fora (enquanto nem todos usam o fluxo)
+    if (ehGestor && _podeMarcarEntregue(s2) && s2 !== 'produzido' && s2 !== 'enviado') {
+      acoes += ` <button class="btn btn-sm btn-secondary" title="Pedido que já saiu por fora do sistema" onclick="marcarJaEntregue(${p.id}, '${_escHtml(p.numero_pedido)}')">✓ Já entregue</button>`;
     }
     const pendente = ['aguardando_nf', 'aguardando_retirada', 'produzido'].includes(s2);
     let previsao = '—';
@@ -5251,14 +5259,21 @@ async function confirmarEntrega(id) {
 }
 window.confirmarEntrega = confirmarEntrega;
 
-// Gestor: pedido antigo que já saiu por fora do sistema (sem NF lançada aqui)
+// Gestor: pedido que já saiu por fora do sistema (sem NF lançada aqui)
+function _ehGestorLogado() {
+  return (window.usuarioLogado && window.usuarioLogado.role === 'gestor') || localStorage.getItem('user_role') === 'gestor';
+}
+function _podeMarcarEntregue(status) {
+  return !['entregue', 'retirado', 'em_estoque'].includes(status || 'aberto');
+}
 async function marcarJaEntregue(id, numero) {
-  if (!confirm('Marcar o pedido ' + numero + ' como já entregue?\n\nUse só para pedido que já saiu e não vai passar pela Expedição no sistema. Ele sai das listas de pendentes.')) return;
+  if (!confirm('Marcar o pedido ' + numero + ' como entregue?\n\nUse para pedido que já saiu por fora do sistema. Ele sai de todas as listas de pendentes (produção, vendedor e Expedição).')) return false;
   try {
     await api('/pedidos/' + id + '/confirmar-entrega', 'POST', {});
     showAlert('Pedido ' + numero + ' marcado como entregue.');
-    loadTransportadora();
-  } catch (e) { showAlert(e.message, 'danger'); }
+    if (document.getElementById('ped-transp-filtro')) loadTransportadora();
+    return true;
+  } catch (e) { showAlert(e.message, 'danger'); return false; }
 }
 window.marcarJaEntregue = marcarJaEntregue;
 
@@ -6450,6 +6465,12 @@ async function verDetalhesPedido(id) {
   if (typeof resumoCotacaoHTML === 'function') resumoCotacaoHTML(id, document.getElementById('ped-det-embalagem'));
   const btnImprimir = document.getElementById('btn-imprimir-pedido-modal');
   if(btnImprimir) btnImprimir.onclick = () => { imprimirPedido(id); };
+  const btnEnt = document.getElementById('btn-ped-ja-entregue');
+  if (btnEnt) {
+    const pode = _ehGestorLogado() && _podeMarcarEntregue(p.status);
+    btnEnt.style.display = pode ? '' : 'none';
+    btnEnt.onclick = async () => { if (await marcarJaEntregue(p.id, p.numero_pedido)) { closeModal('modal-ped-detalhe'); if (typeof loadPedidos === 'function') loadPedidos(); } };
+  }
   _carregarHistoricoProducaoPedido(id);
 }
 
