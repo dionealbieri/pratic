@@ -6474,6 +6474,21 @@ async function verDetalhesPedido(id) {
   _carregarHistoricoProducaoPedido(id);
 }
 
+// Produção lançada com um produto que não está mais no pedido (marca trocada depois):
+// passa os lançamentos para o produto do pedido, acertando o estoque dos dois.
+async function corrigirMarcaProducao(pedidoId, de, para) {
+  if (!prodEstoqueCache.length) { try { prodEstoqueCache = await api('/estoque/produtos'); } catch (e) {} }
+  const nomeDe = (prodEstoqueCache.find(p => p.id === de) || {}).nome || 'o produto lançado';
+  const nomePara = (prodEstoqueCache.find(p => p.id === para) || {}).nome || 'o produto do pedido';
+  if (!confirm(`Passar a produção deste pedido de ${nomeDe} para ${nomePara}?\n\nUse quando os copos usados na máquina foram ${nomePara}. O estoque é acertado: devolve ao ${nomeDe} e baixa do ${nomePara}.`)) return;
+  try {
+    const r = await api('/pedidos/' + pedidoId + '/trocar-produto-producao', 'POST', { de_produto_id: de, para_produto_id: para });
+    showAlert('✅ ' + r.mensagem);
+    verDetalhesPedido(pedidoId);
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+window.corrigirMarcaProducao = corrigirMarcaProducao;
+
 // Quem produziu e quando: lançamentos de produção vinculados a este pedido
 // (um pedido pode ser atendido em vários dias por operadores diferentes).
 async function _carregarHistoricoProducaoPedido(id) {
@@ -6497,8 +6512,19 @@ async function _carregarHistoricoProducaoPedido(id) {
       return;
     }
     const resumo = hist.resumo || [];
+    const podeCorrigir = temPermissao('producao', 'editar') || temPermissao('pedidos', 'editar');
+    const candidatos = resumo.filter(x => !x.fora_do_pedido && !x.revenda && x.pedido > 0 && x.produzido < x.pedido && x.produto_id);
     const situacao = r => {
-      if (r.fora_do_pedido) return '<span style="color:var(--danger);font-weight:600">⚠ Fora do pedido</span>';
+      if (r.fora_do_pedido) {
+        let h = '<span style="color:var(--danger);font-weight:600">⚠ Fora do pedido</span>';
+        if (podeCorrigir && r.produto_id && candidatos.length) {
+          const selId = 'corr-marca-' + r.produto_id;
+          h += candidatos.length === 1
+            ? `<div style="margin-top:6px"><button class="btn btn-sm btn-secondary" title="Os copos usados foram os do pedido: passa a produção para ${_escHtml(candidatos[0].produto_nome || '')}" onclick="corrigirMarcaProducao(${id}, ${r.produto_id}, ${candidatos[0].produto_id})">🔁 Corrigir marca</button></div>`
+            : `<div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap"><select id="${selId}" style="font-size:12px;padding:4px 6px">${candidatos.map(c => `<option value="${c.produto_id}">${_escHtml(c.produto_nome || '')}</option>`).join('')}</select><button class="btn btn-sm btn-secondary" onclick="corrigirMarcaProducao(${id}, ${r.produto_id}, +document.getElementById('${selId}').value)">🔁 Corrigir marca</button></div>`;
+        }
+        return h;
+      }
       if (r.excedente > 0) return `<span style="color:var(--warn);font-weight:600">Excedeu +${fmtNum(r.excedente)}</span>`;
       if (r.produzido >= r.pedido && r.pedido > 0) return '<span style="color:var(--success);font-weight:600">✔ Completo</span>';
       if (r.produzido > 0) return '<span style="color:var(--warn);font-weight:600">Parcial</span>';
@@ -7238,7 +7264,6 @@ async function salvarPedido() {
       if (!(o.qtd_produzida > 0)) return;
       const atual = body.itens.find(i => i.id === o.id);
       if (!atual) perdas.push(`"${o.descricao}" foi removido (já tinha ${fmtNum(o.qtd_produzida)} produzidos)`);
-      else if (atual.produto_id !== o.produto_id) perdas.push(`"${o.descricao}" mudou de produto (já tinha ${fmtNum(o.qtd_produzida)} produzidos do produto anterior)`);
     });
     if (perdas.length && !confirm('Atenção: esta edição mexe em itens que já têm produção lançada:\n\n• ' + perdas.join('\n• ') + '\n\nDeseja salvar mesmo assim?')) return;
   }
@@ -7246,6 +7271,23 @@ async function salvarPedido() {
     if(id) {
       await api('/pedidos/' + id, 'PUT', body);
       showAlert('Pedido atualizado!');
+      // Item com produção lançada que mudou de produto (ex.: troca de marca): oferece trocar também na produção
+      const trocas = [];
+      (pedidoItensOriginais || []).forEach(o => {
+        if (!(o.qtd_produzida > 0) || !o.produto_id) return;
+        const atual = body.itens.find(i => i.id === o.id);
+        if (atual && atual.produto_id && atual.produto_id !== o.produto_id && !trocas.some(t => t.de === o.produto_id && t.para === atual.produto_id))
+          trocas.push({ de: o.produto_id, para: atual.produto_id, desc: o.descricao, qtd: o.qtd_produzida });
+      });
+      if (trocas.length && !prodEstoqueCache.length) { try { prodEstoqueCache = await api('/estoque/produtos'); } catch (e) {} }
+      for (const t of trocas) {
+        const nomeDe = (prodEstoqueCache.find(p => p.id === t.de) || {}).nome || 'produto anterior';
+        const nomePara = (prodEstoqueCache.find(p => p.id === t.para) || {}).nome || 'novo produto';
+        if (confirm(`O item "${t.desc}" já tem ${fmtNum(t.qtd)} produzidos como ${nomeDe}.\n\nTrocar também na produção para ${nomePara}?\n\nO estoque é acertado: devolve ao ${nomeDe} e baixa do ${nomePara}.\nResponda Cancelar se os copos usados foram mesmo ${nomeDe}.`)) {
+          try { const r = await api('/pedidos/' + id + '/trocar-produto-producao', 'POST', { de_produto_id: t.de, para_produto_id: t.para }); showAlert('✅ ' + r.mensagem); }
+          catch (e) { showAlert('Pedido salvo, mas a produção não foi trocada: ' + e.message, 'danger'); }
+        }
+      }
     } else {
       const resp = await api('/pedidos/','POST',body);
       const alertas = (resp && resp.alertas_estoque) || [];
