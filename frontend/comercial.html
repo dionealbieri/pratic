@@ -68,6 +68,7 @@
     <button class="tab-btn" id="tabbtn-estoque" onclick="switchTab('estoque')">🏷️ Estoque dos meus clientes</button>
     <button class="tab-btn" id="tabbtn-novo" onclick="switchTab('novo')" style="display:none">➕ Novo Pedido</button>
     <button class="tab-btn" id="tabbtn-importar" onclick="switchTab('importar')">📥 Importar</button>
+    <button class="tab-btn" id="mp-som-btn" onclick="mpAlternarSom()" style="margin-left:auto" title="Toca um som e mostra um aviso quando chega pedido novo ou uma ação para você">🔔 Aviso sonoro: ligado</button>
   </div>
 
   <!-- ── TAB ESTOQUE DOS MEUS CLIENTES (copo personalizado guardado para o cliente) ── -->
@@ -767,10 +768,96 @@ async function loadMeusPedidos() {
   } catch (e) {
     mpDados = { pedidos: [], novidades: [] };
   }
+  mpVerificarChegadas(mpDados);
   renderNovidades();
   renderCardsMeus();
   renderSecoesMeus();
 }
+
+// ─── AVISO SONORO: pedido novo ou ação para o vendedor ───────────────────────
+// A cada minuto o portal consulta os pedidos. Se chegou pedido novo para o vendedor
+// ou uma novidade (produzido, guardado no estoque, despachado, retirado), toca um som,
+// mostra o número no título da aba e, se permitido, um aviso do navegador.
+let mpConhecidas = null;
+let mpAudioCtx = null;
+let mpTituloOriginal = document.title;
+let mpPendentesNaoVistas = 0;
+function mpSomLigado() { try { return localStorage.getItem('mp_som') !== '0'; } catch (e) { return true; } }
+function mpAtualizarBotaoSom() {
+  const b = document.getElementById('mp-som-btn');
+  if (b) b.textContent = mpSomLigado() ? '🔔 Aviso sonoro: ligado' : '🔕 Aviso sonoro: desligado';
+}
+function mpAlternarSom() {
+  const ligar = !mpSomLigado();
+  try { localStorage.setItem('mp_som', ligar ? '1' : '0'); } catch (e) {}
+  mpAtualizarBotaoSom();
+  if (ligar) {
+    mpTocarSom();
+    if ('Notification' in window && Notification.permission === 'default') { try { Notification.requestPermission(); } catch (e) {} }
+  }
+}
+function mpPrepararAudio() {
+  try {
+    if (!mpAudioCtx) mpAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (mpAudioCtx.state === 'suspended') mpAudioCtx.resume();
+  } catch (e) {}
+}
+// O navegador só libera som depois do primeiro clique na página
+document.addEventListener('click', () => {
+  mpPrepararAudio();
+  if (mpSomLigado() && 'Notification' in window && Notification.permission === 'default') { try { Notification.requestPermission(); } catch (e) {} }
+}, { once: true });
+function mpTocarSom() {
+  mpPrepararAudio();
+  if (!mpAudioCtx) return;
+  const t0 = mpAudioCtx.currentTime;
+  [[880, 0], [1320, 0.18]].forEach(([freq, atraso]) => {
+    const osc = mpAudioCtx.createOscillator(), g = mpAudioCtx.createGain();
+    osc.type = 'sine'; osc.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t0 + atraso);
+    g.gain.exponentialRampToValueAtTime(0.35, t0 + atraso + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + atraso + 0.45);
+    osc.connect(g); g.connect(mpAudioCtx.destination);
+    osc.start(t0 + atraso); osc.stop(t0 + atraso + 0.5);
+  });
+}
+function mpVerificarChegadas(d) {
+  const chaves = new Set();
+  (d.novidades || []).forEach(n => chaves.add('n' + n.id));
+  (d.pedidos || []).forEach(p => chaves.add('p' + p.id));
+  if (mpConhecidas === null) { mpConhecidas = chaves; return; }   // primeira carga: só memoriza
+  const novos = [...chaves].filter(k => !mpConhecidas.has(k));
+  novos.forEach(k => mpConhecidas.add(k));
+  if (!novos.length) return;
+  const nNov = (d.novidades || []).filter(n => novos.includes('n' + n.id));
+  const nPed = (d.pedidos || []).filter(p => novos.includes('p' + p.id) && !nNov.some(n => n.pedido_id === p.id));
+  const linhas = nNov.map(n => `Pedido ${n.numero_pedido}: ${({ produzido: 'pronto, defina o frete', em_estoque: 'guardado no estoque do cliente', enviado: 'despachado', retirado: 'retirado' })[n.status] || n.status}`)
+    .concat(nPed.map(p => `Novo pedido ${p.numero_pedido} (${p.cliente_nome || ''})`));
+  if (!linhas.length) return;
+  if (mpSomLigado()) mpTocarSom();
+  mpPendentesNaoVistas += linhas.length;
+  if (document.hidden) document.title = `(${mpPendentesNaoVistas}) 🔔 ${mpTituloOriginal}`;
+  let toast = document.getElementById('mp-toast');
+  if (!toast) {
+    toast = document.createElement('div'); toast.id = 'mp-toast';
+    toast.style.cssText = 'position:fixed;top:84px;right:20px;z-index:700;max-width:420px;display:flex;flex-direction:column;gap:8px';
+    document.body.appendChild(toast);
+  }
+  const card = document.createElement('div');
+  card.style.cssText = 'background:#14213D;color:#F6F4EE;border:1px solid #F0B429;border-left:5px solid #F0B429;border-radius:10px;padding:12px 14px;box-shadow:0 8px 24px rgba(0,0,0,.45);font-size:14px;display:flex;gap:10px;align-items:flex-start';
+  card.innerHTML = `<div style="flex:1;line-height:1.5">🔔 ${linhas.map(esc).join('<br>🔔 ')}</div><button class="btn btn-sm btn-secondary" style="flex:none">OK</button>`;
+  card.querySelector('button').onclick = () => card.remove();
+  toast.appendChild(card);
+  if (mpSomLigado() && 'Notification' in window && Notification.permission === 'granted' && document.hidden) {
+    try { new Notification('PRATIC — Meus Pedidos', { body: linhas.join('\n') }); } catch (e) {}
+  }
+}
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) { mpPendentesNaoVistas = 0; document.title = mpTituloOriginal; }
+});
+setInterval(() => { if (document.getElementById('tab-pedidos')) loadMeusPedidos(); }, 60000);
+document.addEventListener('DOMContentLoaded', mpAtualizarBotaoSom);
+mpAtualizarBotaoSom();
 
 function renderNovidades() {
   const el = document.getElementById('mp-novidades');
