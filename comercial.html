@@ -1,0 +1,1753 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PRATIC — Comercial</title>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script>
+  (function() {
+    const savedTheme = localStorage.getItem('pratic-theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+  })();
+</script>
+<link rel="stylesheet" href="css/common.css?v=2">
+<script src="/js/cotacao.js?v=20261030-embalagem"></script>
+<script src="/js/estoque-cliente.js?v=20261030-estcli"></script>
+<style>
+  body {
+    display: flex !important;
+    flex-direction: column !important;
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div style="display:flex;align-items:center;gap:24px;flex-wrap:wrap">
+    <div>
+      <div class="logo-title" style="font-size: 20px;">PRATIC</div>
+      <div class="logo-sub" style="font-size: 10px;">Portal Comercial</div>
+    </div>
+    <div id="topbar-info-widgets" style="display:flex;align-items:center;gap:24px;font-size:14px;color:var(--muted);border-left:1px solid var(--border);padding-left:24px;flex-wrap:wrap;font-weight:500">
+      <span id="topbar-date" style="display:flex;align-items:center;gap:6px">📅 <span style="color:var(--text)">—</span></span>
+      <span id="topbar-city" style="display:flex;align-items:center;gap:6px">📍 <span style="color:var(--text)">—</span></span>
+      <span id="topbar-temp" style="display:flex;align-items:center;gap:6px">🌡️ <span style="color:var(--accent);font-weight:700">—°C</span></span>
+    </div>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px">
+    <!-- Seletor de Setores Dropdown -->
+    <div class="sector-switcher">
+      <button class="btn btn-sm btn-secondary" onclick="toggleSectorMenu(event)">🌐 Portais ▾</button>
+      <div class="sector-switcher-menu" id="sector-menu">
+        <a class="sector-switcher-item" onclick="location.href='/'">🖥️ Gestor / Dashboard</a>
+        <a class="sector-switcher-item" onclick="location.href='/producao-setor'">🏭 Setor Produção</a>
+        <a class="sector-switcher-item" onclick="location.href='/?perfil=comercial'">🏢 Comercial</a>
+        <a class="sector-switcher-item" href="/manual.html" target="_blank">📖 Manual do Usuário</a>
+      </div>
+    </div>
+    <!-- Alternar Tema Button -->
+    <button class="btn btn-sm btn-secondary" onclick="toggleTheme()" title="Alternar Tema" style="font-size:14px;padding:6px 10px;">🌗</button>
+
+    <span id="topbar-user-name" style="font-size:13px;font-weight:600;margin-right:8px;color:var(--text);display:flex;align-items:center;gap:4px">👤 <span id="topbar-user-name-txt">—</span></span>
+    <span class="setor-badge">🏢 Setor Comercial</span>
+    <span class="badge" id="topbar-mes" style="font-size:12px;padding:4px 10px;">—</span>
+    <span id="com-outras-paginas" style="display:flex;gap:6px;flex-wrap:wrap"></span>
+    <button class="btn btn-sm btn-secondary" onclick="openModal('modal-ajuda-comercial')" style="padding: 6px 12px; font-size: 12px;">❓ Ajuda</button>
+    <button class="btn btn-sm btn-danger" onclick="sairSistema()" style="padding: 6px 12px; font-size: 12px;">🚪 Sair</button>
+  </div>
+</div>
+
+<div class="content">
+  <div id="alert-com"></div>
+
+  <!-- TABS (vendedor só acompanha: Novo Pedido e Importar ficam ocultos) -->
+  <div class="tabs">
+    <button class="tab-btn active" id="tabbtn-pedidos" onclick="switchTab('pedidos')">🧾 Meus Pedidos</button>
+    <button class="tab-btn" id="tabbtn-estoque" onclick="switchTab('estoque')">🏷️ Estoque dos meus clientes</button>
+    <button class="tab-btn" id="tabbtn-novo" onclick="switchTab('novo')" style="display:none">➕ Novo Pedido</button>
+    <button class="tab-btn" id="tabbtn-importar" onclick="switchTab('importar')">📥 Importar</button>
+  </div>
+
+  <!-- ── TAB ESTOQUE DOS MEUS CLIENTES (copo personalizado guardado para o cliente) ── -->
+  <div id="tab-estoque" style="display:none"><div id="ec-painel"></div></div>
+
+  <!-- ── TAB PEDIDOS ── -->
+  <div id="tab-pedidos">
+    <div id="mp-novidades"></div>
+    <div class="cards-grid" id="com-cards"></div>
+    <div id="mp-secoes"></div>
+
+    <div class="section-title" style="margin-top:8px">Todos os meus pedidos</div>
+    <div class="flex items-center justify-between mb-4">
+      <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+        <select id="com-filtro-status" onchange="comPagina=1;loadPedidosCom()" style="min-width:180px">
+          <option value="andamento" selected>Em andamento (aberto / em produção)</option>
+          <option value="">Todos os status</option>
+          <option value="aberto">Aberto</option>
+          <option value="em_producao">Em produção</option>
+          <option value="produzido">Aguardando vendedor</option>
+          <option value="aguardando_nf">Aguardando NF</option>
+          <option value="aguardando_retirada">Aguardando retirada</option>
+          <option value="enviado">Enviado</option>
+          <option value="retirado">Retirado</option>
+          <option value="entregue">Entregue</option>
+        </select>
+        <input type="text" id="com-busca" placeholder="Buscar nº do pedido ou cliente..." oninput="comPagina=1;loadPedidosCom()" style="min-width:240px">
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <div class="table-head">
+        <span class="table-head-title">Pedidos</span>
+      </div>
+      <table>
+        <thead><tr>
+          <th>Nº Pedido</th><th>Cliente</th><th>Prazo</th>
+          <th>Dias</th><th>Itens</th><th>Status</th><th></th>
+        </tr></thead>
+        <tbody id="com-tbody"></tbody>
+      </table>
+      <div id="com-paginacao" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 16px;flex-wrap:wrap"></div>
+    </div>
+  </div>
+
+  <!-- ── TAB NOVO PEDIDO ── -->
+  <div id="tab-novo" style="display:none">
+    <div class="section-title">Dados do Pedido</div>
+    <div class="form-grid mb-4">
+      <div class="form-group">
+        <label>Número do Pedido</label>
+        <input type="text" id="np-numero" placeholder="Ex: PED-2026-001">
+      </div>
+      <div class="form-group">
+        <label>Prazo de Entrega</label>
+        <input type="date" id="np-prazo">
+      </div>
+      <div class="form-group">
+        <label>Vendedor Responsável</label>
+        <input type="text" id="np-vendedor">
+      </div>
+      <div class="form-group">
+        <label>Observações</label>
+        <input type="text" id="np-obs" placeholder="Observações gerais">
+      </div>
+    </div>
+
+    <div class="section-title">Cliente</div>
+    <div class="form-grid mb-4">
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Buscar cliente existente ou cadastrar novo</label>
+        <div class="flex gap-2">
+          <select id="np-cliente" style="flex:1">
+            <option value="">— Selecione um cliente —</option>
+          </select>
+          <button class="btn btn-secondary" onclick="openModalNovoCliente()">+ Novo Cliente</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-title">Itens do Pedido
+      <button class="btn btn-sm btn-secondary" onclick="addItemNP()" style="font-size:11px">+ Item</button>
+    </div>
+    <div id="np-itens"></div>
+
+    <div id="np-alert" style="margin-top:12px"></div>
+    <div class="flex gap-2 mt-4">
+      <button class="btn btn-primary" onclick="salvarNovoPedido()" style="flex:1">✓ Confirmar Pedido</button>
+      <button class="btn btn-secondary" onclick="limparFormulario()">Limpar</button>
+    </div>
+  </div>
+
+  <!-- ── TAB IMPORTAR ── -->
+  <div id="tab-importar" style="display:none">
+    <div class="section-title">Importar Pedido por Arquivo</div>
+    <div class="card" style="max-width:720px">
+      <p style="font-size:13px;color:var(--muted);margin-bottom:16px;line-height:1.6">
+        Usa a <strong style="color:var(--text)">mesma importação da tela de Pedidos</strong>: envie o PDF do pedido (também aceita JPG, PNG, TXT, CSV).
+        Em <strong style="color:var(--text)">Importar e Cadastrar</strong> abre a tela de conferência do pedido (cliente, itens e produtos do estoque) antes de salvar;
+        em <strong style="color:var(--text)">Importar em lote</strong> cria vários pedidos direto. Ao terminar, você volta para Meus Pedidos.
+      </p>
+      <button class="btn btn-primary" onclick="window.location.href='/?importar=1'">📥 Abrir importação de pedido</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: COMO O PEDIDO VAI SAIR (vendedor) -->
+<div class="modal-overlay" id="modal-mp-envio">
+  <div class="modal" style="max-width:600px">
+    <div class="modal-title">Como este pedido vai sair?</div>
+    <input type="hidden" id="mp-envio-id">
+    <div id="mp-envio-cab" style="font-size:14px;margin-bottom:10px;background:rgba(255,255,255,0.05);padding:10px 12px;border-radius:8px;border-left:4px solid var(--accent);line-height:1.6"></div>
+    <div id="mp-envio-volumes" style="font-size:13px;margin-bottom:14px"></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px">
+      <button type="button" class="btn btn-secondary" id="mp-modo-transportadora" onclick="mpEscolherModo('transportadora')">🚚 Transportadora</button>
+      <button type="button" class="btn btn-secondary" id="mp-modo-retirada" onclick="mpEscolherModo('retirada')">🙋 Cliente retira</button>
+    </div>
+    <div id="mp-campos-transportadora" class="form-grid">
+      <div class="form-group" style="grid-column:1/-1"><label>Transportadora escolhida</label><select id="mp-transportadora"></select><span id="mp-transp-aviso" style="font-size:11px;color:var(--muted)"></span></div>
+      <div class="form-group"><label>Valor do frete combinado (R$)</label><input type="number" id="mp-frete" min="0" step="0.01" value="0"></div>
+      <div class="form-group"><label>Previsão de entrega</label><input type="date" id="mp-previsao"></div>
+    </div>
+    <div id="mp-campos-retirada" class="form-grid" style="display:none">
+      <div class="form-group"><label>Previsão de retirada <span style="color:var(--muted);font-weight:400">(opcional)</span></label><input type="date" id="mp-retirada-prevista"></div>
+    </div>
+    <div class="form-group" style="margin-top:4px"><label>Observação para a Expedição <span style="color:var(--muted);font-weight:400">(opcional)</span></label><textarea id="mp-obs" rows="2" placeholder="Ex.: frete já combinado com o cliente; cliente vem pela manhã..."></textarea></div>
+    <div id="mp-envio-rodape" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
+    <div class="modal-footer" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
+      <button type="button" class="btn btn-secondary" id="mp-btn-voltar" onclick="mpVoltarAguardando()" style="display:none">↺ Voltar para aguardando vendedor</button>
+      <div style="display:flex;gap:8px;margin-left:auto">
+        <button class="btn btn-secondary" onclick="closeModal('modal-mp-envio')">Cancelar</button>
+        <button class="btn btn-primary" onclick="mpSalvarEnvio()">Enviar para a Expedição</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL DETALHE PEDIDO -->
+<div class="modal-overlay" id="modal-com-detalhe">
+  <div class="modal" style="max-width:740px">
+    <div class="modal-title" id="modal-com-det-title">Pedido</div>
+    <div id="modal-com-det-content"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-com-detalhe')">Fechar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL NOVO CLIENTE (RÁPIDO) -->
+<div class="modal-overlay" id="modal-com-cliente">
+  <div class="modal" style="max-width:580px">
+    <div class="modal-title">Cadastrar Cliente</div>
+    <div class="form-grid">
+      <div class="form-group" style="grid-column:1/-1">
+        <label>CPF / CNPJ <span style="color:var(--muted);font-size:11px">(busca automática pelo CNPJ)</span></label>
+        <div class="flex gap-2">
+          <input type="text" id="nc-cnpj" placeholder="CPF: 000.000.000-00 ou CNPJ: 00.000.000/0000-00" style="flex:1" oninput="formatDocumento(this)">
+          <button class="btn btn-secondary" onclick="buscarCNPJ2()" id="btn-buscar-doc">Buscar</button>
+        </div>
+        <span id="doc-tipo-label" style="font-size:11px;color:var(--muted)"></span>
+      </div>
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Razão Social</label>
+        <input type="text" id="nc-razao">
+      </div>
+      <div class="form-group">
+        <label>Nome Fantasia</label>
+        <input type="text" id="nc-fantasia">
+      </div>
+      <div class="form-group">
+        <label>Telefone</label>
+        <input type="text" id="nc-telefone">
+      </div>
+      <div class="form-group">
+        <label>CEP</label>
+        <div class="flex gap-2">
+          <input type="text" id="nc-cep" placeholder="00000-000" style="flex:1" oninput="formatCEP2(this)">
+          <button class="btn btn-secondary" onclick="buscarCEP2()">Buscar</button>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Cidade/UF</label>
+        <div class="flex gap-2">
+          <input type="text" id="nc-cidade" placeholder="Cidade" style="flex:1">
+          <input type="text" id="nc-uf" placeholder="UF" maxlength="2" style="width:60px;text-transform:uppercase">
+        </div>
+      </div>
+      <div class="form-group" style="grid-column:1/-1">
+        <label>Logradouro</label>
+        <input type="text" id="nc-logradouro">
+      </div>
+      <div class="form-group">
+        <label>Número</label>
+        <input type="text" id="nc-numero-end">
+      </div>
+      <div class="form-group">
+        <label>Bairro</label>
+        <input type="text" id="nc-bairro">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-com-cliente')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarNovoCliente()">Salvar Cliente</button>
+    </div>
+  </div>
+</div>
+<!-- MODAL AJUDA COMERCIAL -->
+<div class="modal-overlay" id="modal-ajuda-comercial">
+  <div class="modal" style="max-width:550px">
+    <div class="modal-title">❓ Ajuda - Portal Comercial</div>
+    <div style="max-height:60vh; overflow-y:auto; padding-right:8px; font-size:14px; line-height:1.6; color:#caced6">
+      <p style="margin-bottom:12px">Este portal gerencia a carteira de clientes e os pedidos de vendas. Abaixo, veja como utilizar cada função:</p>
+      
+      <strong style="color:var(--accent); display:block; margin:14px 0 6px">🧾 Gestão de Pedidos:</strong>
+      <ul style="padding-left:20px; margin-bottom:12px">
+        <li><strong>Visualizar Pedidos:</strong> Na aba "Meus Pedidos", você acompanha a listagem geral com prazos, dias restantes para entrega e status atualizado (Aberto, Em produção, Produzido, Entregue).</li>
+        <li><strong>Aguardando você:</strong> quando um pedido seu fica produzido, ele aparece no topo da aba. Clique em <strong>Informar frete</strong> (transportadora e valor combinado com o cliente) ou em <strong>Cliente retira</strong>. O pedido vai para a fila da Expedição, que lança a nota fiscal e conclui.</li>
+        <li><strong>Filtros e Busca:</strong> Use o seletor de status ou o campo de busca para encontrar pedidos por número ou cliente em tempo real.</li>
+      </ul>
+
+      <strong style="color:var(--accent); display:block; margin:14px 0 6px">➕ Como Lançar Novo Pedido:</strong>
+      <ol style="padding-left:20px; margin-bottom:12px">
+        <li>Vá para a aba <strong>Novo Pedido</strong>.</li>
+        <li>Selecione o cliente cadastrado.</li>
+        <li>Defina o número do pedido e a <strong>Data Limite de Entrega</strong> (o sistema calcula os dias de tolerância automaticamente).</li>
+        <li>Em "Itens do Pedido", selecione um produto do estoque e a quantidade. Use "+ Adicionar Item" para incluir mais de um produto no mesmo pedido.</li>
+        <li>Clique em <strong>Salvar Pedido</strong>.</li>
+      </ol>
+
+      <strong style="color:var(--accent); display:block; margin:14px 0 6px">👥 Cadastro de Clientes:</strong>
+      <ul style="padding-left:20px; margin-bottom:12px">
+        <li>Clique no botão <strong>+ Novo Cliente</strong> (ao lado do seletor de cliente na tela de novo pedido) para abrir o cadastro rápido.</li>
+        <li>Insira os dados cadastrais (Nome, CNPJ/CPF, Telefone, Endereço completo) e clique em Salvar.</li>
+      </ul>
+      
+      <strong style="color:var(--accent); display:block; margin:14px 0 6px">📥 Importar CSV:</strong>
+      <ul style="padding-left:20px; margin-bottom:12px">
+        <li>Na aba <strong>Importar</strong>, você pode carregar uma planilha CSV contendo múltiplos pedidos de uma só vez. Siga o mapeamento de colunas exibido na tela antes de confirmar a importação.</li>
+      </ul>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-primary" onclick="closeModal('modal-ajuda-comercial')">Entendi</button>
+    </div>
+  </div>
+</div>
+
+
+<script>
+const API = window.location.origin + '/api';
+let npItens = [];
+let importData = [];
+let importHeaders = [];
+
+const STATUS_LABEL = {
+  aberto: '📋 Aberto', em_producao: '🏭 Em produção',
+  produzido: '✅ Produzido', entregue: '📦 Entregue'
+};
+const STATUS_PILL = {
+  aberto: 'pill-info', em_producao: 'pill-warn',
+  produzido: 'pill-success', entregue: 'pill-success'
+};
+// Status do PEDIDO (os itens continuam usando STATUS_LABEL acima)
+const STATUS_LABEL_PEDIDO = {
+  aberto: '📋 Aberto', em_producao: '🏭 Em produção',
+  produzido: '⏳ Aguardando vendedor', em_estoque: '🏷️ Em estoque do cliente', aguardando_nf: '🧾 Aguardando NF',
+  aguardando_retirada: '🙋 Aguardando retirada', enviado: '🚚 Enviado',
+  retirado: '✅ Retirado', entregue: '📦 Entregue'
+};
+const STATUS_PILL_PEDIDO = {
+  aberto: 'pill-info', em_producao: 'pill-warn', produzido: 'pill-danger', em_estoque: 'pill-info',
+  aguardando_nf: 'pill-warn', aguardando_retirada: 'pill-warn',
+  enviado: 'pill-info', retirado: 'pill-success', entregue: 'pill-success'
+};
+const STATUS_NEXT = {
+  aberto: 'em_producao', em_producao: 'produzido', produzido: 'entregue', entregue: null
+};
+const STATUS_NEXT_LABEL = {
+  aberto: '→ Iniciar produção', em_producao: '→ Marcar produzido',
+  produzido: '→ Confirmar entrega', entregue: null
+};
+
+async function req(path, method='GET', body=null) {
+  const opts = { method, headers: {'Content-Type':'application/json'} };
+  if (method === 'GET') {
+    opts.cache = 'no-store';
+  }
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(API + path, opts);
+  if (r.status === 401) {
+    window.location.href = '/login?redirect=' + encodeURIComponent(window.location.pathname + window.location.search);
+    return;
+  }
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.detail || 'Erro');
+  return d;
+}
+
+async function sairSistema() {
+  if (!confirm('Deseja realmente sair?')) return;
+  try {
+    await fetch('/api/auth/logout', { method: 'POST' });
+  } catch (e) {
+    console.error(e);
+  }
+  localStorage.removeItem('user_nome');
+  localStorage.removeItem('user_role');
+  localStorage.removeItem('user_username');
+  window.location.href = '/login';
+}
+
+function fmtDate(s) { if(!s) return '—'; const [y,m,d]=s.split('-'); return `${d}/${m}/${y}`; }
+function fmtNum(n) { return Number(n||0).toLocaleString('pt-BR'); }
+
+function showAlert(msg, type='success') {
+  const el = document.getElementById('alert-com');
+  el.innerHTML = `<div class="alert alert-${type}">${msg}</div>`;
+  setTimeout(() => el.innerHTML='', 4000);
+}
+
+// ── TABS
+function switchTab(tab) {
+  if (tab === 'novo' && window.meuUsuario) {
+    const v = document.getElementById('np-vendedor');
+    if (v && !v.value) v.value = window.meuUsuario.nome || '';
+  }
+  ['pedidos','estoque','novo','importar'].forEach(t => {
+    const c = document.getElementById('tab-' + t);
+    if (c) c.style.display = t === tab ? '' : 'none';
+    const b = document.getElementById('tabbtn-' + t);
+    if (b) b.classList.toggle('active', t === tab);
+  });
+  if (tab === 'pedidos') { loadPedidosCom(); loadCards(); }
+  if (tab === 'estoque') loadEstoqueClientes();
+  if (tab === 'novo') loadClientesSelect();
+}
+
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+
+document.querySelectorAll('.modal-overlay').forEach(m => {
+  m.addEventListener('click', e => { if (e.target === m) m.classList.remove('open'); });
+});
+
+// ── PDF DO PEDIDO (mesmo layout do botão 🖨️ do painel do Gestor) — só leitura, para conferência
+async function imprimirPedidoVendedor(id) {
+  try {
+    const p = await req('/pedidos/' + id);
+    let emp = window.empresaDados;
+    if (!emp) {
+      try {
+        emp = await req('/configuracoes/empresa');
+        window.empresaDados = emp;
+      } catch(e) {
+        emp = {};
+      }
+    }
+
+    const subtotal = p.itens.reduce((acc, i) => acc + ((Number(i.quantidade)||0) * (Number(i.valor_unitario)||0) - (Number(i.desconto)||0)), 0);
+    const acrescimo = Number(p.acrescimo) || 0;
+    const frete = Number(p.frete) || 0;
+    const descontoGlobal = Number(p.desconto_global) || 0;
+    const valorTotal = Math.max(0, subtotal + acrescimo + frete - descontoGlobal);
+    const qtdItens = p.itens.reduce((acc, i) => acc + (Number(i.quantidade) || 0), 0);
+
+    const statusLabel = {
+      aberto: 'Aberto',
+      em_producao: 'Em produção',
+      produzido: 'Produzido',
+      entregue: 'Entregue'
+    }[p.status] || p.status;
+
+    function formatDateTimeString(str) {
+      if(!str) return '—';
+      const clean = str.replace('T', ' ').split('.')[0];
+      const [datePart, timePart] = clean.split(' ');
+      if(!datePart) return '—';
+      const [y, m, d] = datePart.split('-');
+      const time = timePart ? timePart.slice(0, 5) : '';
+      return d + '/' + m + '/' + y + (time ? ' ' + time : '');
+    }
+
+    const itemsHtml = p.itens.map((i, idx) => {
+      const qty = Number(i.quantidade) || 0;
+      const unitPrice = Number(i.valor_unitario) || 0;
+      const desc = Number(i.desconto) || 0;
+      const total = qty * unitPrice - desc;
+      const bg = idx % 2 === 0 ? '#f4f7fc' : '#ffffff';
+      return '<tr style="background: ' + bg + '; font-size: 11px;">' +
+        '<td style="padding: 6px 8px; text-align: center; border-bottom: 1px solid #ddd;">' + (i.produto_codigo || i.produto_id || '—') + '</td>' +
+        '<td style="padding: 6px 8px; text-align: left; border-bottom: 1px solid #ddd;">' + (i.descricao || '—') + '</td>' +
+        '<td style="padding: 6px 8px; text-align: center; border-bottom: 1px solid #ddd;">' + (i.unidade || 'UND').toUpperCase() + '</td>' +
+        '<td style="padding: 6px 8px; text-align: right; border-bottom: 1px solid #ddd;">' + fmtNum(qty) + '</td>' +
+        '<td style="padding: 6px 8px; text-align: right; border-bottom: 1px solid #ddd;">R$ ' + unitPrice.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+        '<td style="padding: 6px 8px; text-align: right; border-bottom: 1px solid #ddd;">R$ ' + desc.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+        '<td style="padding: 6px 8px; text-align: right; border-bottom: 1px solid #ddd; font-weight: bold;">R$ ' + total.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+      '</tr>';
+    }).join('');
+
+    const parcelasHtml = p.parcelas && p.parcelas.length ? 
+      '<div style="display: flex; justify-content: center; margin-top: 25px;">' +
+        '<table style="width: 75%; border-collapse: collapse; border: 1px solid #ccc; font-size: 11px;">' +
+          '<thead>' +
+            '<tr style="background: #f4f7fc; border-bottom: 1px solid #ccc;">' +
+              '<th colspan="3" style="padding: 6px; text-align: center; font-weight: bold; font-size: 12px;">Parcelas</th>' +
+            '</tr>' +
+            '<tr style="background: #fdfdfd; border-bottom: 1px solid #ccc;">' +
+              '<th style="padding: 6px; text-align: left; font-weight: bold; border-right: 1px solid #ccc; font-size: 11px;">Forma de Pagamento</th>' +
+              '<th style="padding: 6px; text-align: center; font-weight: bold; border-right: 1px solid #ccc; font-size: 11px;">Data de Vencimento</th>' +
+              '<th style="padding: 6px; text-align: right; font-weight: bold; font-size: 11px;">Valor</th>' +
+            '</tr>' +
+          '</thead>' +
+          '<tbody>' +
+            p.parcelas.map(pa => 
+              '<tr style="border-bottom: 1px solid #ccc;">' +
+                '<td style="padding: 6px; text-align: left; border-right: 1px solid #ccc;">' + (pa.forma_pagamento || '—') + '</td>' +
+                '<td style="padding: 6px; text-align: center; border-right: 1px solid #ccc;">' + fmtDate(pa.vencimento) + '</td>' +
+                '<td style="padding: 6px; text-align: right; font-weight: bold;">R$ ' + (Number(pa.valor)||0).toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+              '</tr>'
+            ).join('') +
+          '</tbody>' +
+        '</table>' +
+      '</div>' : '';
+
+    const logoHtml = emp.logo 
+      ? '<img src="' + emp.logo + '" style="max-height: 55px; max-width: 160px; object-fit: contain; margin-right: 15px;">' 
+      : '';
+
+    const empNome = emp.razao_social || emp.nome || 'PRATIC';
+    const empCnpj = emp.cnpj ? 'Cnpj: ' + emp.cnpj : '';
+    const empTel = emp.telefone ? 'Telefone: ' + emp.telefone : '';
+    const empFantasia = emp.nome_fantasia ? 'Nome Fantasia: ' + emp.nome_fantasia : '';
+    
+    let empEndereco = '';
+    if (emp.logradouro) {
+      empEndereco = emp.logradouro;
+      if (emp.numero) empEndereco += ', ' + emp.numero;
+      if (emp.complemento) empEndereco += ' - ' + emp.complemento;
+      if (emp.bairro) empEndereco += ', ' + emp.bairro;
+      if (emp.cep) empEndereco += ' - CEP: ' + emp.cep;
+      if (emp.cidade) {
+        empEndereco += ', ' + emp.cidade;
+        if (emp.uf) empEndereco += '/' + emp.uf.toUpperCase();
+      }
+    }
+
+    const docContent = 
+      '<div style="font-family: Arial, sans-serif; color: #000; line-height: 1.4; font-size: 12px; padding: 20px 10px; max-width: 800px; margin: 0 auto; min-height: 270mm; position: relative;">' +
+        '<!-- CABECALHO -->' +
+        '<table style="width: 100%; border-collapse: collapse; margin-bottom: 10px;">' +
+          '<tr>' +
+            '<td style="vertical-align: middle; width: 80px;">' + logoHtml + '</td>' +
+            '<td style="vertical-align: top;">' +
+              '<div style="font-size: 15px; font-weight: bold; text-transform: uppercase;">' + empNome + '</div>' +
+              (empEndereco ? '<div style="font-size: 11px; color: #333; margin-top: 3px;">' + empEndereco + '</div>' : '') +
+              '<div style="font-size: 11px; color: #333; margin-top: 2px;">' +
+                [empCnpj, empTel].filter(Boolean).join('&nbsp;&nbsp;&nbsp;&nbsp;') +
+              '</div>' +
+              (empFantasia ? '<div style="font-size: 11px; color: #333; margin-top: 2px;">' + empFantasia + '</div>' : '') +
+            '</td>' +
+            '<td style="vertical-align: top; text-align: right; width: 120px;">' +
+              '<div style="font-size: 20px; font-weight: bold; color: #000; text-transform: uppercase;">Pedido</div>' +
+            '</td>' +
+          '</tr>' +
+        '</table>' +
+
+        '<!-- CODIGO / DATA / STATUS -->' +
+        '<hr style="border: 0; border-top: 1px solid #000; margin: 6px 0;">' +
+        '<div style="font-size: 11px; font-weight: bold; padding: 2px 0;">' +
+          'Código do Pedido : ' + p.numero_pedido + ' - Data de Lançamento: ' + formatDateTimeString(p.created_at) + ' - Status: ' + statusLabel +
+        '</div>' +
+        '<hr style="border: 0; border-top: 1px solid #000; margin: 6px 0;">' +
+
+        '<!-- CLIENTE INFO -->' +
+        '<table style="width: 100%; margin-top: 10px; font-size: 12px; border-collapse: collapse; line-height: 1.6;">' +
+          '<tr>' +
+            '<td style="width: 50%; vertical-align: top; padding: 2px 0;"><strong>Cliente:</strong> ' + (p.cliente_nome || '—') + '</td>' +
+            '<td style="width: 50%; vertical-align: top; padding: 2px 0;"><strong>Documento:</strong> ' + (p.cliente_cnpj || '—') + '</td>' +
+          '</tr>' +
+          '<tr>' +
+            '<td style="vertical-align: top; padding: 2px 0;"><strong>Telefone:</strong> ' + (p.cliente_telefone || '—') + '</td>' +
+            '<td style="vertical-align: top; padding: 2px 0;"><strong>Celular:</strong> —</td>' +
+          '</tr>' +
+          '<tr>' +
+            '<td style="vertical-align: top; padding: 2px 0;">' +
+              '<strong>Endereço:</strong> ' + [p.cliente_logradouro, p.cliente_numero].filter(Boolean).join(', ') + (p.cliente_complemento ? ' - ' + p.cliente_complemento : '') + (p.cliente_cep ? ' - ' + p.cliente_cep : '') +
+            '</td>' +
+            '<td style="vertical-align: top; padding: 2px 0;"><strong>Bairro:</strong> ' + (p.cliente_bairro || '—') + '</td>' +
+          '</tr>' +
+          '<tr>' +
+            '<td style="vertical-align: top; padding: 2px 0;"><strong>Cidade:</strong> ' + (p.cliente_cidade || '—') + '</td>' +
+            '<td style="vertical-align: top; padding: 2px 0;"><strong>Estado:</strong> ' + (p.cliente_uf || '—') + '</td>' +
+          '</tr>' +
+          '<tr>' +
+            '<td style="vertical-align: top; padding: 2px 0;"><strong>Vendedor:</strong> ' + (p.vendedor || '—') + '</td>' +
+            '<td style="vertical-align: top; padding: 2px 0;"><strong>Pessoa para Contato:</strong> —</td>' +
+          '</tr>' +
+        '</table>' +
+
+        '<!-- TABELA PRODUTOS -->' +
+        '<table style="width: 100%; border-collapse: collapse; margin-top: 18px;">' +
+          '<thead>' +
+            '<tr style="border-bottom: 2px solid #333; font-size: 11px; text-transform: uppercase;">' +
+              '<th style="padding: 6px 8px; text-align: center; font-weight: bold; border-bottom: 2px solid #333;">Produto</th>' +
+              '<th style="padding: 6px 8px; text-align: left; font-weight: bold; border-bottom: 2px solid #333; width: 42%;">Descrição</th>' +
+              '<th style="padding: 6px 8px; text-align: center; font-weight: bold; border-bottom: 2px solid #333;">Unidade</th>' +
+              '<th style="padding: 6px 8px; text-align: right; font-weight: bold; border-bottom: 2px solid #333;">Quantidade</th>' +
+              '<th style="padding: 6px 8px; text-align: right; font-weight: bold; border-bottom: 2px solid #333;">Valor Unitário</th>' +
+              '<th style="padding: 6px 8px; text-align: right; font-weight: bold; border-bottom: 2px solid #333;">Desconto</th>' +
+              '<th style="padding: 6px 8px; text-align: right; font-weight: bold; border-bottom: 2px solid #333;">Valor Total</th>' +
+            '</tr>' +
+          '</thead>' +
+          '<tbody>' +
+            itemsHtml +
+          '</tbody>' +
+        '</table>' +
+
+        '<!-- PARCELAS -->' +
+        parcelasHtml +
+
+        '<!-- OBSERVACOES E TOTAIS -->' +
+        '<table style="width: 100%; margin-top: 25px; font-size: 12px; border-collapse: collapse;">' +
+          '<tr>' +
+            '<td style="width: 50%; vertical-align: top; padding-right: 15px;">' +
+              (p.observacoes ? 
+                '<div style="border: 1px solid #ccc; padding: 10px; border-radius: 6px; background: #fafafa; font-size: 11px; line-height: 1.5;">' +
+                  '<strong>Observação:</strong><br>' +
+                  p.observacoes +
+                '</div>' : '') +
+            '</td>' +
+            '<td style="width: 50%; vertical-align: top;">' +
+              '<table style="width: 100%; border-collapse: collapse; font-size: 12px; text-align: right; line-height: 1.6;">' +
+                '<tr>' +
+                  '<td style="padding: 4px 8px; color: #333; font-weight: bold;">SubTotal</td>' +
+                  '<td style="padding: 4px 8px; width: 140px; font-weight: bold;">R$ ' + subtotal.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+                '</tr>' +
+                '<tr>' +
+                  '<td style="padding: 4px 8px; color: #333; font-weight: bold;">Acréscimo</td>' +
+                  '<td style="padding: 4px 8px;">R$ ' + acrescimo.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+                '</tr>' +
+                '<tr>' +
+                  '<td style="padding: 4px 8px; color: #333; font-weight: bold;">Frete</td>' +
+                  '<td style="padding: 4px 8px;">R$ ' + frete.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+                '</tr>' +
+                '<tr>' +
+                  '<td style="padding: 4px 8px; color: #333; font-weight: bold;">Desconto Global</td>' +
+                  '<td style="padding: 4px 8px;">R$ ' + descontoGlobal.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+                '</tr>' +
+                '<tr style="border-top: 1px solid #333; font-size: 13px;">' +
+                  '<td style="padding: 6px 8px; font-weight: bold; color: #000; text-transform: uppercase;">Valor Total</td>' +
+                  '<td style="padding: 6px 8px; font-weight: bold; color: #000;">R$ ' + valorTotal.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+                '</tr>' +
+                '<tr>' +
+                  '<td style="padding: 4px 8px; color: #333; font-weight: bold;">Quantidade Itens</td>' +
+                  '<td style="padding: 4px 8px; font-weight: bold;">' + fmtNum(qtdItens) + '</td>' +
+                '</tr>' +
+                '<tr>' +
+                  '<td style="padding: 4px 8px; color: #333; font-weight: bold;">Peso dos Produtos</td>' +
+                  '<td style="padding: 4px 8px; font-weight: bold;">0,00</td>' +
+                '</tr>' +
+              '</table>' +
+            '</td>' +
+          '</tr>' +
+        '</table>' +
+
+        '<!-- RODAPE -->' +
+        '<div style="position: absolute; bottom: 10px; left: 10px; right: 10px; border-top: 1px solid #ccc; padding-top: 6px; display: flex; justify-content: space-between; font-size: 10px; color: #777;">' +
+          '<span>Desenvolvido por criadorpro.com.br</span>' +
+          '<span>Página: 1</span>' +
+        '</div>' +
+      '</div>';
+
+    const win = window.open('', '_blank');
+    win.document.write('<html><head><title>Pedido ' + p.numero_pedido + '</title><style>' +
+      '@page { size: A4; margin: 0; }' +
+      '* { box-sizing: border-box; }' +
+      'body { margin: 0; background: #fff; }' +
+      '</style></head><body>' + docContent + '</body></html>');
+    win.document.close();
+    win.focus();
+    setTimeout(() => win.print(), 350);
+  } catch(e) {
+    showAlert('Erro ao gerar relatório do pedido: ' + e.message, 'danger');
+  }
+}
+
+// ── IMPORTAR PEDIDOS POR ARQUIVO (mesma importação em lote do painel de Pedidos)
+let comImpArquivos = [];
+function comImpDrop(ev) {
+  ev.preventDefault();
+  comImpAdicionar(ev.dataTransfer.files);
+}
+function comImpAdicionar(files) {
+  Array.from(files || []).forEach(f => {
+    if (!comImpArquivos.some(x => x.name === f.name && x.size === f.size)) comImpArquivos.push(f);
+  });
+  comImpRender();
+}
+function comImpLimpar() {
+  comImpArquivos = [];
+  const i = document.getElementById('com-imp-input'); if (i) i.value = '';
+  comImpRender();
+}
+function comImpRender() {
+  const nome = document.getElementById('com-imp-nome');
+  const prev = document.getElementById('com-imp-preview');
+  const n = comImpArquivos.length;
+  if (nome) nome.textContent = !n ? 'Nenhum arquivo selecionado' : n === 1 ? comImpArquivos[0].name : n + ' arquivos selecionados';
+  if (!prev) return;
+  if (!n) { prev.style.display = 'none'; prev.innerHTML = ''; return; }
+  prev.style.display = 'block';
+  prev.innerHTML = `<strong>${n} arquivo(s) prontos:</strong><br>` + comImpArquivos.map(f => '• ' + esc(f.name)).join('<br>')
+    + '<br><span style="color:var(--muted)">Arraste mais arquivos para somar ao lote.</span>';
+}
+async function comImportarLote() {
+  if (!comImpArquivos.length) { showAlert('Selecione um ou mais arquivos de pedido', 'danger'); return; }
+  const btn = document.getElementById('com-imp-btn');
+  const prev = document.getElementById('com-imp-preview');
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Importando...'; }
+    const fd = new FormData();
+    comImpArquivos.forEach(f => fd.append('files', f));
+    const r = await fetch(API + '/pedidos/importar-arquivos-lote', { method: 'POST', body: fd });
+    if (r.status === 401) { window.location.href = '/login?redirect=/comercial'; return; }
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Erro ao importar');
+    const rs = data.resumo || { criados: 0, duplicados: 0, erros: 0, total: 0 };
+    const linhas = (data.resultados || []).map(it => {
+      if (it.status === 'criado') {
+        const falta = (it.faltando && it.faltando.length) ? ` <span style="color:#f4b400">(revisar: ${esc(it.faltando.join(', '))})</span>` : '';
+        const dono = it.vendedor_outro ? ` <span style="color:var(--muted)">— vendedor no pedido: ${esc(it.vendedor_outro)}</span>` : '';
+        return `<div style="color:#46d369">✅ Pedido ${esc(it.numero_pedido)} — ${esc(it.cliente || 'cliente')} (${it.qtd_itens} item(ns))${falta}${dono}</div>`;
+      }
+      if (it.status === 'duplicado') return `<div style="color:var(--muted)">↪️ Pedido ${esc(it.numero_pedido)} já existia — ignorado</div>`;
+      return `<div style="color:#ff6b6b">⚠️ ${esc(it.arquivo)}: ${esc(it.motivo || 'não foi possível ler')}</div>`;
+    }).join('');
+    const alertas = data.alertas_estoque || [];
+    const blocoAlertas = alertas.length
+      ? '<hr style="border-color:rgba(255,255,255,.1)"><div style="color:#f4b400;font-weight:600;margin:4px 0">⚠️ Estoque insuficiente para a demanda dos pedidos abertos:</div>'
+        + alertas.map(a => `<div style="color:#f4b400;font-size:13px">• ${esc(a.produto)}: saldo ${fmtNum(a.saldo)} ${esc(a.unidade || '')}, demanda ${fmtNum(a.demanda)} — faltam <strong>${fmtNum(a.falta)}</strong></div>`).join('')
+      : '';
+    if (prev) {
+      prev.style.display = 'block';
+      prev.innerHTML = `<strong>Resumo:</strong> ${rs.criados} criado(s), ${rs.duplicados} duplicado(s), ${rs.erros} com erro — de ${rs.total} arquivo(s).<hr style="border-color:rgba(255,255,255,.1)">${linhas}${blocoAlertas}`;
+    }
+    showAlert(`Importação concluída: ${rs.criados} pedido(s) criado(s).`);
+    comImpArquivos = [];
+    const i = document.getElementById('com-imp-input'); if (i) i.value = '';
+    const nome = document.getElementById('com-imp-nome'); if (nome) nome.textContent = 'Nenhum arquivo selecionado';
+    loadMeusPedidos(); loadPedidosCom();
+  } catch (e) {
+    showAlert(e.message || 'Erro ao importar', 'danger');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Importar em lote'; }
+  }
+}
+
+// ── MEUS PEDIDOS (fluxo pós-produção)
+let mpDados = { pedidos: [], novidades: [] };
+let mpModo = 'transportadora';
+let mpVerTodosConcluidos = false;
+
+function esc(v) {
+  return String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+function fmtBRL(v) { return 'R$ ' + (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function fmtDataHora(s) {
+  if (!s) return '';
+  const [d, h] = String(s).split(' ');
+  return fmtDate(d) + (h ? ' ' + h.slice(0, 5) : '');
+}
+function hojeISO() { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
+
+// Selo de tempo parado: cores pelos prazos configurados pelo Gestor (padrão 2 e 4 dias)
+function seloDias(dias, textoForcado) {
+  const n = Math.max(0, Number(dias) || 0);
+  const pz = (mpDados && mpDados.prazos) || { amarelo: 2, vermelho: 4 };
+  let bg = 'rgba(16,185,129,.15)', cor = 'var(--success)';
+  if (n >= pz.vermelho) { bg = 'rgba(239,68,68,.15)'; cor = 'var(--danger)'; }
+  else if (n >= pz.amarelo) { bg = 'rgba(240,180,41,.15)'; cor = 'var(--accent)'; }
+  const txt = textoForcado || (n === 0 ? 'hoje' : n === 1 ? '1 dia' : n + ' dias');
+  return `<span style="display:inline-flex;align-items:center;gap:6px;background:${bg};color:${cor};border-radius:12px;padding:3px 10px;font-size:12px;font-weight:700;white-space:nowrap"><span style="width:7px;height:7px;border-radius:4px;background:${cor}"></span>${txt}</span>`;
+}
+
+async function loadCards() { await loadMeusPedidos(); }
+
+// ── ESTOQUE DOS MEUS CLIENTES
+let estCliDados = [];
+async function loadEstoqueClientes() {
+  if (typeof ecMontar === 'function') await ecMontar('ec-painel');
+}
+// Entrega criada pelo vendedor: aparece em "Meus Pedidos" para seguir embalagem → frete
+window.ecAoCriarEntrega = function () { loadMeusPedidos(); };
+
+async function loadMeusPedidos() {
+  try {
+    mpDados = await req('/pedidos/meus') || { pedidos: [], novidades: [] };
+  } catch (e) {
+    mpDados = { pedidos: [], novidades: [] };
+  }
+  renderNovidades();
+  renderCardsMeus();
+  renderSecoesMeus();
+}
+
+function renderNovidades() {
+  const el = document.getElementById('mp-novidades');
+  if (!el) return;
+  const nov = mpDados.novidades || [];
+  if (!nov.length) { el.innerHTML = ''; return; }
+  const frase = n => {
+    if (n.status === 'produzido') return `ficou <strong>produzido</strong> — defina o frete ou a retirada`;
+    if (n.status === 'em_estoque') return `foi produzido e <strong>guardado no estoque do cliente</strong>`;
+    if (n.status === 'enviado') return `foi <strong>despachado</strong>${n.nota_fiscal ? ' · NF ' + esc(n.nota_fiscal) : ''}`;
+    if (n.status === 'retirado') return `foi <strong>retirado</strong> pelo cliente${n.nota_fiscal ? ' · NF ' + esc(n.nota_fiscal) : ''}`;
+    return esc(n.status);
+  };
+  el.innerHTML = `<div style="background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.45);border-radius:10px;padding:12px 16px;margin-bottom:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+      <strong style="color:var(--accent2)">🔔 Desde seu último acesso (${nov.length})</strong>
+      <button class="btn btn-sm btn-secondary" onclick="mpMarcarVisto()">Marcar como visto</button>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:4px;font-size:13px;max-height:150px;overflow-y:auto">
+      ${nov.map(n => `<div>Pedido <strong>${esc(n.numero_pedido)}</strong> <span style="color:var(--muted)">(${esc(n.cliente_nome)})</span> ${frase(n)} <span style="color:var(--muted)">· ${fmtDataHora(n.em)}</span></div>`).join('')}
+    </div>
+  </div>`;
+}
+
+async function mpMarcarVisto() {
+  try { await req('/pedidos/meus/visto', 'POST'); } catch (e) {}
+  mpDados.novidades = [];
+  renderNovidades();
+}
+
+function renderCardsMeus() {
+  const ps = mpDados.pedidos || [];
+  const aguardando = ps.filter(p => p.status === 'produzido' && !mpRevendaPendente(p));
+  const retirada = ps.filter(p => p.status === 'aguardando_retirada');
+  const expedicao = ps.filter(p => p.status === 'aguardando_nf');
+  const naoFaturado = ps.filter(p => ['produzido', 'aguardando_nf', 'aguardando_retirada'].includes(p.status))
+                        .reduce((a, p) => a + (Number(p.valor_total) || 0), 0);
+  document.getElementById('com-cards').innerHTML = `
+    <div class="card" style="${aguardando.length ? 'border-color:var(--accent)' : ''}"><div class="card-label">Aguardando você</div><div class="card-value ${aguardando.length ? 'danger' : 'success'}">${aguardando.length}</div><div style="font-size:12px;color:var(--muted)">produzidos sem frete/retirada definidos</div></div>
+    <div class="card"><div class="card-label">Aguardando retirada</div><div class="card-value accent">${retirada.length}</div><div style="font-size:12px;color:var(--muted)">cliente vai buscar</div></div>
+    <div class="card"><div class="card-label">Com a Expedição</div><div class="card-value info">${expedicao.length}</div><div style="font-size:12px;color:var(--muted)">aguardando NF</div></div>
+    <div class="card"><div class="card-label">Pronto e não faturado</div><div class="card-value accent" style="font-size:22px">${fmtBRL(naoFaturado)}</div><div style="font-size:12px;color:var(--muted)">soma dos pedidos acima</div></div>`;
+}
+
+function _tabelaSecao(titulo, badge, cabecalho, linhas, vazio) {
+  return `<div class="table-wrap" style="margin-bottom:18px">
+    <div class="table-head"><span class="table-head-title">${titulo}${badge != null ? ` <span style="font-size:12px;background:var(--surface2);border-radius:10px;padding:2px 8px;margin-left:6px">${badge}</span>` : ''}</span></div>
+    <div style="overflow-x:auto"><table>
+      <thead><tr>${cabecalho.map(h => `<th>${h}</th>`).join('')}</tr></thead>
+      <tbody>${linhas.length ? linhas.join('') : `<tr><td colspan="${cabecalho.length}" style="text-align:center;color:var(--muted);padding:20px">${vazio}</td></tr>`}</tbody>
+    </table></div>
+  </div>`;
+}
+
+function renderSecoesMeus() {
+  const el = document.getElementById('mp-secoes');
+  if (!el) return;
+  const ps = mpDados.pedidos || [];
+  const aguardando = ps.filter(p => p.status === 'produzido' && !mpRevendaPendente(p));
+  const separacao = ps.filter(p => p.status === 'produzido' && mpRevendaPendente(p));
+  const retirada = ps.filter(p => p.status === 'aguardando_retirada');
+  const expedicao = ps.filter(p => p.status === 'aguardando_nf');
+  const dataConcl = p => (p.status === 'entregue' ? (p.data_entrega || p.data_despacho) : p.data_despacho) || '';
+  const concluidos = ps.filter(p => ['enviado', 'retirado', 'entregue'].includes(p.status))
+                       .sort((a, b) => String(dataConcl(b)).localeCompare(String(dataConcl(a))));
+  const tampas = p => (Number(p.origem_estoque_cliente) ? `<div style="font-size:11px;color:var(--info,#3b82f6)">🏷️ entrega do estoque do cliente</div>` : '') + ((p.revenda_pendentes || 0) > 0 ? `<div style="font-size:11px;color:var(--warn)">⚠ ${p.revenda_pendentes} item(ns) de revenda a separar</div>` : '')
+    + (p.status === 'produzido' && (p.embalagem_pendentes || 0) > 0 ? `<div style="font-size:11px;color:var(--warn)">⚠ embalagem de ${p.embalagem_pendentes} item(ns) ainda não informada</div>` : '');
+
+  let html = _tabelaSecao('⏳ Aguardando você — defina como o pedido vai sair', aguardando.length,
+    ['Pedido', 'Cliente', 'Produzido há', 'Valor', ''],
+    aguardando.map(p => `<tr>
+      <td><strong>${esc(p.numero_pedido)}</strong></td>
+      <td>${esc(p.cliente_nome)}${tampas(p)}</td>
+      <td>${seloDias(p.dias_na_etapa)}</td>
+      <td>${fmtBRL(p.valor_total)}</td>
+      <td style="white-space:nowrap;text-align:right">
+        <button class="btn btn-sm btn-secondary" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${p.id})">📄 PDF</button>
+        <button class="btn btn-sm btn-secondary" title="Caixas, peso e cubagem para cotar o frete" onclick="abrirCotacaoPedido(${p.id})">📦 Cotação</button>
+        <button class="btn btn-sm btn-primary" onclick="mpAbrirEnvio(${p.id},'transportadora')">🚚 Informar frete</button>
+        <button class="btn btn-sm btn-secondary" onclick="mpAbrirEnvio(${p.id},'retirada')">🙋 Cliente retira</button>
+      </td></tr>`),
+    '✅ Nenhum pedido aguardando você');
+
+  if (separacao.length) html += _tabelaSecao('📦 Aguardando separação / embalagem — liberado para o frete quando o Estoque concluir', separacao.length,
+    ['Pedido', 'Cliente', 'Produzido há', 'Valor', ''],
+    separacao.map(p => `<tr>
+      <td><strong>${esc(p.numero_pedido)}</strong></td>
+      <td>${esc(p.cliente_nome)}${tampas(p)}</td>
+      <td>${seloDias(p.dias_na_etapa)}</td>
+      <td>${fmtBRL(p.valor_total)}</td>
+      <td style="white-space:nowrap;text-align:right">
+        <button class="btn btn-sm btn-secondary" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${p.id})">📄 PDF</button>
+        <button class="btn btn-sm btn-secondary" title="Caixas, peso e cubagem para cotar o frete" onclick="abrirCotacaoPedido(${p.id})">📦 Cotação</button>
+      </td></tr>`), '');
+
+  if (retirada.length) html += _tabelaSecao('🙋 Aguardando retirada do cliente', retirada.length,
+    ['Pedido', 'Cliente', 'Previsão', 'Parado', ''],
+    retirada.map(p => {
+      const vencida = p.retirada_prevista && p.retirada_prevista < hojeISO();
+      return `<tr>
+        <td><strong>${esc(p.numero_pedido)}</strong></td>
+        <td>${esc(p.cliente_nome)}${tampas(p)}</td>
+        <td style="${vencida ? 'color:var(--danger);font-weight:700' : ''}">${p.retirada_prevista ? fmtDate(p.retirada_prevista) + (vencida ? ' · vencida' : '') : '—'}</td>
+        <td>${vencida ? seloDias(99999, (p.dias_na_etapa || 0) + ' dias') : seloDias(p.retirada_prevista ? 0 : p.dias_na_etapa, p.retirada_prevista ? 'no prazo' : null)}</td>
+        <td style="text-align:right;white-space:nowrap"><button class="btn btn-sm btn-secondary" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${p.id})">📄 PDF</button> <button class="btn btn-sm btn-secondary" onclick="mpAbrirEnvio(${p.id},'retirada')">✏️ Alterar</button></td>
+      </tr>`;
+    }), '');
+
+  if (expedicao.length) html += _tabelaSecao('🧾 Com a Expedição — aguardando NF', expedicao.length,
+    ['Pedido', 'Cliente', 'Transportadora', 'Frete', 'Aguardando há', ''],
+    expedicao.map(p => `<tr>
+      <td><strong>${esc(p.numero_pedido)}</strong></td>
+      <td>${esc(p.cliente_nome)}${tampas(p)}</td>
+      <td>${esc(p.transportadora || '—')}</td>
+      <td>${fmtBRL(p.frete)}</td>
+      <td>${seloDias(p.dias_na_etapa)}</td>
+      <td style="text-align:right;white-space:nowrap"><button class="btn btn-sm btn-secondary" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${p.id})">📄 PDF</button> <button class="btn btn-sm btn-secondary" title="Caixas, peso e cubagem para cotar o frete" onclick="abrirCotacaoPedido(${p.id})">📦 Cotação</button> <button class="btn btn-sm btn-secondary" onclick="mpAbrirEnvio(${p.id},'transportadora')">✏️ Alterar</button></td>
+    </tr>`), '');
+
+  const concluidosVis = mpVerTodosConcluidos ? concluidos : concluidos.slice(0, 10);
+  if (concluidos.length) html += _tabelaSecao('✅ Concluídos nos últimos 15 dias', concluidos.length,
+    ['Pedido', 'Cliente', 'Saída', 'NF', 'Data', ''],
+    concluidosVis.map(p => `<tr>
+      <td><strong>${esc(p.numero_pedido)}</strong></td>
+      <td>${esc(p.cliente_nome)}</td>
+      <td><span class="pill ${STATUS_PILL_PEDIDO[p.status] || ''}">${STATUS_LABEL_PEDIDO[p.status] || esc(p.status)}</span>${p.status === 'enviado' && p.transportadora ? ' <span style="color:var(--muted);font-size:12px">' + esc(p.transportadora) + '</span>' : ''}</td>
+      <td style="white-space:nowrap">${esc(p.nota_fiscal || '—')}</td>
+      <td>${fmtDate(dataConcl(p))}</td>
+      <td style="text-align:right;white-space:nowrap">${btnNotaFiscal(p, Number(p.tem_nf_pdf))} <button class="btn btn-sm btn-secondary" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${p.id})">📄 PDF</button></td>
+    </tr>`), '');
+  if (concluidos.length > 10) {
+    html += `<div style="text-align:center;margin:-8px 0 18px"><button class="btn btn-sm btn-secondary" onclick="mpVerTodosConcluidos=!mpVerTodosConcluidos;renderSecoesMeus()">${mpVerTodosConcluidos ? 'Mostrar só os 10 mais recentes' : 'Ver todos os ' + concluidos.length + ' concluídos'}</button></div>`;
+  }
+
+  el.innerHTML = html;
+}
+
+// Ícone da nota fiscal: aparece quando a Expedição anexou o PDF da NF
+function btnNotaFiscal(p, tem) {
+  if (!tem) return '';
+  return `<a class="btn btn-sm btn-secondary" href="${API}/pedidos/${p.id}/nf-arquivo" target="_blank" rel="noopener" style="text-decoration:none" title="Ver a nota fiscal${p.nota_fiscal ? ' ' + esc(p.nota_fiscal) : ''}">🧾 NF</a>`;
+}
+
+function mpRevendaPendente(p) { return (Number(p.revenda_pendentes) || 0) > 0 || (Number(p.embalagem_pendentes) || 0) > 0; }
+
+function mpEscolherModo(modo) {
+  mpModo = modo;
+  const t = document.getElementById('mp-modo-transportadora');
+  const r = document.getElementById('mp-modo-retirada');
+  [[t, 'transportadora'], [r, 'retirada']].forEach(([b, m]) => {
+    if (!b) return;
+    b.style.borderColor = modo === m ? 'var(--accent)' : '';
+    b.style.color = modo === m ? 'var(--accent)' : '';
+    b.style.fontWeight = modo === m ? '700' : '';
+  });
+  document.getElementById('mp-campos-transportadora').style.display = modo === 'transportadora' ? '' : 'none';
+  document.getElementById('mp-campos-retirada').style.display = modo === 'retirada' ? '' : 'none';
+  document.getElementById('mp-envio-rodape').innerHTML = modo === 'transportadora'
+    ? 'O pedido passa para <strong style="color:var(--accent)">Aguardando NF</strong> e aparece na fila da Expedição.'
+    : 'O pedido passa para <strong style="color:var(--accent)">Aguardando retirada</strong>. A Expedição lança a NF quando o cliente vier.';
+}
+
+let mpTranspCadastradas = null;
+async function mpCarregarTransportadoras() {
+  try { mpTranspCadastradas = (await req('/pedidos/transportadoras?ativos=1') || []).map(t => t.nome); }
+  catch (e) { mpTranspCadastradas = []; }
+  return mpTranspCadastradas;
+}
+
+async function mpAbrirEnvio(id, modo) {
+  const p = (mpDados.pedidos || []).find(x => x.id === id);
+  if (!p) return;
+  const nomes = await mpCarregarTransportadoras();
+  const sel = document.getElementById('mp-transportadora');
+  const atual = p.status === 'aguardando_nf' ? (p.transportadora || '') : '';
+  sel.innerHTML = '<option value="">— Selecione a transportadora —</option>' + nomes.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
+  const achado = nomes.find(n => n.toLowerCase() === atual.toLowerCase());
+  sel.value = achado || '';
+  document.getElementById('mp-transp-aviso').textContent = nomes.length ? '' : 'Nenhuma transportadora cadastrada. Peça ao Gestor ou à Expedição para cadastrar.';
+  document.getElementById('mp-envio-id').value = id;
+  document.getElementById('mp-envio-cab').innerHTML = `Pedido <strong style="color:var(--accent)">${esc(p.numero_pedido)}</strong> — ${esc(p.cliente_nome)}<br><span style="color:var(--muted)">Valor: ${fmtBRL(p.valor_total)}</span>`;
+  document.getElementById('mp-frete').value = p.status === 'aguardando_nf' ? (p.frete || 0) : 0;
+  document.getElementById('mp-previsao').value = p.previsao_entrega || '';
+  document.getElementById('mp-retirada-prevista').value = p.retirada_prevista || '';
+  document.getElementById('mp-obs').value = p.obs_vendedor || '';
+  document.getElementById('mp-btn-voltar').style.display = ['aguardando_nf', 'aguardando_retirada'].includes(p.status) ? '' : 'none';
+  mpEscolherModo(modo);
+  openModal('modal-mp-envio');
+  if (typeof resumoCotacaoHTML === 'function') resumoCotacaoHTML(id, document.getElementById('mp-envio-volumes'));
+}
+
+async function mpSalvarEnvio() {
+  const id = +document.getElementById('mp-envio-id').value;
+  const body = { modo: mpModo, obs_vendedor: document.getElementById('mp-obs').value.trim() };
+  if (mpModo === 'transportadora') {
+    body.transportadora = document.getElementById('mp-transportadora').value.trim();
+    body.frete = parseFloat(document.getElementById('mp-frete').value) || 0;
+    body.previsao_entrega = document.getElementById('mp-previsao').value;
+    if (!body.transportadora) { showAlert('Escolha a transportadora', 'danger'); return; }
+  } else {
+    body.retirada_prevista = document.getElementById('mp-retirada-prevista').value;
+  }
+  try {
+    const r = await req('/pedidos/' + id + '/definir-envio', 'POST', body);
+    closeModal('modal-mp-envio');
+    showAlert('✅ ' + r.mensagem);
+    loadMeusPedidos();
+    loadPedidosCom();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+
+async function mpVoltarAguardando() {
+  const id = +document.getElementById('mp-envio-id').value;
+  if (!confirm('Tirar este pedido da fila da Expedição e voltar para "Aguardando vendedor"?')) return;
+  try {
+    const r = await req('/pedidos/' + id + '/definir-envio', 'POST', { modo: 'voltar' });
+    closeModal('modal-mp-envio');
+    showAlert(r.mensagem);
+    loadMeusPedidos();
+    loadPedidosCom();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+
+// ── LISTA PEDIDOS
+let comPagina = 1;
+const COM_POR_PAGINA = 20;
+let comPodeExcluir = false;
+
+async function carregarPermissaoExcluir() {
+  try {
+    const perms = await req('/auth/me/permissoes');
+    comPodeExcluir = !!(perms && perms.pedidos && perms.pedidos.deletar);
+  } catch (e) { comPodeExcluir = false; }
+}
+
+async function excluirPedidoVendedor(id) {
+  const ped = (window._comLista || []).find(x => x.id === id);
+  const numero = ped ? ped.numero_pedido : id;
+  if (!confirm(`Excluir o pedido ${numero} do sistema?\n\nEssa ação não pode ser desfeita.`)) return;
+  try {
+    await req('/pedidos/' + id, 'DELETE');
+    showAlert('Pedido ' + numero + ' excluído.');
+    loadPedidosCom();
+    loadMeusPedidos();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+
+async function loadPedidosCom() {
+  if (window._permExcluirCarregada !== true) { window._permExcluirCarregada = true; await carregarPermissaoExcluir(); }
+  const status = document.getElementById('com-filtro-status').value;
+  const busca = document.getElementById('com-busca').value.toLowerCase();
+  let url = '/pedidos/';
+  if (status && status !== 'andamento') url += '?status=' + status;
+  const meuId = window.meuUsuario ? window.meuUsuario.id : null;
+  let rows = (await req(url) || []).filter(p => meuId != null && p.vendedor_usuario_id === meuId);
+  if (status === 'andamento') rows = rows.filter(p => ['aberto', 'em_producao'].includes(p.status));
+  window._comLista = rows;
+  const filtrados = busca ? rows.filter(p =>
+    String(p.numero_pedido || '').toLowerCase().includes(busca) ||
+    String(p.cliente_nome || '').toLowerCase().includes(busca)
+  ) : rows;
+
+  const tbody = document.getElementById('com-tbody');
+  const pag = document.getElementById('com-paginacao');
+  if (!filtrados.length) {
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:32px">Nenhum pedido encontrado</td></tr>';
+    if (pag) pag.innerHTML = '';
+    return;
+  }
+  const totalPag = Math.max(1, Math.ceil(filtrados.length / COM_POR_PAGINA));
+  if (comPagina > totalPag) comPagina = totalPag;
+  const ini = (comPagina - 1) * COM_POR_PAGINA;
+  const pagina = filtrados.slice(ini, ini + COM_POR_PAGINA);
+  if (pag) {
+    pag.innerHTML = `<span style="font-size:12px;color:var(--muted)">${ini + 1}–${ini + pagina.length} de ${filtrados.length} pedido(s)</span>` +
+      (totalPag > 1 ? `<span style="display:flex;gap:6px;align-items:center">
+        <button class="btn btn-sm btn-secondary" ${comPagina <= 1 ? 'disabled' : ''} onclick="comPagina--;loadPedidosCom()">← Anterior</button>
+        <span style="font-size:12px">Página ${comPagina} de ${totalPag}</span>
+        <button class="btn btn-sm btn-secondary" ${comPagina >= totalPag ? 'disabled' : ''} onclick="comPagina++;loadPedidosCom()">Próxima →</button>
+      </span>` : '');
+  }
+  tbody.innerHTML = pagina.map(p => {
+    const dias = Math.round(p.dias_restantes);
+    const diasCor = dias < 0 ? 'var(--danger)' : dias <= 3 ? 'var(--warn)' : 'var(--success)';
+    return `<tr>
+      <td><strong>${p.numero_pedido}</strong></td>
+      <td>${p.cliente_nome}</td>
+      <td>${fmtDate(p.prazo_entrega)}</td>
+      <td style="color:${diasCor};font-weight:700">${dias < 0 ? 'Vencido' : dias + 'd'}</td>
+      <td style="color:var(--muted)">${p.itens_entregues}/${p.total_itens}</td>
+      <td><span class="pill ${STATUS_PILL_PEDIDO[p.status] || ''}">${(p.status === 'produzido' && Number(p.revenda_bloqueado)) ? '📦 Aguardando separação' : (STATUS_LABEL_PEDIDO[p.status] || p.status)}</span></td>
+      <td class="flex gap-2">
+        <button class="btn btn-sm btn-secondary" onclick="verDetalhe(${p.id})">Ver</button>
+        <button class="btn btn-sm btn-secondary" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${p.id})">📄 PDF</button>
+        ${btnNotaFiscal(p, !!p.nf_arquivo)}
+        ${comPodeExcluir && p.status === 'aberto' && !(p.itens_iniciados > 0) ? `<button class="btn btn-sm btn-danger" title="Excluir pedido (só em aberto, sem produção)" onclick="excluirPedidoVendedor(${p.id})">🗑 Excluir</button>` : ''}
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function verDetalhe(id) {
+  const p = await req('/pedidos/' + id);
+  const dias = Math.round(p.dias_restantes);
+  const diasCor = dias < 0 ? 'var(--danger)' : dias <= 3 ? 'var(--warn)' : 'var(--success)';
+  document.getElementById('modal-com-det-title').textContent = `Pedido ${p.numero_pedido}`;
+  document.getElementById('modal-com-det-content').innerHTML = `
+    <div class="cards-grid" style="margin-bottom:16px">
+      <div class="card">
+        <div class="card-label">Cliente</div>
+        <div style="font-weight:600">${p.cliente_nome}</div>
+        ${p.nome_fantasia ? `<div style="font-size:12px;color:var(--muted)">${p.nome_fantasia}</div>` : ''}
+      </div>
+      <div class="card">
+        <div class="card-label">Prazo de Entrega</div>
+        <div style="font-family:var(--fh);font-weight:800;color:${diasCor}">${fmtDate(p.prazo_entrega)}</div>
+        <div style="font-size:12px;color:${diasCor}">${dias < 0 ? 'Vencido há ' + Math.abs(dias) + ' dias' : dias + ' dias restantes'}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Status</div>
+        <span class="pill ${STATUS_PILL_PEDIDO[p.status] || ''}">${(p.status === 'produzido' && Number(p.revenda_bloqueado)) ? '📦 Aguardando separação' : (STATUS_LABEL_PEDIDO[p.status] || p.status)}</span>
+        ${p.transportadora ? `<div style="font-size:12px;color:var(--muted);margin-top:4px">${esc(p.transportadora)}${p.nota_fiscal ? ' · NF ' + esc(p.nota_fiscal) : ''}</div>` : ''}
+      </div>
+      ${p.vendedor ? `<div class="card"><div class="card-label">Vendedor</div><div style="font-weight:600">${p.vendedor}</div></div>` : ''}
+    </div>
+    ${p.observacoes ? `<div style="font-size:13px;color:var(--muted);margin-bottom:16px">📝 ${p.observacoes}</div>` : ''}
+    <div class="table-wrap">
+      <div class="table-head"><span class="table-head-title">Itens</span></div>
+      <table>
+        <thead><tr><th>Descrição</th><th>Qtd. Pedida</th><th>Produzido</th><th>Status</th></tr></thead>
+        <tbody>
+          ${p.itens.map(i => {
+            const pct = Math.min(100, Math.round((i.qtd_produzida/i.quantidade)*100));
+            return `<tr>
+              <td>${i.descricao}</td>
+              <td>${fmtNum(i.quantidade)} ${i.unidade}</td>
+              <td>
+                <div>${fmtNum(i.qtd_produzida)} (${pct}%)</div>
+                <div style="height:4px;background:var(--surface2);border-radius:2px;margin-top:4px;width:80px">
+                  <div style="height:100%;width:${pct}%;background:${pct>=100?'var(--success)':'var(--accent)'};border-radius:2px"></div>
+                </div>
+              </td>
+              <td><span class="pill ${STATUS_PILL[i.status]}">${STATUS_LABEL[i.status]}</span></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  openModal('modal-com-detalhe');
+}
+
+// ── NOVO PEDIDO
+async function loadClientesSelect() {
+  const [clientes] = await Promise.all([
+    req('/pedidos/clientes'),
+    carregarProdutos()
+  ]);
+  document.getElementById('np-cliente').innerHTML =
+    '<option value="">— Selecione um cliente —</option>' +
+    clientes.map(c => `<option value="${c.id}">${c.razao_social}${c.nome_fantasia ? ' — ' + c.nome_fantasia : ''}</option>`).join('');
+  if (!npItens.length) addItemNP();
+  else renderItensNP();
+}
+
+let produtosCadastrados = [];
+
+async function carregarProdutos() {
+  try {
+    produtosCadastrados = await req('/estoque/produtos');
+  } catch(e) { produtosCadastrados = []; }
+}
+
+function addItemNP() {
+  npItens.push({ descricao: '', quantidade: 1, unidade: 'unidade', produto_id: null });
+  renderItensNP();
+}
+
+function selecionarProduto(idx, val) {
+  if (val) {
+    const prod = produtosCadastrados.find(p => p.id === +val);
+    if (prod) {
+      npItens[idx].descricao = prod.nome + (prod.marca ? ' — ' + prod.marca : '');
+      npItens[idx].unidade = prod.unidade;
+      npItens[idx].produto_id = prod.id;
+      renderItensNP();
+    }
+  } else {
+    npItens[idx].produto_id = null;
+  }
+}
+
+function renderItensNP() {
+  const el = document.getElementById('np-itens');
+  if (!npItens.length) {
+    el.innerHTML = '<p style="color:var(--muted);font-size:13px;padding:8px 0">Clique em "+ Item" para adicionar</p>';
+    return;
+  }
+  el.innerHTML = npItens.map((item, idx) => `
+    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:8px">
+      <div style="display:grid;grid-template-columns:1fr auto;gap:8px;margin-bottom:8px;align-items:center">
+        <select onchange="selecionarProduto(${idx}, this.value)" style="font-size:13px">
+          <option value="">✏️ Descrição livre ou selecione produto cadastrado...</option>
+          ${produtosCadastrados.map(p =>
+            `<option value="${p.id}" ${item.produto_id===p.id?'selected':''}>${p.codigo?'['+p.codigo+'] ':''}${p.nome}${p.marca?' — '+p.marca:''} (${fmtNum(p.quantidade_atual)} ${p.unidade})</option>`
+          ).join('')}
+        </select>
+        <button class="btn btn-sm btn-danger" onclick="npItens.splice(${idx},1);renderItensNP()">✕</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 90px 110px;gap:8px">
+        <input type="text" value="${item.descricao}" placeholder="Descrição do item *"
+               oninput="npItens[${idx}].descricao=this.value" style="font-size:13px">
+        <input type="number" value="${item.quantidade}" min="1" placeholder="Qtd"
+               oninput="npItens[${idx}].quantidade=+this.value" style="font-size:13px">
+        <select onchange="npItens[${idx}].unidade=this.value" style="font-size:13px">
+          ${['unidade','kg','litro','metro','caixa','pacote'].map(u =>
+            `<option value="${u}" ${item.unidade===u?'selected':''}>${u}</option>`).join('')}
+        </select>
+      </div>
+    </div>`).join('');
+}
+
+async function salvarNovoPedido() {
+  const alertEl = document.getElementById('np-alert');
+  const numero = document.getElementById('np-numero').value.trim();
+  const prazo = document.getElementById('np-prazo').value;
+  const clienteId = +document.getElementById('np-cliente').value;
+  const itensValidos = npItens.filter(i => i.descricao.trim());
+
+  if (!numero) { alertEl.innerHTML = '<div class="alert alert-danger">Informe o número do pedido</div>'; return; }
+  if (!prazo) { alertEl.innerHTML = '<div class="alert alert-danger">Informe o prazo de entrega</div>'; return; }
+  if (!clienteId) { alertEl.innerHTML = '<div class="alert alert-danger">Selecione um cliente</div>'; return; }
+  if (!itensValidos.length) { alertEl.innerHTML = '<div class="alert alert-danger">Adicione ao menos um item</div>'; return; }
+
+  try {
+    await req('/pedidos/', 'POST', {
+      numero_pedido: numero,
+      cliente_id: clienteId,
+      prazo_entrega: prazo,
+      vendedor: document.getElementById('np-vendedor').value,
+      observacoes: document.getElementById('np-obs').value,
+      itens: itensValidos
+    });
+    alertEl.innerHTML = '<div class="alert alert-success">✓ Pedido criado com sucesso!</div>';
+    setTimeout(() => { limparFormulario(); switchTab('pedidos'); }, 1500);
+  } catch(e) {
+    alertEl.innerHTML = `<div class="alert alert-danger">${e.message}</div>`;
+  }
+}
+
+function limparFormulario() {
+  ['np-numero','np-prazo','np-vendedor','np-obs'].forEach(id => document.getElementById(id).value = '');
+  if (window.meuUsuario) document.getElementById('np-vendedor').value = window.meuUsuario.nome || '';
+  document.getElementById('np-cliente').value = '';
+  document.getElementById('np-alert').innerHTML = '';
+  npItens = [];
+  renderItensNP();
+}
+
+// ── CLIENTE RÁPIDO
+function openModalNovoCliente() { openModal('modal-com-cliente'); }
+
+function formatDocumento(el) {
+  let v = el.value.replace(/\D/g,'');
+  const label = document.getElementById('doc-tipo-label');
+  const btn = document.getElementById('btn-buscar-doc');
+  if (v.length <= 11) {
+    // CPF: 000.000.000-00
+    v = v.replace(/(\d{3})(\d)/,'$1.$2');
+    v = v.replace(/(\d{3})\.(\d{3})(\d)/,'$1.$2.$3');
+    v = v.replace(/(\d{3})\.(\d{3})\.(\d{3})(\d)/,'$1.$2.$3-$4');
+    el.value = v;
+    label.textContent = v.replace(/\D/g,'').length === 11 ? '✓ CPF detectado' : '';
+    label.style.color = 'var(--success)';
+    btn.style.opacity = '0.4';
+    btn.title = 'Busca automática disponível apenas para CNPJ';
+  } else {
+    // CNPJ: 00.000.000/0000-00
+    v = v.replace(/^(\d{2})(\d)/,'$1.$2');
+    v = v.replace(/^(\d{2})\.(\d{3})(\d)/,'$1.$2.$3');
+    v = v.replace(/\.(\d{3})(\d)/,'.$1/$2');
+    v = v.replace(/(\d{4})(\d)/,'$1-$2');
+    el.value = v;
+    label.textContent = v.replace(/\D/g,'').length === 14 ? '✓ CNPJ detectado' : '';
+    label.style.color = 'var(--success)';
+    btn.style.opacity = '1';
+    btn.title = '';
+  }
+}
+function formatCNPJ2(el) { formatDocumento(el); }
+function formatCEP2(el) {
+  let v = el.value.replace(/\D/g,'');
+  if (v.length > 5) v = v.slice(0,5) + '-' + v.slice(5,8);
+  el.value = v;
+}
+
+async function buscarCNPJ2() {
+  const cnpj = document.getElementById('nc-cnpj').value.replace(/\D/g,'');
+  if (cnpj.length !== 14) { showAlert('CNPJ inválido', 'danger'); return; }
+  try {
+    const d = await req('/pedidos/busca-cnpj/' + cnpj);
+    document.getElementById('nc-razao').value = d.razao_social || '';
+    document.getElementById('nc-fantasia').value = d.nome_fantasia || '';
+    document.getElementById('nc-telefone').value = d.telefone || '';
+    document.getElementById('nc-cep').value = d.cep ? d.cep.slice(0,5)+'-'+d.cep.slice(5) : '';
+    document.getElementById('nc-logradouro').value = d.logradouro || '';
+    document.getElementById('nc-numero-end').value = d.numero || '';
+    document.getElementById('nc-bairro').value = d.bairro || '';
+    document.getElementById('nc-cidade').value = d.cidade || '';
+    document.getElementById('nc-uf').value = d.uf || '';
+    showAlert('CNPJ encontrado!');
+  } catch(e) { showAlert('CNPJ não encontrado', 'danger'); }
+}
+
+async function buscarCEP2() {
+  const cep = document.getElementById('nc-cep').value.replace(/\D/g,'');
+  if (cep.length !== 8) { showAlert('CEP inválido', 'danger'); return; }
+  try {
+    const d = await req('/pedidos/busca-cep/' + cep);
+    document.getElementById('nc-logradouro').value = d.logradouro || '';
+    document.getElementById('nc-bairro').value = d.bairro || '';
+    document.getElementById('nc-cidade').value = d.cidade || '';
+    document.getElementById('nc-uf').value = d.uf || '';
+    showAlert('CEP encontrado!');
+  } catch(e) { showAlert('CEP não encontrado', 'danger'); }
+}
+
+async function salvarNovoCliente() {
+  const body = {
+    razao_social: document.getElementById('nc-razao').value,
+    cnpj: document.getElementById('nc-cnpj').value.replace(/\D/g,''),
+    nome_fantasia: document.getElementById('nc-fantasia').value,
+    telefone: document.getElementById('nc-telefone').value,
+    cep: document.getElementById('nc-cep').value.replace(/\D/g,''),
+    logradouro: document.getElementById('nc-logradouro').value,
+    numero: document.getElementById('nc-numero-end').value,
+    bairro: document.getElementById('nc-bairro').value,
+    cidade: document.getElementById('nc-cidade').value,
+    uf: document.getElementById('nc-uf').value
+  };
+  if (!body.razao_social) { showAlert('Informe a razão social', 'danger'); return; }
+  try {
+    await req('/pedidos/clientes', 'POST', body);
+    showAlert('Cliente salvo!');
+    closeModal('modal-com-cliente');
+    await loadClientesSelect();
+    const clientes = await req('/pedidos/clientes');
+    const ultimo = clientes[clientes.length - 1];
+    if (ultimo) document.getElementById('np-cliente').value = ultimo.id;
+  } catch(e) { showAlert(e.message, 'danger'); }
+}
+
+// ── IMPORTAÇÃO
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('drop-zone').classList.remove('drag');
+  const file = e.dataTransfer.files[0];
+  if (file) handleFile(file);
+}
+
+function handleFile(file) {
+  if (!file) return;
+  const ext = file.name.split('.').pop().toLowerCase();
+  const reader = new FileReader();
+
+  reader.onload = (e) => {
+    let data;
+    if (ext === 'csv') {
+      const text = e.target.result;
+      const lines = text.split('\n').filter(l => l.trim());
+      importHeaders = lines[0].split(/[;,]/).map(h => h.trim().replace(/"/g,''));
+      data = lines.slice(1).map(line => {
+        const cols = line.split(/[;,]/).map(c => c.trim().replace(/"/g,''));
+        const row = {};
+        importHeaders.forEach((h, i) => row[h] = cols[i] || '');
+        return row;
+      });
+    } else {
+      const wb = XLSX.read(e.target.result, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      data = XLSX.utils.sheet_to_json(ws, { defval: '' });
+      importHeaders = data.length ? Object.keys(data[0]) : [];
+    }
+    importData = data;
+    mostrarPreview(data);
+  };
+
+  if (ext === 'csv') reader.readAsText(file, 'UTF-8');
+  else reader.readAsArrayBuffer(file);
+}
+
+function mostrarPreview(data) {
+  document.getElementById('imp-preview').style.display = '';
+  document.getElementById('imp-info').textContent =
+    `✓ Arquivo carregado: ${data.length} linha(s) encontrada(s). Verifique o mapeamento abaixo.`;
+
+  // Tabela preview (max 5 linhas)
+  const preview = data.slice(0, 5);
+  document.getElementById('imp-thead').innerHTML =
+    '<tr>' + importHeaders.map(h => `<th>${h}</th>`).join('') + '</tr>';
+  document.getElementById('imp-tbody').innerHTML =
+    preview.map(row => '<tr>' + importHeaders.map(h => `<td>${row[h] || ''}</td>`).join('') + '</tr>').join('');
+
+  // Mapeamento
+  const campos = [
+    { key: 'numero_pedido', label: 'Número do Pedido *' },
+    { key: 'cliente', label: 'Cliente (nome/razão social) *' },
+    { key: 'prazo_entrega', label: 'Prazo de Entrega * (YYYY-MM-DD)' },
+    { key: 'item_descricao', label: 'Descrição do Item *' },
+    { key: 'item_quantidade', label: 'Quantidade *' },
+    { key: 'item_unidade', label: 'Unidade' },
+    { key: 'vendedor', label: 'Vendedor' },
+  ];
+
+  document.getElementById('imp-mapeamento').innerHTML = campos.map(c => `
+    <div class="form-group">
+      <label>${c.label}</label>
+      <select id="map-${c.key}">
+        <option value="">— Ignorar —</option>
+        ${importHeaders.map(h => {
+          const sel = h.toLowerCase().includes(c.key.split('_')[0]) || h.toLowerCase() === c.key ? 'selected' : '';
+          return `<option value="${h}" ${sel}>${h}</option>`;
+        }).join('')}
+      </select>
+    </div>`).join('');
+}
+
+async function confirmarImportacao() {
+  const alertEl = document.getElementById('imp-alert');
+  const get = (key) => document.getElementById('map-' + key)?.value || '';
+
+  const camposObrig = ['numero_pedido', 'cliente', 'prazo_entrega', 'item_descricao', 'item_quantidade'];
+  for (const c of camposObrig) {
+    if (!get(c)) {
+      alertEl.innerHTML = `<div class="alert alert-danger">Mapeie o campo obrigatório: ${c}</div>`;
+      return;
+    }
+  }
+
+  // Agrupar por pedido
+  const pedidosMap = {};
+  importData.forEach(row => {
+    const num = String(row[get('numero_pedido')] || '').trim();
+    if (!num) return;
+    if (!pedidosMap[num]) {
+      pedidosMap[num] = {
+        numero_pedido: num,
+        cliente_nome: String(row[get('cliente')] || '').trim(),
+        prazo_entrega: String(row[get('prazo_entrega')] || '').trim(),
+        vendedor: (get('vendedor') && String(row[get('vendedor')] || '').trim()) ? String(row[get('vendedor')]).trim() : ((window.meuUsuario && window.meuUsuario.nome) || ''),
+        itens: []
+      };
+    }
+    const desc = String(row[get('item_descricao')] || '').trim();
+    const qtd = parseFloat(String(row[get('item_quantidade')] || '0').replace(',','.')) || 1;
+    const unid = get('item_unidade') ? String(row[get('item_unidade')] || 'unidade') : 'unidade';
+    if (desc) pedidosMap[num].itens.push({ descricao: desc, quantidade: qtd, unidade: unid });
+  });
+
+  const pedidos = Object.values(pedidosMap);
+  if (!pedidos.length) { alertEl.innerHTML = '<div class="alert alert-danger">Nenhum pedido válido encontrado</div>'; return; }
+
+  // Buscar/criar clientes e importar pedidos
+  let ok = 0, erros = 0;
+  const clientes = await req('/pedidos/clientes');
+
+  for (const p of pedidos) {
+    try {
+      let cliente = clientes.find(c =>
+        c.razao_social.toLowerCase().includes(p.cliente_nome.toLowerCase()) ||
+        p.cliente_nome.toLowerCase().includes(c.razao_social.toLowerCase())
+      );
+
+      if (!cliente) {
+        const res = await req('/pedidos/clientes', 'POST', { razao_social: p.cliente_nome });
+        cliente = { id: res.id };
+        clientes.push({ id: res.id, razao_social: p.cliente_nome });
+      }
+
+      await req('/pedidos/', 'POST', {
+        numero_pedido: p.numero_pedido,
+        cliente_id: cliente.id,
+        prazo_entrega: p.prazo_entrega,
+        vendedor: p.vendedor,
+        itens: p.itens
+      });
+      ok++;
+    } catch(e) { erros++; }
+  }
+
+  alertEl.innerHTML = `<div class="alert alert-${erros ? 'warn' : 'success'}">
+    ✓ ${ok} pedido(s) importado(s) com sucesso${erros ? ` &nbsp;|&nbsp; ${erros} com erro` : ''}.
+  </div>`;
+  setTimeout(() => { cancelarImportacao(); switchTab('pedidos'); }, 2000);
+}
+
+function cancelarImportacao() {
+  document.getElementById('imp-preview').style.display = 'none';
+  document.getElementById('file-input').value = '';
+  importData = [];
+  importHeaders = [];
+}
+
+function baixarModelo() {
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.aoa_to_sheet([
+    ['numero_pedido','cliente','prazo_entrega','item_descricao','item_quantidade','item_unidade','vendedor'],
+    ['PED-001','Cliente Exemplo Ltda','2026-07-30','Copo 500ml',1000,'unidade','João'],
+    ['PED-001','Cliente Exemplo Ltda','2026-07-30','Caneca 300ml',500,'unidade','João'],
+    ['PED-002','Outra Empresa SA','2026-08-15','Copo 200ml',2000,'unidade','Maria'],
+  ]);
+  XLSX.utils.book_append_sheet(wb, ws, 'Pedidos');
+  XLSX.writeFile(wb, 'modelo_importacao_pratic.xlsx');
+}
+
+function sairMobile() {
+  if (!confirm('Deseja sair do sistema?')) return;
+  document.body.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0d0f14;font-family:DM Sans,sans-serif"><div style="text-align:center;padding:40px"><div style="font-family:Syne,sans-serif;font-size:28px;font-weight:800;color:#f0b429;margin-bottom:16px">PRATIC</div><div style="font-size:14px;color:#6b7280;margin-bottom:24px">Sessão encerrada.</div><button onclick="location.reload()" style="padding:12px 28px;background:#f0b429;color:#000;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer">Entrar novamente</button></div></div>';
+}
+
+async function verificarAcessoComercial() {
+  let me;
+  try {
+    me = await req('/auth/me');
+    if (me && me.deve_alterar_senha) {
+      window.location.href = '/login?change_password=1';
+      return false;
+    }
+    if (me) {
+      window.meuUsuario = me;
+      const elNome = document.getElementById('topbar-user-name-txt');
+      if (elNome) elNome.textContent = me.nome;
+    }
+  } catch (e) {
+    window.location.href = '/login?redirect=' + encodeURIComponent(window.location.pathname + window.location.search);
+    return false;
+  }
+
+  try {
+    const r = await fetch(API + '/configuracoes/permissoes/all');
+    const perms = await r.json();
+    const liberadas = String(perms['perm_comercial'] || 'pedidos').split(',').map(p => p.trim()).filter(Boolean);
+    const paginasPainel = liberadas.filter(p => p !== 'pedidos');
+
+    // O vendedor trabalha os pedidos aqui (Meus Pedidos). Outras páginas liberadas
+    // para o Comercial no Controle de Acesso viram botões no topo, abrindo o painel.
+    const NOMES_PAG = {
+      dashboard: '📊 Dashboard', 'lista-compras': '🛒 Lista de Compras', estoque: '📦 Estoque',
+      relatorios: '📋 Relatórios', graficos: '📈 Gráficos', 'saldo-demanda': '📊 Saldo vs Demanda',
+      'consumo-medio': '📉 Consumo Médio', producao: '🏭 Produção', epi: '🦺 EPI'
+    };
+    const box = document.getElementById('com-outras-paginas');
+    const paginasLink = paginasPainel.filter(p => !['mobile', 'estoque_mobile', 'producao_simplificada', 'comunicacao'].includes(p));
+    if (box && paginasLink.length) {
+      box.innerHTML = paginasLink.map(p => `<button class="btn btn-sm btn-secondary" style="padding:6px 12px;font-size:12px" onclick="location.href='/?page=${encodeURIComponent(p)}'">${NOMES_PAG[p] || p}</button>`).join('');
+    }
+
+    if (!liberadas.includes('pedidos')) {
+      document.body.innerHTML = '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0d0f14;font-family:DM Sans,sans-serif"><div style="text-align:center;padding:40px"><div style="font-size:60px;margin-bottom:20px">🔒</div><div style="font-family:Syne,sans-serif;font-size:24px;font-weight:800;color:#f0b429;margin-bottom:10px">PRATIC</div><div style="font-size:16px;color:#e8eaf0;margin-bottom:8px">Acesso não autorizado</div><div style="font-size:13px;color:#6b7280">Nenhuma página foi liberada para este perfil.</div></div></div>';
+      return false;
+    }
+  } catch(e) {}
+  return true;
+}
+
+async function loadTopbarWidgets() {
+  const dateEl = document.querySelector('#topbar-date span');
+  if (dateEl) {
+    const hoje = new Date();
+    const dia = String(hoje.getDate()).padStart(2, '0');
+    const mes = String(hoje.getMonth() + 1).padStart(2, '0');
+    const ano = hoje.getFullYear();
+    dateEl.textContent = `${dia}/${mes}/${ano}`;
+  }
+
+  let cidade = '';
+  let uf = '';
+  try {
+    const r = await fetch(API + '/configuracoes/empresa', { cache: 'no-store' });
+    if (r.ok) {
+      const dados = await r.json();
+      cidade = dados.cidade || '';
+      uf = dados.uf || '';
+    }
+  } catch (e) {
+    console.error('Erro ao buscar dados da empresa para topbar:', e);
+  }
+
+  const cityEl = document.querySelector('#topbar-city span');
+  if (cityEl) {
+    if (cidade) {
+      cityEl.textContent = uf ? `${cidade} - ${uf.toUpperCase()}` : cidade;
+    } else {
+      cityEl.textContent = 'Sem cidade';
+    }
+  }
+
+  const tempEl = document.querySelector('#topbar-temp span');
+  if (tempEl && cidade) {
+    try {
+      const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cidade)}&count=1&language=pt&format=json`;
+      const geoRes = await fetch(geoUrl);
+      if (geoRes.ok) {
+        const geoData = await geoRes.json();
+        if (geoData.results && geoData.results.length > 0) {
+          const { latitude, longitude } = geoData.results[0];
+          const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`;
+          const weatherRes = await fetch(weatherUrl);
+          if (weatherRes.ok) {
+            const weatherData = await weatherRes.json();
+            if (weatherData.current_weather && typeof weatherData.current_weather.temperature !== 'undefined') {
+              const temp = Math.round(weatherData.current_weather.temperature);
+              tempEl.textContent = `${temp}°C`;
+              return;
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Erro ao obter temperatura:', err);
+    }
+  }
+  
+  if (tempEl) {
+    tempEl.textContent = '—°C';
+  }
+}
+
+// INIT
+verificarAcessoComercial().then(ok => {
+  if (ok && new URLSearchParams(location.search).get('importado') === '1') {
+    setTimeout(() => showAlert('✅ Pedido importado com sucesso.'), 600);
+    history.replaceState(null, '', '/comercial');
+  }
+  if (!ok) return;
+
+  // Set current month/year in header
+  const mesAtual = new Date().toISOString().slice(0, 7);
+  const [y, m] = mesAtual.split('-');
+  const meses = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+  const el = document.getElementById('topbar-mes');
+  if (el) el.textContent = `${meses[+m - 1]} de ${y}`;
+
+  loadPedidosCom();
+  loadCards();
+  loadTopbarWidgets();
+});
+
+
+/* =========================================================
+   Proteção contra duplo clique em botões de salvar/confirmar
+   ========================================================= */
+(function () {
+  if (window.PRATIC_SAVE_GUARD_INSTALLED) return;
+  window.PRATIC_SAVE_GUARD_INSTALLED = true;
+
+  const actionWords = ['salvar', 'registrar', 'confirmar', 'importar', 'baixar backup'];
+  let currentActionButton = null;
+
+  function normalizeText(value) {
+    return String(value || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function isProtectedButton(btn) {
+    if (!btn || btn.tagName !== 'BUTTON') return false;
+    if (btn.dataset.noGuard === 'true') return false;
+    const onclick = normalizeText(btn.getAttribute('onclick') || '');
+    const label = normalizeText(btn.textContent || btn.innerText || '');
+    return actionWords.some(w => label.includes(w)) ||
+      /salvar|confirmar|registrar|importar|restore|backup/i.test(onclick);
+  }
+
+  function getButton() {
+    if (currentActionButton && document.contains(currentActionButton)) return currentActionButton;
+    const active = document.activeElement;
+    if (active && active.tagName === 'BUTTON') return active;
+    return null;
+  }
+
+  function setLoadingText(btn) {
+    if (!btn || btn.dataset.originalHtml) return;
+    btn.dataset.originalHtml = btn.innerHTML;
+    const text = normalizeText(btn.textContent || btn.innerText || '');
+    if (text.includes('importar')) btn.innerHTML = 'Importando...';
+    else if (text.includes('confirmar')) btn.innerHTML = 'Confirmando...';
+    else if (text.includes('registrar')) btn.innerHTML = 'Registrando...';
+    else if (text.includes('backup') || text.includes('baixar')) btn.innerHTML = 'Processando...';
+    else btn.innerHTML = 'Salvando...';
+  }
+
+  function lock(btn) {
+    if (!btn || !isProtectedButton(btn)) return true;
+    if (btn.dataset.guardBusy === '1') return false;
+    btn.dataset.guardBusy = '1';
+    btn.disabled = true;
+    btn.classList.add('btn-loading');
+    setLoadingText(btn);
+    return true;
+  }
+
+  function unlock(btn) {
+    if (!btn || !document.contains(btn)) return;
+    delete btn.dataset.guardBusy;
+    btn.disabled = false;
+    btn.classList.remove('btn-loading');
+    if (btn.dataset.originalHtml) {
+      btn.innerHTML = btn.dataset.originalHtml;
+      delete btn.dataset.originalHtml;
+    }
+  }
+
+  document.addEventListener('click', function (event) {
+    const btn = event.target.closest && event.target.closest('button');
+    if (!btn || !isProtectedButton(btn)) return;
+    if (btn.dataset.guardBusy === '1') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return false;
+    }
+    currentActionButton = btn;
+    setTimeout(() => {
+      if (currentActionButton === btn) currentActionButton = null;
+    }, 1000);
+  }, true);
+
+  function guardFunction(name) {
+    const original = window[name];
+    if (typeof original !== 'function' || original.__praticGuarded) return;
+    const guarded = async function (...args) {
+      const btn = getButton();
+      if (btn && !lock(btn)) return;
+      try {
+        return await original.apply(this, args);
+      } finally {
+        if (btn) unlock(btn);
+      }
+    };
+    guarded.__praticGuarded = true;
+    window[name] = guarded;
+  }
+
+  function installFunctionGuards() {
+    [
+      'salvarProducao', 'salvarColaborador', 'salvarMaquina', 'salvarAuxiliar',
+      'salvarConfig', 'salvarProduto', 'salvarProdutoEstoque', 'salvarMovimentacao',
+      'salvarPerda', 'salvarCategoria', 'salvarPedido', 'salvarCliente',
+      'salvarEmpresa', 'salvarPermissoes', 'salvarEPI', 'salvarEntrega',
+      'salvarFuncaoEPI', 'salvarNovoPedido', 'salvarNovoCliente', 'salvarMobile',
+      'salvarColabProd', 'salvarMaqProd', 'confirmarImportCSV', 'confirmarImportacao',
+      'confirmarRestore', 'confirmarMovimentacao', 'confirmarMovRapida', 'fazerBackup'
+    ].forEach(guardFunction);
+  }
+
+  installFunctionGuards();
+  document.addEventListener('DOMContentLoaded', installFunctionGuards);
+  setTimeout(installFunctionGuards, 300);
+})();
+
+function toggleTheme() {
+  const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+  const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', newTheme);
+  localStorage.setItem('pratic-theme', newTheme);
+}
+function toggleSectorMenu(event) {
+  event.stopPropagation();
+  const menu = document.getElementById('sector-menu');
+  if (menu) menu.classList.toggle('show');
+}
+document.addEventListener('click', function() {
+  const menu = document.getElementById('sector-menu');
+  if (menu) menu.classList.remove('show');
+});
+</script>
+</body>
+</html>

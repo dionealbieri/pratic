@@ -1,0 +1,12900 @@
+const API = window.location.origin + '/api';
+
+// ─── UTILS ───────────────────────────────────────────────────────────────────
+
+function fmtNum(n) {
+  return Number(n || 0).toLocaleString('pt-BR');
+}
+function fmtBRL(n) {
+  return Number(n || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+function fmtDate(s) {
+  if (!s) return '—';
+  const [y, m, d] = s.split('-');
+  return `${d}/${m}/${y}`;
+}
+function mesLabel(mes) {
+  if (!mes) return '—';
+  const [y, m] = mes.split('-');
+  const nomes = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+  return `${nomes[+m - 1]} ${y}`;
+}
+function currentMonth() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+function showAlert(msg, type = 'success') {
+  const el = document.getElementById('alert-global');
+  el.innerHTML = `<div class="alert alert-${type}">${msg}</div>`;
+  setTimeout(() => el.innerHTML = '', 3000);
+}
+
+// Popup central de aviso (precisa ser fechado pelo usuário). Útil quando a
+// mensagem não pode passar despercebida (ex.: pedido duplicado no import).
+function showPopup(titulo, mensagemHtml) {
+  const antigo = document.getElementById('popup-overlay-dyn');
+  if (antigo) antigo.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'popup-overlay-dyn';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--surface,#161922);border:1px solid var(--border,rgba(255,255,255,.12));border-radius:12px;padding:20px 24px;max-width:480px;width:100%;box-shadow:0 12px 48px rgba(0,0,0,.55)';
+  box.innerHTML = `<div style="font-size:16px;font-weight:700;margin-bottom:10px">${titulo}</div>`
+    + `<div style="font-size:14px;line-height:1.5">${mensagemHtml}</div>`
+    + `<div style="text-align:right;margin-top:18px"><button class="btn btn-secondary" id="popup-ok-dyn">OK</button></div>`;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const fechar = () => overlay.remove();
+  box.querySelector('#popup-ok-dyn').onclick = fechar;
+  overlay.onclick = (e) => { if (e.target === overlay) fechar(); };
+}
+
+// ─── CONSTANTES DE PERMISSÕES ────────────────────────────────────────────────
+
+const PAGINAS_SISTEMA = [
+  { key:'dashboard',     label:'📊 Dashboard'         },
+  { key:'producao',      label:'🏭 Produção Diária'   },
+  { key:'producao_simplificada', label:'⚡ Lançamento Simplificado' },
+  { key:'premiacao',     label:'🏆 Premiação'          },
+  { key:'pintura',       label:'🎨 Pintura'             },
+  { key:'pedidos',       label:'🧾 Pedidos'            },
+  { key:'estoque',       label:'📦 Estoque'            },
+  { key:'graficos',      label:'📈 Gráficos'           },
+  { key:'relatorios',    label:'📋 Relatórios'         },
+  { key:'perdas-sobras', label:'⚠️ Perdas e Sobras'     },
+  { key:'colaboradores', label:'👥 Colaboradores'      },
+  { key:'maquinas',      label:'⚙️ Máquinas'           },
+  { key:'epi',           label:'🦺 EPI'               },
+  { key:'saldo-demanda', label:'📊 Saldo vs Demanda'   },
+  { key:'lista-compras', label:'🛒 Lista de Compras'   },
+  { key:'consumo-medio', label:'📉 Consumo Médio'      },
+  { key:'gerencial',     label:'📈 Painel Gerencial'    },
+  { key:'configuracoes', label:'🔧 Configurações'      },
+  { key:'backup',        label:'💾 Backup'             },
+  { key:'permissoes',    label:'🔐 Controle de Acesso' },
+  { key:'empresa',       label:'🏢 Dados da Empresa'   },
+];
+
+const PORTAIS_MOBILE = [
+  { key:'mobile',         label:'📱 Mobile Operador',  url:'/mobile'          },
+  { key:'estoque_mobile', label:'📦 Mobile Estoque',   url:'/estoque-mobile'  },
+];
+
+const TODAS_PAGINAS = [...PAGINAS_SISTEMA, ...PORTAIS_MOBILE];
+
+const PERFIS = [
+  { key:'gestor',    label:'🖥️ Gestor' },
+  { key:'producao',  label:'🏭 Produção' },
+  { key:'comercial', label:'🏢 Comercial' },
+  { key:'estoque',   label:'📦 Estoque' },
+  { key:'expedicao', label:'🚚 Expedição' },
+];
+
+let permissoesAtuais = {};
+let modoSimplificadoPerfil = false; // definido pelo Controle de Acesso (perfil tem 'producao_simplificada')
+let chartDashEvolucaoInstance = null;
+let chartDashPerdasTipoInstance = null;
+
+async function api(path, method = 'GET', body = null) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (method === 'GET') {
+    opts.cache = 'no-store';
+  }
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(API + path, opts);
+  if (r.status === 401) {
+    window.location.href = '/login?redirect=' + encodeURIComponent(window.location.pathname + window.location.search);
+    return new Promise(() => {});
+  }
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.detail || 'Erro na requisição');
+  return data;
+}
+
+function highlightField(id, hasError, errorMsg = '') {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const parent = el.parentElement;
+  const existingError = parent.querySelector('.error-message');
+  if (existingError) {
+    existingError.remove();
+  }
+  if (hasError) {
+    el.classList.add('invalid-field');
+    if (errorMsg) {
+      const errSpan = document.createElement('span');
+      errSpan.className = 'error-message';
+      errSpan.textContent = errorMsg;
+      parent.appendChild(errSpan);
+    }
+  } else {
+    el.classList.remove('invalid-field');
+  }
+}
+
+function clearFieldHighlights(containerId) {
+  const container = containerId ? document.getElementById(containerId) : document;
+  if (!container) return;
+  container.querySelectorAll('.invalid-field').forEach(el => {
+    el.classList.remove('invalid-field');
+  });
+  container.querySelectorAll('.error-message').forEach(el => {
+    el.remove();
+  });
+}
+
+// ─── NAVIGATION ──────────────────────────────────────────────────────────────
+
+const pageTitles = {
+  dashboard: 'Dashboard',
+  producao: 'Produção Diária',
+  premiacao: 'Premiação',
+  pintura: 'Pintura',
+  colaboradores: 'Colaboradores',
+  maquinas: 'Máquinas',
+  configuracoes: 'Central de Bonificações',
+  graficos: 'Análise Gráfica',
+  relatorios: 'Relatórios',
+  'perdas-sobras': 'Perdas e Sobras Detalhado',
+  estoque: 'Estoque',
+  'saldo-demanda': 'Saldo vs Demanda',
+  'lista-compras': 'Lista de Compras',
+  'consumo-medio': 'Consumo Médio',
+  'gerencial': 'Painel Gerencial',
+  pedidos: 'Pedidos & Fila de Produção',
+  backup: 'Backup & Restauração',
+  epi: 'Controle de EPI',
+  empresa: 'Dados da Empresa',
+  permissoes: 'Controle de Acesso',
+  'perm-usuarios': 'Permissões por Usuário'
+};
+
+let META_GLOBAL = 8000;
+let EXIGIR_PEDIDO_PRODUCAO = false;
+function abreviarRazaoCliente(razao) {
+  if (!razao) return '';
+  var sufixos = ['LTDA','EIRELI','EPP','ME','MEI','SA','LTDA.','S/A','S.A.'];
+  var palavras = String(razao).trim().split(' ').filter(function(w){ return w.length; });
+  while (palavras.length > 1) {
+    var ult = palavras[palavras.length - 1].toUpperCase().split('.').join('').split('/').join('').split('-').join('');
+    if (!ult || sufixos.indexOf(ult) >= 0) palavras.pop();
+    else break;
+  }
+  var s = palavras.join(' ');
+  if (s.length > 28) s = s.slice(0, 27).trim() + '...';
+  return s || String(razao).trim();
+}
+function nomeFantasiaCurto(c) {
+  var f = (c && c.nome_fantasia) ? String(c.nome_fantasia).trim() : '';
+  return f || abreviarRazaoCliente(c ? c.razao_social : '');
+}
+function aplicarExigirPedidoProducaoNoForm() {
+  const sel = document.getElementById('prod-pedido');
+  const tag = document.getElementById('prod-pedido-opcional-tag');
+  if (!sel || !tag) return;
+  const semPedidoOpt = sel.querySelector('option[value=""]');
+  if (EXIGIR_PEDIDO_PRODUCAO) {
+    if (semPedidoOpt) { semPedidoOpt.disabled = true; semPedidoOpt.textContent = '— Selecione um pedido (obrigatório) —'; }
+    tag.textContent = '(obrigatório)';
+    tag.style.color = 'var(--danger)';
+  } else {
+    if (semPedidoOpt) { semPedidoOpt.disabled = false; semPedidoOpt.textContent = '— Sem pedido vinculado —'; }
+    tag.textContent = '(opcional)';
+    tag.style.color = 'var(--muted)';
+  }
+}
+
+async function carregarMetaGlobal() {
+  try {
+    const configs = await api('/configuracoes/');
+    const m = (configs || []).find(c => c.chave === 'meta_padrao');
+    if (m && m.valor != null && m.valor !== '' && !isNaN(+m.valor)) META_GLOBAL = +m.valor;
+    const ep = (configs || []).find(c => c.chave === 'exigir_pedido_producao_perfis');
+    const perfisExigidos = ep ? ep.valor.split(',').map(x => x.trim()).filter(Boolean) : [];
+    const meuPerfil = window.usuarioLogado && window.usuarioLogado.role;
+    EXIGIR_PEDIDO_PRODUCAO = perfisExigidos.includes(meuPerfil);
+  } catch (e) {}
+}
+
+const PAGE_META_MAIN = {
+  dashboard:     { icon:'📊', label:'Dashboard', section:'Visão Geral' },
+  producao:      { icon:'🏭', label:'Produção Diária', section:'Lançamentos' },
+  premiacao:     { icon:'🏆', label:'Premiação', section:'Lançamentos' },
+  pintura:       { icon:'🎨', label:'Pintura', section:'Lançamentos' },
+  colaboradores: { icon:'👥', label:'Colaboradores', section:'Cadastros' },
+  maquinas:      { icon:'⚙️', label:'Máquinas', section:'Cadastros' },
+  pedidos:       { icon:'🧾', label:'Pedidos', section:'Operações' },
+  estoque:       { icon:'📦', label:'Estoque', section:'Operações' },
+  epi:           { icon:'🦺', label:'EPI', section:'Operações' },
+  comunicacao:   { icon:'<svg viewBox="0 0 24 24" width="17" height="17" style="vertical-align:-3px"><path fill="#25d366" d="M12 2C6.5 2 2 6 2 11c0 1.9.7 3.7 1.9 5.1L3 22l6-1.5c.9.3 1.9.5 3 .5 5.5 0 10-4 10-9S17.5 2 12 2z"/></svg>', label:'Comunicação', section:'Operações' },
+  'saldo-demanda': { icon:'📊', label:'Saldo vs Demanda', section:'Operações' },
+  'lista-compras': { icon:'🛒', label:'Lista de Compras', section:'Operações' },
+  'consumo-medio': { icon:'📉', label:'Consumo Médio', section:'Operações' },
+  'gerencial': { icon:'📈', label:'Painel Gerencial', section:'Análises' },
+  graficos:      { icon:'📈', label:'Gráficos', section:'Análises' },
+  relatorios:    { icon:'📋', label:'Relatórios', section:'Análises' },
+  'perdas-sobras': { icon:'⚠️', label:'Perdas e Sobras', section:'Análises' },
+  configuracoes: { icon:'🏆', label:'Central de Bonificações', section:'Sistema' },
+  backup:        { icon:'💾', label:'Backup', section:'Sistema' },
+  permissoes:    { icon:'🔐', label:'Controle de Acesso', section:'Sistema' },
+  empresa:       { icon:'🏢', label:'Dados da Empresa', section:'Sistema' }
+};
+
+let perfilAtual = 'gestor';
+let paginasLiberadas = Object.keys(PAGE_META_MAIN);
+
+function getPerfilAtual() {
+  const params = new URLSearchParams(window.location.search);
+  return (params.get('perfil') || params.get('setor') || 'gestor').toLowerCase();
+}
+
+async function carregarAcessoPrincipal() {
+  try {
+    const r = await fetch(API + '/configuracoes/empresa', { cache: 'no-store' });
+    if (r.ok) {
+      window.empresaDados = await r.json();
+    }
+  } catch (err) {
+    console.error('Erro ao inicializar dados da empresa globalmente:', err);
+  }
+
+  let me;
+  try {
+    me = await api('/auth/me');
+    window.usuarioLogado = me;
+    if (me.deve_alterar_senha) {
+      window.location.href = '/login?change_password=1';
+      return;
+    }
+    // Carregar permissões por usuário logado
+    await carregarMinhasPermissoes();
+    aplicarPermissoesUI();
+
+    const elNomeTxt = document.getElementById('topbar-user-name-txt');
+    if (elNomeTxt) elNomeTxt.textContent = me.nome;
+    
+    perfilAtual = me.role;
+    paginasLiberadas = me.permissions
+      ? me.permissions.split(',').map(p => p.trim()).filter(p => PAGE_META_MAIN[p])
+      : (perfilAtual === 'gestor' ? Object.keys(PAGE_META_MAIN) : ['dashboard']);
+    // Modo de lançamento (simplificado x detalhado) vem do Controle de Acesso, por perfil.
+    // Lê da string crua porque 'producao_simplificada' não é uma página navegável.
+    modoSimplificadoPerfil = me.permissions
+      ? me.permissions.split(',').map(p => p.trim()).includes('producao_simplificada')
+      : false;
+    
+    const path = window.location.pathname;
+    const params = new URLSearchParams(window.location.search);
+    const temPaginaSolicitada = params.has('page') || params.has('pagina') || params.has('perfil') || params.has('setor') || params.has('importar');
+
+    if ((path === '/' || path === '/index.html') && !temPaginaSolicitada) {
+      if (me.role === 'producao') {
+        const somenteProducao = paginasLiberadas.every(p => ['producao', 'producao_simplificada'].includes(p));
+        if (somenteProducao) {
+          window.location.href = '/producao-setor';
+          return;
+        }
+      } else if (me.role === 'comercial') {
+        // Vendedor entra sempre pelo portal /comercial (Meus Pedidos). As outras
+        // páginas liberadas pelo Controle de Acesso abrem pelo painel com ?page=.
+        if (paginasLiberadas.includes('pedidos') || !paginasLiberadas.length) {
+          window.location.href = '/comercial';
+          return;
+        }
+      } else if (me.role === 'estoque') {
+        const somenteEstoque = paginasLiberadas.every(p => ['estoque', 'estoque_mobile'].includes(p));
+        if (somenteEstoque) {
+          window.location.href = '/estoque-mobile';
+          return;
+        }
+      }
+    }
+  } catch (e) {
+    window.location.href = '/login?redirect=' + encodeURIComponent(window.location.pathname + window.location.search);
+    return;
+  }
+
+  const labelPerfil = {
+    gestor: '🖥️ Setor Gestor',
+    producao: '🏭 Setor Produção',
+    comercial: '🏢 Setor Comercial',
+    estoque: '📦 Setor Estoque',
+    expedicao: '🚚 Setor Expedição'
+  }[perfilAtual] || '🖥️ Setor Gestor';
+
+  const sectorBadgeEl = document.getElementById('topbar-setor');
+  if (sectorBadgeEl) {
+    sectorBadgeEl.textContent = labelPerfil;
+    sectorBadgeEl.style.display = '';
+  }
+
+  montarMenuPrincipal();
+  iniciarPollComunicacao();
+}
+
+function montarMenuPrincipal() {
+  const nav = document.querySelector('.sidebar nav');
+  if (!nav) return;
+  const sections = {};
+  paginasLiberadas.forEach(key => {
+    const cfg = PAGE_META_MAIN[key];
+    if (!document.getElementById('page-' + key)) return;
+    if (!sections[cfg.section]) sections[cfg.section] = [];
+    sections[cfg.section].push({key, ...cfg});
+  });
+  nav.innerHTML = Object.entries(sections).map(([sec, items]) => `
+    <div class="nav-section">${sec}</div>
+    ${items.map(item => `
+      <a class="nav-item" data-page="${item.key}" onclick="showPage('${item.key}')" style="cursor:pointer">
+        <span class="icon">${item.icon}</span> ${item.label}
+        ${item.key === 'pedidos' ? '<span id="nav-pedidos-badge" style="display:none;background:var(--danger);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">!</span>' : ''}
+        ${item.key === 'estoque' ? '<span id="nav-alerta-badge" style="display:none;background:var(--danger);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">!</span>' : ''}
+        ${item.key === 'epi' ? '<span id="nav-epi-badge" style="display:none;background:var(--danger);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">!</span>' : ''}
+        ${item.key === 'comunicacao' ? '<span id="nav-comunicacao-badge" style="display:none;background:#25d366;color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">0</span>' : ''}
+      </a>`).join('')}
+  `).join('');
+}
+
+function paginaPermitida(name) {
+  return perfilAtual === 'gestor' || paginasLiberadas.includes(name);
+}
+
+function showPage(name) {
+  // Vendedor (Comercial) trabalha os pedidos no portal /comercial (Meus Pedidos)
+  if (name === 'pedidos' && window.usuarioLogado && window.usuarioLogado.role === 'comercial' && !window._modoImportarVendedor) {
+    window.location.href = '/comercial';
+    return;
+  }
+  if (!paginaPermitida(name)) {
+    showAlert('Acesso não liberado para este perfil.', 'danger');
+    return;
+  }
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  const pageEl = document.getElementById('page-' + name);
+  if (pageEl) pageEl.classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(n => {
+    if ((n.dataset && n.dataset.page === name) || (n.getAttribute('onclick') && n.getAttribute('onclick').includes("'" + name + "'"))) {
+      n.classList.add('active');
+    }
+  });
+  document.getElementById('topbar-title').textContent = pageTitles[name] || name;
+
+  const handlers = {
+    dashboard: loadDashboard,
+    producao: initProducaoPage,
+    premiacao: loadPremiacao,
+    pintura: abrirPintura,
+    colaboradores: loadColaboradores,
+    maquinas: loadMaquinas,
+    configuracoes: loadConfiguracoes,
+    graficos: loadGraficos,
+    relatorios: loadRelatorios,
+    'perdas-sobras': loadPerdasSobrasDetalhado,
+    estoque: loadEstoque,
+    'saldo-demanda': loadSaldoDemanda,
+    'lista-compras': loadListaCompras,
+    'consumo-medio': loadConsumoMedio,
+    'gerencial': loadGerencial,
+    pedidos: loadPedidos_init,
+    backup: () => {},
+    epi: loadEPI,
+    comunicacao: loadComunicacao,
+    empresa: loadEmpresa,
+    permissoes: () => { loadPermissoes(); carregarVendedorDesde(); },
+    'perm-usuarios': loadPermUsuarios
+  };
+  if (handlers[name]) handlers[name]();
+}
+
+// ===== Comunicação (mensagens privadas 1:1 por usuário — estilo WhatsApp interno) =====
+const SETOR_LABEL_COM = { gestor:'Gestor', producao:'Produção', comercial:'Comercial', estoque:'Estoque' };
+const SETOR_ICONE_COM = { producao:'🏭', comercial:'🏢', estoque:'📦' };
+let comUltimoId = -1;          // maior id já visto (-1 = ainda não inicializado)
+let comPollTimer = null;
+let _comAudioCtx = null;
+let comArquivoSel = null;      // arquivo selecionado para anexar
+let comUsuarioAtivo = null;    // conversa aberta (P2P): id do usuário (ou próprio ID para chat com gestor se for não-gestor)
+let comCanalAtivo = null;      // canal ativo (ex: 'geral', 'producao', etc)
+let comFiltroBusca = '';       // filtro de busca na sidebar
+let comUsuariosCache = [];     // usuários ativos/liberados
+let comRecadosCache = [];
+
+function _maxIdRecados(recados) {
+  return (recados && recados.length) ? Math.max(...recados.map(r => r.id)) : 0;
+}
+function _escapeHtmlCom(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function _fmtDataHoraCom(s) {
+  if (!s) return '';
+  try { return new Date(String(s).replace(' ', 'T') + 'Z').toLocaleString('pt-BR', { dateStyle:'short', timeStyle:'short' }); }
+  catch (e) { return s; }
+}
+
+// Lista de conversas do gestor: usuários liberados + qualquer remetente presente nas mensagens
+function _conversasGestor(recados) {
+  const map = new Map();
+  (comUsuariosCache || []).forEach(u => map.set(u.id, { id:u.id, nome:u.nome, role:u.role }));
+  (recados || []).forEach(r => {
+    const uid = r.conversa_usuario_id;
+    if (uid && !map.has(uid)) {
+      const nome = (r.autor_setor !== 'gestor' && r.autor_nome) ? r.autor_nome : ('Usuário #' + uid);
+      map.set(uid, { id:uid, nome:nome, role:(r.autor_setor !== 'gestor' ? r.autor_setor : '') });
+    }
+  });
+  return Array.from(map.values());
+}
+function _usuarioComMaisRecente(recados) {
+  let best = null, bestId = -1;
+  (recados || []).forEach(r => { if (r.conversa_usuario_id && r.id > bestId) { bestId = r.id; best = r.conversa_usuario_id; } });
+  if (best) return best;
+  return (comUsuariosCache && comUsuariosCache.length) ? comUsuariosCache[0].id : null;
+}
+
+async function loadComunicacao() {
+  const btnConfig = document.getElementById('com-btn-config');
+  if (btnConfig) btnConfig.style.display = (perfilAtual === 'gestor') ? 'block' : 'none';
+
+  const lista = document.getElementById('com-lista');
+  if (lista) lista.innerHTML = '<div style="color:var(--muted);padding:8px">Carregando...</div>';
+  try {
+    try {
+      comUsuariosCache = await api('/comunicacao/usuarios');
+    } catch (e) {
+      comUsuariosCache = [];
+    }
+
+    const recados = await api('/comunicacao/');
+    comRecadosCache = recados;
+    comUltimoId = _maxIdRecados(recados);
+
+    // Selecionar o primeiro canal ou conversa disponível se nada estiver ativo
+    if (!comUsuarioAtivo && !comCanalAtivo) {
+      comCanalAtivo = 'geral';
+    }
+
+    renderComLayout(recados);
+    _marcarConversaLida(recados);
+    _atualizarBadgeComMenu(recados);
+  } catch (e) {
+    if (lista) lista.innerHTML = '<div style="color:var(--danger);padding:8px">Erro ao carregar a comunicação.</div>';
+  }
+}
+
+function _getAvatarHtmlCom(name, isChannel = false) {
+  if (isChannel) {
+    return `<div style="width:40px;height:40px;border-radius:50%;background:rgba(240,180,41,0.15);color:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:18px;flex-shrink:0">#</div>`;
+  }
+  const initials = (name || '').split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase() || '👤';
+  let hash = 0;
+  for (let i = 0; i < (name || '').length; i++) {
+    hash = (name || '').charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
+  const color = colors[Math.abs(hash) % colors.length];
+  return `<div style="width:40px;height:40px;border-radius:50%;background:${color};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0">${initials}</div>`;
+}
+
+function _fmtHoraCom(s) {
+  if (!s) return '';
+  try {
+    const dt = new Date(String(s).replace(' ', 'T') + 'Z');
+    return dt.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  } catch(e) {
+    return '';
+  }
+}
+
+function _fmtDataCom(s) {
+  if (!s) return '';
+  try {
+    const dt = new Date(String(s).replace(' ', 'T') + 'Z');
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    
+    if (dt.toDateString() === today.toDateString()) return 'Hoje';
+    if (dt.toDateString() === yesterday.toDateString()) return 'Ontem';
+    return dt.toLocaleDateString('pt-BR', { day: 'numeric', month: 'long' });
+  } catch(e) {
+    return '';
+  }
+}
+
+function _scrollListaComBottom() {
+  const lista = document.getElementById('com-lista');
+  if (lista) {
+    lista.scrollTop = lista.scrollHeight;
+  }
+}
+
+function renderComLayout(recados) {
+  renderSidebarCom(recados);
+  renderThreadCom(recados);
+}
+
+function renderSidebarCom(recados) {
+  const box = document.getElementById('com-setores');
+  if (!box) return;
+
+  const termo = comFiltroBusca.toLowerCase().trim();
+  let html = '';
+
+  // 1. Canais / Grupos
+  const canais = ['geral'];
+
+  const canaisFiltrados = canais.filter(c => c.toLowerCase().includes(termo) || ('#' + c).toLowerCase().includes(termo));
+  
+  if (canaisFiltrados.length > 0) {
+    html += `<div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:10px 4px 6px">📢 Canais</div>`;
+    canaisFiltrados.forEach(c => {
+      const msgs = (recados || []).filter(r => r.conversa_setor === c && r.conversa_usuario_id === null);
+      const ultima = msgs[0];
+      const unread = _unreadCanal(recados, c);
+      const ativo = (comCanalAtivo === c);
+      const snippet = ultima
+        ? (ultima.texto ? _escapeHtmlCom(ultima.texto.slice(0, 30)) : '📎 anexo')
+        : '<span style="opacity:.5">sem mensagens</span>';
+      
+      const avatar = _getAvatarHtmlCom(c, true);
+      
+      html += `
+        <div onclick="selecionarCanalCom('${c}')" style="cursor:pointer;display:flex;align-items:center;gap:12px;padding:8px 10px;border-radius:10px;margin-bottom:6px;border:1px solid ${ativo ? 'rgba(37,211,102,0.3)' : 'transparent'};background:${ativo ? 'rgba(37,211,102,0.1)' : 'transparent'};transition:all 0.2s">
+          ${avatar}
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span style="font-weight:700;font-size:13px;color:var(--text)">#${c}</span>
+              ${unread > 0 ? `<span style="background:#25d366;color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:10px;min-width:18px;text-align:center">${unread}</span>` : ''}
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${snippet}</div>
+          </div>
+        </div>`;
+    });
+  }
+
+  // 2. Direct Messages (P2P / Admin)
+  html += `<div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:16px 4px 6px">💬 Conversas Diretas</div>`;
+  
+  const contatos = (comUsuariosCache || [])
+    .filter(u => window.usuarioLogado && u.id !== window.usuarioLogado.id)
+    .map(u => ({ id: u.id, nome: u.nome, role: u.role, tipo: u.role === 'gestor' ? 'admin' : 'usuario' }));
+
+  const contatosFiltrados = contatos.filter(c => c.nome.toLowerCase().includes(termo));
+  
+  if (contatosFiltrados.length > 0) {
+    contatosFiltrados.forEach(c => {
+      const myId = window.usuarioLogado ? window.usuarioLogado.id : 0;
+      const msgs = (recados || []).filter(r => _isDirectMsg(r, myId, c.id));
+      const unread = _unreadDirect(recados, c.id);
+      const ativo = (comUsuarioAtivo === c.id && comCanalAtivo === null);
+
+
+      const ultima = msgs[0];
+      const snippet = ultima
+        ? (ultima.texto ? _escapeHtmlCom(ultima.texto.slice(0, 30)) : '📎 anexo')
+        : '<span style="opacity:.5">sem mensagens</span>';
+      
+      const avatar = _getAvatarHtmlCom(c.nome, false);
+
+      html += `
+        <div onclick="selecionarUsuarioCom(${c.id}, '${c.tipo}')" style="cursor:pointer;display:flex;align-items:center;gap:12px;padding:8px 10px;border-radius:10px;margin-bottom:6px;border:1px solid ${ativo ? 'rgba(37,211,102,0.3)' : 'transparent'};background:${ativo ? 'rgba(37,211,102,0.1)' : 'transparent'};transition:all 0.2s">
+          ${avatar}
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;justify-content:space-between;align-items:center">
+              <span style="font-weight:700;font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_escapeHtmlCom(c.nome)}</span>
+              ${unread > 0 ? `<span style="background:#25d366;color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:10px;min-width:18px;text-align:center">${unread}</span>` : ''}
+            </div>
+            <div style="font-size:11px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${snippet}</div>
+          </div>
+        </div>`;
+    });
+  } else if (canaisFiltrados.length === 0) {
+    html += `<div style="color:var(--muted);font-size:12px;padding:16px;text-align:center">Nenhuma conversa encontrada</div>`;
+  }
+
+  box.innerHTML = html;
+}
+
+function renderThreadCom(recados) {
+  const ehGestor = (perfilAtual === 'gestor');
+  const titulo = document.getElementById('com-titulo');
+  const subtitulo = document.getElementById('com-subtitulo');
+  const btnLimpar = document.getElementById('com-limpar');
+  const lista = document.getElementById('com-lista');
+  const compositor = document.getElementById('com-compositor');
+
+  if (btnLimpar) btnLimpar.style.display = 'none'; // Default hidden, shown only for user chats of gestor
+  if (compositor) compositor.style.display = (comCanalAtivo || comUsuarioAtivo) ? 'flex' : 'none';
+
+  let msgs = [];
+  
+  if (comCanalAtivo) {
+    if (titulo) titulo.textContent = '#' + comCanalAtivo;
+    if (subtitulo) subtitulo.textContent = 'Canal do Setor';
+    msgs = (recados || []).filter(r => r.conversa_setor === comCanalAtivo && r.conversa_usuario_id === null);
+  } else if (comUsuarioAtivo) {
+    const myId = window.usuarioLogado ? window.usuarioLogado.id : 0;
+    const u = (comUsuariosCache || []).find(x => x.id === comUsuarioAtivo);
+    if (u) {
+      if (titulo) titulo.textContent = u.nome;
+      if (subtitulo) subtitulo.textContent = (SETOR_LABEL_COM[u.role] || u.role) === 'gestor' ? 'Administrador' : (SETOR_LABEL_COM[u.role] || u.role || 'Colaborador');
+    } else {
+      if (titulo) titulo.textContent = 'Conversa Direta';
+      if (subtitulo) subtitulo.textContent = '';
+    }
+    if (btnLimpar && perfilAtual === 'gestor') btnLimpar.style.display = '';
+    msgs = (recados || []).filter(r => _isDirectMsg(r, myId, comUsuarioAtivo));
+  } else {
+    if (titulo) titulo.textContent = 'Selecione uma conversa';
+    if (subtitulo) subtitulo.textContent = '';
+    if (lista) lista.innerHTML = '<div style="color:var(--muted);padding:16px;text-align:center">Selecione um canal ou colega à esquerda para iniciar o chat.</div>';
+    return;
+  }
+
+  if (!lista) return;
+  if (!msgs.length) {
+    lista.innerHTML = '<div style="color:var(--muted);padding:16px;text-align:center">Nenhuma mensagem nesta conversa ainda. Comece enviando uma mensagem abaixo!</div>';
+    return;
+  }
+
+  // Render bubbles with date separators
+  let lastDate = '';
+  const htmlBubbles = msgs.map(r => {
+    let dateSep = '';
+    const msgDate = _fmtDataCom(r.criado_em);
+    if (msgDate !== lastDate) {
+      dateSep = `<div style="align-self:center;background:var(--surface2);border:1px solid var(--border);color:var(--muted);font-size:11px;padding:4px 12px;border-radius:12px;margin:8px 0;font-weight:600">${msgDate}</div>`;
+      lastDate = msgDate;
+    }
+    return dateSep + _msgBubbleCom(r);
+  }).join('');
+
+  lista.innerHTML = htmlBubbles;
+}
+
+function _msgBubbleCom(r) {
+  const resolvido = !!r.resolvido;
+  const ehMe = (r.autor_id === (window.usuarioLogado ? window.usuarioLogado.id : 0));
+  const ehAdmin = (r.autor_setor === 'gestor');
+  const setor = SETOR_LABEL_COM[r.autor_setor] || r.autor_setor || '';
+  const podeExcluir = (perfilAtual === 'gestor');
+  
+  const bubbleStyle = ehMe 
+    ? 'background:rgba(16,185,129,0.15);border:1px solid rgba(16,185,129,0.3);align-self:flex-end;border-radius:12px 12px 2px 12px;' 
+    : 'background:var(--surface2);border:1px solid var(--border);align-self:flex-start;border-radius:12px 12px 12px 2px;';
+    
+  const textoFormatado = _escapeHtmlCom(r.texto || '').replace(/\n/g, '<br>');
+  const anexoHtml = r.tem_anexo ? _anexoHtmlCom(r) : '';
+  
+  const showSenderHeader = !ehMe && comCanalAtivo;
+  const senderHeader = showSenderHeader 
+    ? `<div style="font-weight:700;font-size:11px;color:var(--accent);margin-bottom:4px">${_escapeHtmlCom(r.autor_nome || 'Usuário')} <span style="font-weight:normal;color:var(--muted);font-size:10px">(${setor})</span></div>` 
+    : '';
+
+  return `
+    <div style="max-width:70%;padding:10px 14px;box-sizing:border-box;margin-bottom:4px;display:flex;flex-direction:column;${bubbleStyle}${resolvido ? 'opacity:.6' : ''}">
+      ${senderHeader}
+      ${r.texto ? `<div style="font-size:14px;word-break:break-word;line-height:1.4;${resolvido ? 'text-decoration:line-through;opacity:0.7' : ''}">${textoFormatado}</div>` : ''}
+      ${anexoHtml}
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:16px;margin-top:6px;font-size:10px;color:var(--muted);border-top:1px solid rgba(255,255,255,0.03);padding-top:4px">
+        <span>🕒 ${_fmtHoraCom(r.criado_em)} ${resolvido && r.resolvido_por ? ' · ✓ por ' + _escapeHtmlCom(r.resolvido_por) : ''}</span>
+        <div style="display:flex;gap:6px">
+          <span style="cursor:pointer;color:var(--success);font-weight:600" onclick="resolverRecado(${r.id}, ${resolvido ? 'false' : 'true'})">${resolvido ? 'Reabrir' : '✓ Resolvido'}</span>
+          ${podeExcluir ? `· <span style="cursor:pointer;color:var(--danger);font-weight:600" onclick="excluirRecado(${r.id})">Excluir</span>` : ''}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function selecionarUsuarioCom(uid, tipo) {
+  comUsuarioAtivo = uid;
+  comCanalAtivo = null;
+  renderComLayout(comRecadosCache);
+  _marcarConversaLida(comRecadosCache);
+  _atualizarBadgeComMenu(comRecadosCache);
+  setTimeout(_scrollListaComBottom, 50);
+}
+
+function selecionarCanalCom(canal) {
+  comCanalAtivo = canal;
+  comUsuarioAtivo = null;
+  renderComLayout(comRecadosCache);
+  _marcarConversaLida(comRecadosCache);
+  _atualizarBadgeComMenu(comRecadosCache);
+  setTimeout(_scrollListaComBottom, 50);
+}
+
+function filtrarConversasCom(busca) {
+  comFiltroBusca = busca;
+  renderSidebarCom(comRecadosCache);
+}
+
+async function enviarRecado() {
+  const ta = document.getElementById('com-texto');
+  const texto = ((ta && ta.value) || '').trim();
+  if (!texto && !comArquivoSel) { showAlert('Escreva uma mensagem ou anexe um arquivo.', 'warn'); return; }
+
+  const fd = new FormData();
+  fd.append('texto', texto);
+  
+  if (comCanalAtivo) {
+    fd.append('canal', comCanalAtivo);
+  } else if (comUsuarioAtivo) {
+    fd.append('usuario_id', String(comUsuarioAtivo));
+  } else {
+    showAlert('Selecione uma conversa.', 'warn');
+    return;
+  }
+
+  if (comArquivoSel) fd.append('anexo', comArquivoSel);
+
+  try {
+    const resp = await fetch(API + '/comunicacao/', { method: 'POST', body: fd, credentials: 'same-origin' });
+    if (!resp.ok) {
+      let msg = 'Não foi possível enviar.';
+      try { const d = await resp.json(); if (d && d.detail) msg = d.detail; } catch (e) {}
+      throw new Error(msg);
+    }
+    if (ta) ta.value = '';
+    comRemoverArquivo();
+    await loadComunicacao();
+    setTimeout(_scrollListaComBottom, 50);
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+
+async function resolverRecado(id, marcar) {
+  try {
+    await api('/comunicacao/' + id + '/resolver', 'PUT', { resolvido: !!marcar });
+    loadComunicacao();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+
+async function excluirRecado(id) {
+  if (!confirm('Excluir esta mensagem definitivamente?')) return;
+  try {
+    await api('/comunicacao/' + id, 'DELETE');
+    showAlert('Mensagem excluída.');
+    loadComunicacao();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+
+async function limparConversaCom() {
+  if (perfilAtual !== 'gestor' || !comUsuarioAtivo) return;
+  const u = _conversasGestor(comRecadosCache).find(c => c.id === comUsuarioAtivo);
+  const nome = u ? u.nome : 'este usuário';
+  if (!confirm('Apagar TODAS as mensagens e arquivos da conversa com ' + nome + '? Essa ação é permanente.')) return;
+  try {
+    await api('/comunicacao/conversa-usuario/' + comUsuarioAtivo, 'DELETE');
+    showAlert('Conversa limpa.');
+    loadComunicacao();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+
+// ----- Gerenciar participantes (quem usa a Comunicação) -----
+async function abrirParticipantesCom() {
+  let config, usuarios;
+  try {
+    config = await api('/comunicacao/config');
+    usuarios = await api('/comunicacao/usuarios-todos');
+  } catch (e) {
+    showAlert(e.message, 'danger');
+    return;
+  }
+
+  let corpo = `
+    <div style="margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border)">
+      <label style="display:flex;justify-content:space-between;align-items:center;cursor:pointer">
+        <span style="font-weight:600;font-size:13px;color:var(--text)">Permitir chat privado entre colaboradores</span>
+        <input type="checkbox" id="com-p2p-global-chk" ${config.chat_p2p_permitido ? 'checked' : ''} onchange="toggleP2PGlobalCom(this.checked, this)" style="width:18px;height:18px;cursor:pointer">
+      </label>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">Se desativado, colaboradores comuns só podem falar no canal geral ou diretamente com o Administrador.</div>
+    </div>
+  `;
+
+  ['producao', 'comercial', 'estoque', ''].forEach(setor => {
+    const doSetor = usuarios.filter(u => (u.role || '') === setor);
+    if (!doSetor.length) return;
+    corpo += `<div style="font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);margin:12px 0 4px">${SETOR_ICONE_COM[setor] || ''} ${SETOR_LABEL_COM[setor] || 'Outros'}</div>`;
+    doSetor.forEach(u => {
+      corpo += `
+        <div style="padding:10px 0;border-bottom:1px solid var(--border)">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <span style="font-weight:600;font-size:13px;color:var(--text)">${_escapeHtmlCom(u.nome)}</span>
+            <label style="display:flex;align-items:center;cursor:pointer;font-size:12px;color:var(--muted)">
+              <span style="margin-right:6px">Liberar Acesso</span>
+              <input type="checkbox" ${u.participa ? 'checked' : ''} onchange="toggleParticipanteCom(${u.id}, this.checked, this)" style="width:18px;height:18px;cursor:pointer">
+            </label>
+          </div>
+        </div>
+      `;
+    });
+  });
+
+  const old = document.getElementById('com-part-overlay');
+  if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'com-part-overlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px';
+  ov.onclick = fecharParticipantesCom;
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--surface,#161922);border:1px solid var(--border,rgba(255,255,255,.12));border-radius:12px;max-width:480px;width:100%;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 12px 48px rgba(0,0,0,.55)';
+  box.onclick = function (e) { e.stopPropagation(); };
+  box.innerHTML =
+    `<div style="padding:18px 20px 12px;border-bottom:1px solid var(--border)">
+       <div style="font-size:16px;font-weight:700;color:var(--text)">Configuração da Comunicação</div>
+       <div style="font-size:12px;color:var(--muted);margin-top:3px">Gerencie quais colaboradores têm acesso ao chat interno e a permissão global de chat direto.</div>
+     </div>
+     <div style="padding:16px 20px;overflow-y:auto;flex:1">${corpo}</div>
+     <div style="padding:14px 20px;text-align:right;border-top:1px solid var(--border)">
+       <button class="btn btn-primary" onclick="fecharParticipantesCom()">Concluir</button>
+     </div>`;
+  ov.appendChild(box);
+  document.body.appendChild(ov);
+}
+
+async function toggleParticipanteCom(uid, ativa, el) {
+  try {
+    await api('/comunicacao/usuarios/' + uid + '/participante', 'PUT', { ativa: !!ativa });
+  } catch (e) {
+    showAlert(e.message, 'danger');
+    if (el) el.checked = !ativa;
+  }
+}
+
+async function toggleP2PGlobalCom(permitido, el) {
+  try {
+    await api('/comunicacao/config', 'PUT', { p2p_permitido: !!permitido });
+    showAlert('Configuração de chat privado atualizada.');
+  } catch (e) {
+    showAlert(e.message, 'danger');
+    if (el) el.checked = !permitido;
+  }
+}
+
+function fecharParticipantesCom() {
+  const ov = document.getElementById('com-part-overlay');
+  if (ov) ov.remove();
+  loadComunicacao();   // atualiza a lista de conversas
+}
+
+// Bip de notificação gerado no navegador (sem arquivo de áudio)
+function _playBeepCom() {
+  try {
+    if (!_comAudioCtx) _comAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const ctx = _comAudioCtx;
+    if (ctx.state === 'suspended') ctx.resume();
+    const tocar = (freq, inicio, dur) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.value = freq;
+      g.gain.setValueAtTime(0.0001, ctx.currentTime + inicio);
+      g.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + inicio + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + inicio + dur);
+      o.connect(g); g.connect(ctx.destination);
+      o.start(ctx.currentTime + inicio);
+      o.stop(ctx.currentTime + inicio + dur);
+    };
+    tocar(880, 0, 0.18);
+    tocar(1175, 0.16, 0.22);
+  } catch (e) { /* silencioso se o navegador bloquear */ }
+}
+
+async function _pollComunicacao() {
+  let recados;
+  try { recados = await api('/comunicacao/'); } catch (e) { return; }
+  comRecadosCache = recados;
+  const maxId = _maxIdRecados(recados);
+  const primeiraVez = (comUltimoId < 0);
+  if (!primeiraVez && maxId > comUltimoId) _playBeepCom();
+  comUltimoId = maxId;
+  const pg = document.getElementById('page-comunicacao');
+  if (pg && pg.classList.contains('active')) {
+    renderComLayout(recados);
+    _marcarConversaLida(recados);
+  }
+  _atualizarBadgeComMenu(recados);
+}
+
+function iniciarPollComunicacao() {
+  if (comPollTimer) return;
+  if (!paginasLiberadas.includes('comunicacao')) return;
+  _pollComunicacao();
+  comPollTimer = setInterval(_pollComunicacao, 12000);
+}
+
+// ----- não lidas por conversa (badge + pulso no menu) -----
+function _isDirectMsg(r, myId, partnerId) {
+  if (!r) return false;
+  if (r.conversa_setor === 'p2p') {
+    return (r.autor_id === myId && r.conversa_usuario_id === partnerId) || 
+           (r.autor_id === partnerId && r.conversa_usuario_id === myId);
+  }
+  if (r.conversa_setor === null) {
+    const isGestor = (perfilAtual === 'gestor');
+    if (isGestor) {
+      return r.conversa_usuario_id === partnerId;
+    } else {
+      const partner = (comUsuariosCache || []).find(u => u.id === partnerId);
+      const partnerIsGestor = partner && (partner.role === 'gestor');
+      if (partnerIsGestor) {
+        return r.conversa_usuario_id === myId;
+      }
+    }
+  }
+  return false;
+}
+function _getSeenDirect(partnerId) {
+  const newKey = 'com_seen_direct_' + partnerId;
+  let val = localStorage.getItem(newKey);
+  if (val !== null) return parseInt(val, 10) || 0;
+
+  const isGestor = (perfilAtual === 'gestor');
+  if (isGestor) {
+    val = localStorage.getItem('com_seen_u_' + partnerId);
+  } else {
+    const partner = (comUsuariosCache || []).find(u => u.id === partnerId);
+    if (partner && partner.role === 'gestor') {
+      val = localStorage.getItem('com_seen_me');
+    } else {
+      val = localStorage.getItem('com_seen_p2p_' + partnerId);
+    }
+  }
+  return val !== null ? (parseInt(val, 10) || 0) : 0;
+}
+function _setSeenDirect(partnerId, maxId) {
+  localStorage.setItem('com_seen_direct_' + partnerId, String(maxId));
+}
+function _unreadDirect(recados, partnerId) {
+  const myId = window.usuarioLogado ? window.usuarioLogado.id : 0;
+  const seen = _getSeenDirect(partnerId);
+  return (recados || []).filter(r => 
+    _isDirectMsg(r, myId, partnerId) && 
+    r.autor_id !== myId && 
+    r.id > seen
+  ).length;
+}
+function _unreadCanal(recados, canal) {
+  const k = 'com_seen_c_' + canal;
+  const seen = parseInt(localStorage.getItem(k) || '0', 10) || 0;
+  return (recados || []).filter(r => r.conversa_setor === canal && r.conversa_usuario_id === null && r.autor_id !== (window.usuarioLogado ? window.usuarioLogado.id : 0) && r.id > seen).length;
+}
+function _marcarConversaLida(recados) {
+  if (comCanalAtivo) {
+    const maxId = _maxIdRecados((recados || []).filter(r => r.conversa_setor === comCanalAtivo && r.conversa_usuario_id === null));
+    if (maxId) {
+      localStorage.setItem('com_seen_c_' + comCanalAtivo, String(maxId));
+    }
+  } else if (comUsuarioAtivo) {
+    const myId = window.usuarioLogado ? window.usuarioLogado.id : 0;
+    const maxId = _maxIdRecados((recados || []).filter(r => _isDirectMsg(r, myId, comUsuarioAtivo)));
+    if (maxId) {
+      _setSeenDirect(comUsuarioAtivo, maxId);
+    }
+  }
+}
+function _atualizarBadgeComMenu(recados) {
+  let total = 0;
+  
+  const canais = ['geral'];
+  
+  canais.forEach(c => {
+    total += _unreadCanal(recados, c);
+  });
+  
+  (comUsuariosCache || []).forEach(u => {
+    if (window.usuarioLogado && u.id !== window.usuarioLogado.id) {
+      total += _unreadDirect(recados, u.id);
+    }
+  });
+  
+  const b = document.getElementById('nav-comunicacao-badge');
+  if (b) {
+    if (total > 0) { b.textContent = total > 99 ? '99+' : String(total); b.style.display = ''; }
+    else b.style.display = 'none';
+  }
+  const nav = document.querySelector('.nav-item[data-page="comunicacao"]');
+  if (nav) nav.classList.toggle('com-pulse', total > 0);
+}
+
+// ----- Enter envia / Shift+Enter pula linha -----
+function comTextoKeydown(ev) {
+  if (ev.key === 'Enter' && !ev.shiftKey) {
+    ev.preventDefault();
+    enviarRecado();
+  }
+}
+
+// ----- anexo (seleção/remoção antes de enviar) -----
+function comSelecionarArquivo(input) {
+  const f = input && input.files && input.files[0];
+  comArquivoSel = f || null;
+  const info = document.getElementById('com-anexo-info');
+  if (!info) return;
+  if (comArquivoSel) {
+    info.innerHTML = '📎 ' + _escapeHtmlCom(comArquivoSel.name) +
+      ' <a onclick="comRemoverArquivo()" style="cursor:pointer;color:var(--danger);margin-left:6px">remover</a>';
+    info.style.display = '';
+  } else {
+    info.style.display = 'none';
+  }
+}
+function comRemoverArquivo() {
+  comArquivoSel = null;
+  const input = document.getElementById('com-arquivo');
+  if (input) input.value = '';
+  const info = document.getElementById('com-anexo-info');
+  if (info) { info.innerHTML = ''; info.style.display = 'none'; }
+}
+
+// ----- render do anexo na mensagem -----
+function _anexoHtmlCom(r) {
+  const url = API + '/comunicacao/anexo/' + r.id;
+  const ehImg = (r.anexo_tipo || '').indexOf('image/') === 0;
+  if (ehImg) {
+    return `<div style="margin-top:8px"><a href="${url}" target="_blank" rel="noopener">` +
+      `<img src="${url}" alt="${_escapeHtmlCom(r.anexo_nome)}" style="max-width:240px;max-height:240px;border-radius:8px;border:1px solid var(--border);display:block"></a></div>`;
+  }
+  return `<div style="margin-top:8px"><a href="${url}" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" style="text-decoration:none">📎 ${_escapeHtmlCom(r.anexo_nome) || 'Baixar arquivo'}</a></div>`;
+}
+
+// ─── MODAL ───────────────────────────────────────────────────────────────────
+
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+document.querySelectorAll('.modal-overlay').forEach(m => {
+  m.addEventListener('click', e => { if (e.target === m) m.classList.remove('open'); });
+});
+
+// ─── DASHBOARD ───────────────────────────────────────────────────────────────
+
+async function loadDashboard(options = {}) {
+  const mesEl = document.getElementById('dash-mes');
+  if (!mesEl.value) mesEl.value = currentMonth();
+  const mes = mesEl.value;
+  document.getElementById('topbar-mes').textContent = mesLabel(mes);
+
+  const cardsEl = document.getElementById('dash-cards');
+  if (cardsEl && !(options.useCache && _cacheDashboardData && _cacheDashboardMes === mes)) {
+    cardsEl.innerHTML = `
+      <div class="card"><div class="skeleton skeleton-title"></div><div class="skeleton skeleton-value"></div><div class="skeleton skeleton-text"></div></div>
+      <div class="card"><div class="skeleton skeleton-title"></div><div class="skeleton skeleton-value"></div><div class="skeleton skeleton-text"></div></div>
+      <div class="card"><div class="skeleton skeleton-title"></div><div class="skeleton skeleton-value"></div><div class="skeleton skeleton-text"></div></div>
+      <div class="card"><div class="skeleton skeleton-title"></div><div class="skeleton skeleton-value"></div><div class="skeleton skeleton-text"></div></div>
+      <div class="card"><div class="skeleton skeleton-title"></div><div class="skeleton skeleton-value"></div><div class="skeleton skeleton-text"></div></div>
+      <div class="card"><div class="skeleton skeleton-title"></div><div class="skeleton skeleton-value"></div><div class="skeleton skeleton-text"></div></div>
+      <div class="card"><div class="skeleton skeleton-title"></div><div class="skeleton skeleton-value"></div><div class="skeleton skeleton-text"></div></div>
+      <div class="card"><div class="skeleton skeleton-title"></div><div class="skeleton skeleton-value"></div><div class="skeleton skeleton-text"></div></div>
+    `;
+  }
+
+  try {
+    const incluirProdEnv = document.getElementById('dash-ped-incluir-prod-env')?.checked || false;
+    const useCache = options.useCache === true && _cacheDashboardIncluirProdEnv === incluirProdEnv;
+    let data;
+    if (useCache && _cacheDashboardData && _cacheDashboardMes === mes) {
+      data = _cacheDashboardData;
+    } else {
+      data = await api('/premiacao/dashboard/' + mes + '?incluir_produzidos_enviados=' + incluirProdEnv);
+      _cacheDashboardData = data;
+      _cacheDashboardMes = mes;
+      _cacheDashboardIncluirProdEnv = incluirProdEnv;
+    }
+
+    const totalProd = data.total_producao_geral || 0;
+    const elegiveis = data.operadores.filter(o => o.elegivel).length;
+    const pctPerda = (totalProd > 0 ? (data.total_perdas_geral / totalProd * 100).toFixed(1) : '0.0');
+
+    // 1. CARDS
+    document.getElementById('dash-cards').innerHTML = `
+      <div class="card">
+        <div class="card-label">Total Produzido</div>
+        <div class="card-value accent">${fmtNum(totalProd)}</div>
+        <div class="card-sub">${mesLabel(mes)}</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Média Diária Geral</div>
+        <div class="card-value info">${fmtNum(data.media_geral)}</div>
+        <div class="card-sub">peças / dia</div>
+      </div>
+      <div class="card" title="Percentual de dias no mês em que a produção atingiu ou superou a meta de ${fmtNum(META_GLOBAL)} peças">
+        <div class="card-label">Aderência à Meta</div>
+        <div class="card-value success">${data.aderencia_meta_percentual}%</div>
+        <div class="card-sub">${data.dias_acima_meta || 0} de ${data.total_dias_trabalhados || 0} dias atingiram a meta</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Índice de Perdas</div>
+        <div class="card-value ${data.total_perdas_geral > 0 ? 'negative' : 'neutral'}">${pctPerda}%</div>
+        <div class="card-sub">${fmtNum(data.total_perdas_geral)} peças perdidas</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Custo das Perdas</div>
+        <div class="card-value ${data.custo_perdas_geral > 0 ? 'negative' : 'neutral'}">${fmtBRL(data.custo_perdas_geral)}</div>
+        <div class="card-sub">estoque estimado</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Pedidos Críticos</div>
+        <div class="card-value ${data.pedidos_atrasados > 0 ? 'negative' : 'neutral'}">${data.pedidos_atrasados}</div>
+        <div class="card-sub">${data.pedidos_pendentes} pendentes no total</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Pendências de EPI</div>
+        <div class="card-value ${data.epi_vencidos_count > 0 ? 'negative' : 'neutral'}">${data.epi_vencidos_count}</div>
+        <div class="card-sub">funcionários com EPI vencido</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Insumos Críticos</div>
+        <div class="card-value ${data.estoque_alertas_count > 0 ? 'negative' : 'neutral'}">${data.estoque_alertas_count}</div>
+        <div class="card-sub">produtos abaixo do mínimo</div>
+      </div>
+    `;
+
+    const colors = getChartThemeColors();
+
+    // 2. GRAFICOS
+    if (chartDashEvolucaoInstance) {
+      chartDashEvolucaoInstance.destroy();
+    }
+    const canvasEvolucao = document.getElementById('chart-dash-evolucao');
+    const ctxEvolucao = canvasEvolucao.getContext('2d');
+    const labelsEvolucao = data.evolucao_diaria.map(item => {
+      const partes = item.data.split('-');
+      return `${partes[2]}/${partes[1]}`;
+    });
+    const producoes = data.evolucao_diaria.map(item => item.producao);
+    const perdas = data.evolucao_diaria.map(item => item.perda);
+    const _palColab = ['#22c55e','#f59e0b','#a855f7','#06b6d4','#ec4899','#84cc16','#f97316','#14b8a6','#eab308','#6366f1'];
+    const colabDatasets = (data.evolucao_colaboradores || []).map((c, i) => ({
+      label: c.colaborador,
+      data: c.dados,
+      borderColor: _palColab[i % _palColab.length],
+      backgroundColor: 'transparent',
+      borderWidth: 1.5,
+      borderDash: [4, 3],
+      tension: 0.3,
+      fill: false,
+      pointRadius: 2
+    }));
+
+    const prodGradient = ctxEvolucao.createLinearGradient(0, 0, 0, 300);
+    prodGradient.addColorStop(0, hexToRgba('#3b82f6', 0.25));
+    prodGradient.addColorStop(1, 'transparent');
+    
+    const lossGradient = ctxEvolucao.createLinearGradient(0, 0, 0, 300);
+    lossGradient.addColorStop(0, hexToRgba('#ef4444', 0.20));
+    lossGradient.addColorStop(1, 'transparent');
+
+    chartDashEvolucaoInstance = new Chart(ctxEvolucao, {
+      type: 'line',
+      data: {
+        labels: labelsEvolucao,
+        datasets: [
+          {
+            label: 'Produção Real',
+            data: producoes,
+            borderColor: '#3b82f6',
+            backgroundColor: prodGradient,
+            borderWidth: 2,
+            tension: 0.3,
+            fill: true,
+            pointRadius: 3
+          },
+          {
+            label: 'Perdas (Desperdício)',
+            data: perdas,
+            borderColor: '#ef4444',
+            backgroundColor: lossGradient,
+            borderWidth: 2,
+            tension: 0.3,
+            fill: true,
+            pointRadius: 3
+          },
+          ...colabDatasets
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: 'top',
+            labels: { color: colors.textColor, font: { family: 'DM Sans', size: 12 } }
+          },
+          tooltip: {
+            mode: 'index',
+            intersect: false,
+            backgroundColor: colors.tooltipBg,
+            titleColor: colors.tooltipText,
+            bodyColor: colors.tooltipText,
+            borderColor: colors.tooltipBorder,
+            borderWidth: 1,
+            padding: 10,
+            boxPadding: 6,
+            usePointStyle: true,
+            titleFont: { family: 'DM Sans', size: 12, weight: '700' },
+            bodyFont: { family: 'DM Sans', size: 11 }
+          }
+        },
+        scales: {
+          x: {
+            grid: { color: colors.gridColor },
+            ticks: { color: colors.textColor, font: { family: 'DM Sans', size: 11 } }
+          },
+          y: {
+            grid: { color: colors.gridColor },
+            ticks: { color: colors.textColor, font: { family: 'DM Sans', size: 11 } }
+          }
+        }
+      }
+    });
+
+    if (chartDashPerdasTipoInstance) {
+      chartDashPerdasTipoInstance.destroy();
+    }
+    const canvasPerdasTipo = document.getElementById('chart-dash-perdas-tipo');
+    const ctxPerdasTipo = canvasPerdasTipo.getContext('2d');
+    const labelsPerdasTipo = data.perdas_por_tipo.map(item => item.tipo_perda);
+    const qtdsPerdasTipo = data.perdas_por_tipo.map(item => item.quantidade);
+
+    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+
+    chartDashPerdasTipoInstance = new Chart(ctxPerdasTipo, {
+      type: 'doughnut',
+      data: {
+        labels: labelsPerdasTipo.length > 0 ? labelsPerdasTipo : ['Nenhuma perda registrada'],
+        datasets: [{
+          data: qtdsPerdasTipo.length > 0 ? qtdsPerdasTipo : [1],
+          backgroundColor: qtdsPerdasTipo.length > 0
+            ? ['#ef4444', '#f59e0b', '#3b82f6', '#10b981', '#a855f7', '#6b7280']
+            : [colors.gridColor],
+          borderWidth: 2,
+          borderColor: isLight ? '#ffffff' : '#161920'
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '75%',
+        plugins: {
+          legend: {
+            position: 'right',
+            labels: { color: colors.textColor, font: { family: 'DM Sans', size: 11 } }
+          },
+          tooltip: {
+            backgroundColor: colors.tooltipBg,
+            titleColor: colors.tooltipText,
+            bodyColor: colors.tooltipText,
+            borderColor: colors.tooltipBorder,
+            borderWidth: 1,
+            padding: 10,
+            boxPadding: 6,
+            usePointStyle: true,
+            titleFont: { family: 'DM Sans', size: 12, weight: '700' },
+            bodyFont: { family: 'DM Sans', size: 11 }
+          }
+        }
+      }
+    });
+
+    // 3. RANKING
+    const rankEl = document.getElementById('dash-ranking');
+    if (!data.operadores.length) {
+      rankEl.innerHTML = '<p class="text-muted" style="padding:10px 0">Nenhum dado para este mês.</p>';
+    } else {
+      rankEl.innerHTML = data.operadores.map((op, i) => `
+        <div class="rank-card">
+          <div class="rank-num ${i === 0 ? 'gold' : i === 1 ? 'silver' : ''}">${i + 1}º</div>
+          <div class="rank-info">
+            <div class="rank-name">${op.colaborador}</div>
+            <div class="rank-detail">
+              Média: ${fmtNum(Math.round(op.media_diaria || 0))} |
+              Total: ${fmtNum(op.total_producao)} |
+              Dias: ${op.dias_trabalhados}
+            </div>
+          </div>
+          <div class="rank-premio">
+            ${op.eh_lider
+              ? `<div class="pill pill-info" style="font-size:11px">Líder · não concorre</div>`
+              : op.elegivel
+              ? `<div class="rank-valor">${fmtBRL(op.valor_premio)}</div><div class="pill pill-success" style="font-size:11px">✓ Premiado</div>`
+              : `<div class="pill pill-danger">Abaixo da meta</div>`
+            }
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // 4. DETALHE OPERADORES
+    const detalheEl = document.getElementById('dash-detalhe-operadores');
+    detalheEl.innerHTML = data.operadores.map(op => `
+      <div class="card" style="border-left: 3px solid ${op.eh_lider ? 'var(--accent2)' : op.elegivel ? 'var(--success)' : 'var(--danger)'}">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+          <div style="font-family:var(--font-head);font-size:16px;font-weight:700">${op.colaborador}</div>
+          ${op.eh_lider
+            ? '<span class="pill pill-info">Líder · não concorre</span>'
+            : op.elegivel
+            ? '<span class="pill pill-success">✓ Premiado</span>'
+            : '<span class="pill pill-danger">Abaixo da meta</span>'
+          }
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div>
+            <div class="card-label">Total Produzido</div>
+            <div style="font-family:var(--font-head);font-size:20px;font-weight:800;color:var(--accent)">${fmtNum(op.total_producao)}</div>
+          </div>
+          <div>
+            <div class="card-label">Média Diária</div>
+            <div style="font-family:var(--font-head);font-size:20px;font-weight:800;color:var(--accent2)">${fmtNum(Math.round(op.media_diaria || 0))}</div>
+          </div>
+          <div>
+            <div class="card-label">Dias Trabalhados</div>
+            <div style="font-family:var(--font-head);font-size:20px;font-weight:800">${op.dias_trabalhados}</div>
+          </div>
+          <div>
+            <div class="card-label">Excedente Total</div>
+            <div style="font-family:var(--font-head);font-size:20px;font-weight:800;color:${(op.excedente_total||0)>=0?'var(--success)':'var(--danger)'}">
+              ${(op.excedente_total||0) >= 0 ? '+' : ''}${fmtNum(op.excedente_total || 0)}
+            </div>
+          </div>
+          <div>
+            <div class="card-label">Meta Diária</div>
+            <div style="font-family:var(--font-head);font-size:20px;font-weight:800;color:var(--muted)">${fmtNum(op.meta || META_GLOBAL)}</div>
+          </div>
+          <div>
+            <div class="card-label">Prêmio</div>
+            <div style="font-family:var(--font-head);font-size:20px;font-weight:800;color:var(--success)">${fmtBRL(op.valor_premio)}</div>
+          </div>
+        </div>
+      </div>
+    `).join('');
+
+    // 5. AUXILIARES
+    const auxEl = document.getElementById('dash-auxiliares');
+    if (!data.auxiliares.length) {
+      auxEl.innerHTML = '<p class="text-muted" style="padding:10px 0">Nenhum auxiliar premiado este mês.</p>';
+    } else {
+      auxEl.innerHTML = data.auxiliares.map(a => `
+        <div class="rank-card">
+          <div class="rank-num ${a.posicao === 1 ? 'gold' : 'silver'}">${a.posicao}º</div>
+          <div class="rank-info">
+            <div class="rank-name">${a.colaborador_nome}</div>
+            <div class="rank-detail">${a.observacao || 'Auxiliar destaque'}</div>
+          </div>
+          <div class="rank-premio">
+            <div class="rank-valor">${fmtBRL(a.valor_bonus)}</div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    // 6. WIDGET INSUMOS CRÍTICOS
+    const insumosEl = document.getElementById('dash-insumos-criticos');
+    if (!data.insumos_criticos.length) {
+      insumosEl.innerHTML = '<p class="text-muted" style="padding:10px 0">Nenhum insumo crítico (estoque OK).</p>';
+    } else {
+      insumosEl.innerHTML = data.insumos_criticos.map(item => {
+        const min = item.estoque_minimo || 1;
+        const pct = Math.min(100, Math.round((item.quantidade_atual / min) * 100));
+        let progressColor = 'var(--danger)';
+        if (pct > 50) progressColor = 'var(--accent)';
+        return `
+          <div style="margin-bottom:8px">
+            <div style="display:flex; justify-content:space-between; font-size:13px; margin-bottom:4px">
+              <strong>${item.nome}</strong>
+              <span style="color:var(--danger)">${fmtNum(item.quantidade_atual)} / ${fmtNum(item.estoque_minimo)} ${item.unidade}</span>
+            </div>
+            <div style="width:100%; height:6px; background:var(--surface2); border-radius:3px; overflow:hidden;">
+              <div style="width:${pct}%; height:100%; background:${progressColor}; border-radius:3px;"></div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // 7. WIDGET EPIs PENDENTES
+    const epiEl = document.getElementById('dash-epi-pendentes');
+    if (!data.epi_criticos.length) {
+      epiEl.innerHTML = '<p class="text-muted" style="padding:10px 0">Nenhuma pendência de EPI ativa.</p>';
+    } else {
+      epiEl.innerHTML = data.epi_criticos.map(item => {
+        const dias = item.dias_restantes;
+        let label = '';
+        let cls = '';
+        if (dias < 0) {
+          label = `Vencido há ${Math.abs(dias)} dia(s)`;
+          cls = 'pill-danger';
+        } else if (dias === 0) {
+          label = 'Vence hoje';
+          cls = 'pill-danger';
+        } else {
+          label = `Vence em ${dias} dia(s)`;
+          cls = 'pill-warn';
+        }
+        return `
+          <div style="display:flex; align-items:center; justify-content:space-between; font-size:13px; padding:6px 0; border-bottom:1px solid var(--border)">
+            <div style="flex:1">
+              <strong>${item.colaborador_nome}</strong>
+              <div style="font-size:11px; color:var(--muted)">${item.epi_nome} &bull; Validade: ${fmtDate(item.data_validade)}</div>
+            </div>
+            <span class="pill ${cls}" style="font-size:10px; height:fit-content; white-space:nowrap">${label}</span>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // 8. WIDGET PEDIDOS CRÍTICOS
+    const pedEl = document.getElementById('dash-pedidos-criticos');
+    if (!data.pedidos_criticos.length) {
+      pedEl.innerHTML = '<p class="text-muted" style="padding:10px 0">Nenhum pedido atrasado ou crítico.</p>';
+    } else {
+      pedEl.innerHTML = data.pedidos_criticos.map(item => {
+        const dias = item.dias_restantes;
+        let label = '';
+        let cls = '';
+        if (dias < 0) {
+          label = `Atrasado há ${Math.abs(dias)} dia(s)`;
+          cls = 'pill-danger';
+        } else if (dias === 0) {
+          label = 'Vence hoje';
+          cls = 'pill-danger';
+        } else {
+          label = `Vence em ${dias} dia(s)`;
+          cls = 'pill-warn';
+        }
+        return `
+          <div style="display:flex; align-items:center; justify-content:space-between; font-size:13px; padding:6px 0; border-bottom:1px solid var(--border)">
+            <div style="flex:1">
+              <strong>Pedido: ${item.numero_pedido}</strong>
+              <div style="font-size:11px; color:var(--muted)">${item.cliente_nome} &bull; Status: <span style="text-transform:capitalize">${item.status.replace('_', ' ')}</span></div>
+            </div>
+            <span class="pill ${cls}" style="font-size:10px; height:fit-content; white-space:nowrap">${label}</span>
+          </div>
+        `;
+      }).join('');
+    }
+
+  } catch (e) {
+    showAlert('Erro ao carregar dashboard: ' + e.message, 'danger');
+  }
+
+  // Alertas independentes (não bloqueiam o dashboard)
+  try { await checkAlertasPedidos(); } catch(e) {}
+  try {
+    const alertas = await api('/estoque/alertas');
+    const bannerEl = document.getElementById('dash-alerta-estoque');
+    const badge = document.getElementById('nav-alerta-badge');
+    if (alertas && alertas.length > 0) {
+      if (badge) badge.style.display = 'inline';
+      if (bannerEl) bannerEl.innerHTML = `
+        <div style="background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.35);border-radius:10px;padding:14px 18px;margin-bottom:20px;display:flex;align-items:center;gap:14px">
+          <span style="font-size:22px">⚠️</span>
+          <div style="flex:1">
+            <div style="font-family:var(--font-head);font-weight:700;color:var(--danger);margin-bottom:4px">${alertas.length} produto(s) abaixo do estoque mínimo</div>
+            <div style="font-size:13px;color:var(--muted)">${alertas.map(a => `<strong>${a.nome}${a.marca ? ' ' + a.marca : ''}</strong>: ${a.quantidade_atual} ${a.unidade} (mín: ${a.estoque_minimo})`).join(' &nbsp;|&nbsp; ')}</div>
+          </div>
+          <button class="btn btn-sm btn-secondary" onclick="showPage('estoque')" style="white-space:nowrap">Ver estoque →</button>
+        </div>`;
+    } else {
+      if (badge) badge.style.display = 'none';
+      if (bannerEl) bannerEl.innerHTML = '';
+    }
+  } catch(e) {}
+}
+
+// ─── PRODUÇÃO ─────────────────────────────────────────────────────────────────
+
+async function loadProducao() {
+  const mesEl = document.getElementById('prod-mes');
+  if (!mesEl.value) mesEl.value = currentMonth();
+  const mes = mesEl.value;
+  const topbarMesEl = document.getElementById('topbar-mes');
+  if (topbarMesEl) topbarMesEl.textContent = mesLabel(mes);
+
+  const filtroEl = document.getElementById('prod-filtro-colaborador');
+  if (filtroEl.options.length <= 1) {
+    const cols = await api('/colaboradores/?contexto=producao');
+    cols.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = c.nome;
+      filtroEl.appendChild(opt);
+    });
+  }
+  const colaboradorId = filtroEl.value;
+
+  try {
+    let url = '/producao/?mes=' + mes;
+    if (colaboradorId) url += '&colaborador_id=' + colaboradorId;
+    const rows = await api(url);
+    // Cards de resumo (a partir dos registros já carregados)
+    const cardsEl = document.getElementById('prod-cards');
+    if (cardsEl) {
+      const totalProd = rows.reduce((s, r) => s + (+r.producao || 0), 0);
+      // Meta e alvo diario por colaborador: conta 1x por colaborador/dia (nao por linha),
+      // senao varios lancamentos no mesmo dia multiplicam a meta indevidamente.
+      const _metaColabDia = {};
+      rows.forEach(r => {
+        if ((+r.producao || 0) <= 0) return;
+        const _k = r.colaborador_id + '|' + r.data;
+        if (!(_k in _metaColabDia)) _metaColabDia[_k] = (+r.meta || 0);
+      });
+      const totalMeta = Object.values(_metaColabDia).reduce((s, v) => s + v, 0);
+      const totalExc = totalProd - totalMeta;
+      const dias = new Set(rows.map(r => r.data)).size;
+      cardsEl.innerHTML = `
+        <div class="card">
+          <div class="card-label">Total Produzido</div>
+          <div class="card-value accent">${fmtNum(totalProd)}</div>
+          <div class="card-sub">${mesLabel(mes)}</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Meta Acumulada</div>
+          <div class="card-value info">${fmtNum(totalMeta)}</div>
+          <div class="card-sub">no mês</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Excedente Acumulado</div>
+          <div class="card-value ${totalExc >= 0 ? 'success' : 'negative'}">${totalExc >= 0 ? '+' : ''}${fmtNum(totalExc)}</div>
+          <div class="card-sub">produção − meta</div>
+        </div>
+        <div class="card">
+          <div class="card-label">Dias Trabalhados</div>
+          <div class="card-value info">${dias}</div>
+          <div class="card-sub">dias com produção</div>
+        </div>`;
+    }
+    const tbody = document.getElementById('prod-tbody');
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:32px">Nenhum registro encontrado</td></tr>';
+      return;
+    }
+    // Opção A: consolida por operador/dia. Linha-resumo com a meta diária (1x) e a
+    // produção somada; expande para ver os lançamentos por pedido (vínculos mantidos no banco).
+    const _acoesProd = (r) => `<td class="flex gap-2">
+          ${temPermissao('producao', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();editarProducao(${r.id}, ${r.colaborador_id}, ${r.maquina_id}, '${r.data}', ${r.meta}, ${r.producao}, ${r.produto_estoque_id || 'null'}, ${r.perda_quantidade || 0}, ${r.sobra_quantidade || 0}, '${r.pedido_numero || ''}')">✏️</button>` : ''}
+          ${temPermissao('producao', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deletarProducao(${r.id})">✕</button>` : ''}
+        </td>`;
+    const _grupos = {};
+    rows.forEach(r => {
+      const k = r.colaborador_id + '|' + r.data;
+      if (!_grupos[k]) _grupos[k] = { data: r.data, colaborador_id: r.colaborador_id, colaborador_nome: r.colaborador_nome, maquinas: [], meta: +r.meta || 0, producao: 0, itens: [] };
+      const g = _grupos[k];
+      if (!g.maquinas.includes(r.maquina_nome)) g.maquinas.push(r.maquina_nome);
+      if ((+r.meta || 0) > 0) g.meta = +r.meta;
+      g.producao += (+r.producao || 0);
+      g.itens.push(r);
+    });
+    tbody.innerHTML = Object.values(_grupos).map(g => {
+      const exc = g.producao - g.meta;
+      const cls = exc > 0 ? 'positive' : exc < 0 ? 'negative' : 'neutral';
+      const signal = exc > 0 ? '+' : '';
+      const maq = g.maquinas.join(', ');
+      if (g.itens.length === 1) {
+        const r = g.itens[0];
+        return `<tr>
+          <td><span style="display:inline-block;width:14px"></span>${fmtDate(g.data)}</td>
+          <td><strong>${g.colaborador_nome}</strong></td>
+          <td>${maq}</td>
+          <td>${fmtNum(g.meta)}</td>
+          <td>${fmtNum(g.producao)}</td>
+          <td class="${cls}">${signal}${fmtNum(exc)}</td>
+          ${_acoesProd(r)}
+        </tr>`;
+      }
+      const gid = 'g' + g.colaborador_id + '_' + String(g.data).replace(/-/g, '');
+      let h = `<tr style="cursor:pointer" onclick="toggleProdGrupo('${gid}', this)">
+        <td><span class="prod-caret" style="display:inline-block;width:14px">▸</span>${fmtDate(g.data)}</td>
+        <td><strong>${g.colaborador_nome}</strong></td>
+        <td>${maq}</td>
+        <td>${fmtNum(g.meta)}</td>
+        <td>${fmtNum(g.producao)} <span style="color:var(--muted);font-size:11px">(${g.itens.length} lanç.)</span></td>
+        <td class="${cls}">${signal}${fmtNum(exc)}</td>
+        <td></td>
+      </tr>`;
+      h += g.itens.map(r => `<tr class="prod-sub-${gid}" style="display:none;background:var(--surface2)">
+          <td></td>
+          <td style="padding-left:18px;color:var(--muted)">↳ ${r.pedido_numero ? ('Pedido ' + r.pedido_numero) : 'Manual'}</td>
+          <td>${r.maquina_nome}</td>
+          <td style="color:var(--muted)">—</td>
+          <td>${fmtNum(r.producao)}</td>
+          <td style="color:var(--muted)">—</td>
+          ${_acoesProd(r)}
+        </tr>`).join('');
+      return h;
+    }).join('');
+  } catch (e) {
+    showAlert('Erro ao carregar produção: ' + e.message, 'danger');
+  }
+}
+
+function switchProducaoPageTab(tab) {
+  ['painel', 'lancamentos', 'relatorios', 'feriados'].forEach(t => {
+    const pane = document.getElementById('prodpg-content-' + t);
+    const btn = document.getElementById('prodpg-tab-' + t);
+    if (pane) pane.style.display = (t === tab) ? '' : 'none';
+    if (btn) { btn.style.borderColor = (t === tab) ? 'var(--accent)' : ''; btn.style.color = (t === tab) ? 'var(--accent)' : ''; }
+  });
+  if (tab === 'painel') loadPainelDoDia();
+  if (tab === 'lancamentos') loadProducao();
+  if (tab === 'relatorios') {
+    const ini = document.getElementById('prodrel-mes-ini');
+    const fim = document.getElementById('prodrel-mes-fim');
+    if (ini && !ini.value) ini.value = currentMonth();
+    if (fim && !fim.value) fim.value = currentMonth();
+    loadProdRelatorio();
+  }
+  if (tab === 'feriados') loadFeriados();
+}
+window.switchProducaoPageTab = switchProducaoPageTab;
+
+function initProducaoPage() {
+  switchProducaoPageTab('painel');
+}
+window.initProducaoPage = initProducaoPage;
+
+async function loadPainelDoDia() {
+  const dataEl = document.getElementById('painel-data');
+  const cardsEl = document.getElementById('painel-cards');
+  const lancaramEl = document.getElementById('painel-lancaram');
+  const semEl = document.getElementById('painel-sem-lancamento');
+  if (cardsEl) cardsEl.innerHTML = '<p style="color:var(--muted)">Carregando...</p>';
+  try {
+    let url = '/relatorios/painel-do-dia';
+    if (dataEl?.value) url += '?data=' + dataEl.value;
+    const d = await api(url);
+    if (dataEl && !dataEl.value) dataEl.value = d.data;
+    if (cardsEl) {
+      cardsEl.innerHTML = `
+        <div class="card"><div class="card-label">Total Produzido</div><div class="card-value accent">${fmtNum(d.total_producao)}</div><div class="card-sub">${fmtDate(d.data)}</div></div>
+        <div class="card"><div class="card-label">Perdas</div><div class="card-value negative">${fmtNum(d.total_perdas)}</div></div>
+        <div class="card"><div class="card-label">Sobras</div><div class="card-value success">${fmtNum(d.total_sobras)}</div></div>
+        <div class="card"><div class="card-label">Lançamentos</div><div class="card-value info">${d.total_lancamentos}</div></div>
+        <div class="card"><div class="card-label">Sem Lançamento</div><div class="card-value ${d.colaboradores_sem_lancamento.length ? 'negative' : 'success'}">${d.colaboradores_sem_lancamento.length}</div></div>`;
+    }
+    if (lancaramEl) {
+      lancaramEl.innerHTML = d.colaboradores_lancaram.length
+        ? d.colaboradores_lancaram.map(n => `<div style="padding:6px 0;border-bottom:1px solid var(--border)">✅ ${n}</div>`).join('')
+        : '<p style="color:var(--muted)">Ninguém lançou produção nesse dia ainda.</p>';
+    }
+    if (semEl) {
+      semEl.innerHTML = d.colaboradores_sem_lancamento.length
+        ? d.colaboradores_sem_lancamento.map(n => `<div style="padding:6px 0;border-bottom:1px solid var(--border);color:var(--danger)">⚠️ ${n}</div>`).join('')
+        : '<p style="color:var(--success)">Todo mundo lançou produção nesse dia. ✅</p>';
+    }
+  } catch (e) {
+    if (cardsEl) cardsEl.innerHTML = `<p style="color:var(--danger)">Erro ao carregar: ${e.message}</p>`;
+  }
+}
+window.loadPainelDoDia = loadPainelDoDia;
+
+const PROD_REL_TITULOS = {
+  matriz: '🗂️ Matriz Operador × Categoria',
+  diario: '📅 Resumo Diário de Produção',
+  meta: '🎯 Meta x Produção',
+  'perdas-tipo': '📛 Perdas por Tipo',
+  maquina: '⚙️ Produtividade por Máquina',
+  ociosidade: '🚫 Dias sem Lançamento',
+  comparativo: '🔁 Comparativo entre Períodos'
+};
+
+function onChangeProdRelTipo() {
+  const tipo = document.getElementById('prodrel-tipo')?.value;
+  const wrapB = document.getElementById('prodrel-comparativo-b-wrap');
+  if (wrapB) wrapB.style.display = (tipo === 'comparativo') ? 'inline-flex' : 'none';
+  loadProdRelatorio();
+}
+window.onChangeProdRelTipo = onChangeProdRelTipo;
+
+async function loadProdRelatorio() {
+  const tipo = document.getElementById('prodrel-tipo')?.value || 'matriz';
+  const mesIni = document.getElementById('prodrel-mes-ini')?.value || currentMonth();
+  const mesFim = document.getElementById('prodrel-mes-fim')?.value || mesIni;
+  const titleEl = document.getElementById('prodrel-title');
+  if (titleEl) titleEl.textContent = PROD_REL_TITULOS[tipo] || '';
+  const cardsEl = document.getElementById('prodrel-cards');
+  const theadEl = document.getElementById('prodrel-thead');
+  const tbodyEl = document.getElementById('prodrel-tbody');
+  const hojeWrapEl = document.getElementById('prodrel-hoje-wrap');
+  const hojeCardsEl = document.getElementById('prodrel-hoje-cards');
+  if (cardsEl) cardsEl.innerHTML = '';
+  if (theadEl) theadEl.innerHTML = '';
+  if (tbodyEl) tbodyEl.innerHTML = '<tr><td style="text-align:center;color:var(--muted);padding:24px">Carregando...</td></tr>';
+  if (hojeWrapEl) hojeWrapEl.style.display = 'none';
+
+  try {
+    if (tipo === 'matriz') {
+      const d = await api(`/relatorios/matriz-operador-categoria?mes_ini=${mesIni}&mes_fim=${mesFim}`);
+      const categorias = d.categorias || [];
+      const linhas = d.linhas || [];
+      if (cardsEl) {
+        cardsEl.innerHTML = `
+          <div class="card"><div class="card-label">Operadores</div><div class="card-value accent">${linhas.length}</div></div>
+          <div class="card"><div class="card-label">Categorias</div><div class="card-value info">${categorias.length}</div></div>
+          <div class="card"><div class="card-label">Total Produzido</div><div class="card-value accent">${fmtNum(linhas.reduce((s,l)=>s+l.total,0))}</div></div>`;
+      }
+      if (theadEl) theadEl.innerHTML = `<tr><th>Operador</th>${categorias.map(c=>`<th>${c}</th>`).join('')}<th>Total</th></tr>`;
+      if (tbodyEl) {
+        if (!linhas.length) { tbodyEl.innerHTML = '<tr><td colspan="99" style="text-align:center;color:var(--muted);padding:24px">Nenhum dado no período</td></tr>'; }
+        else tbodyEl.innerHTML = linhas.map(l => `<tr>
+          <td><strong>${l.colaborador}</strong></td>
+          ${categorias.map(c => `<td>${fmtNum(l.valores[c] || 0)}</td>`).join('')}
+          <td><strong>${fmtNum(l.total)}</strong></td>
+        </tr>`).join('');
+      }
+
+    } else if (tipo === 'diario') {
+      const dias = await api(`/relatorios/resumo-diario-producao?mes_ini=${mesIni}&mes_fim=${mesFim}`);
+      if (cardsEl) {
+        const totalProd = dias.reduce((s,d)=>s+(d.total_producao||0),0);
+        const totalPerdas = dias.reduce((s,d)=>s+(d.total_perdas||0),0);
+        const totalSobras = dias.reduce((s,d)=>s+(d.total_sobras||0),0);
+        cardsEl.innerHTML = `
+          <div class="card"><div class="card-label">Dias com Produção</div><div class="card-value accent">${dias.length}</div></div>
+          <div class="card"><div class="card-label">Total Produzido</div><div class="card-value accent">${fmtNum(totalProd)}</div></div>
+          <div class="card"><div class="card-label">Total Perdas</div><div class="card-value negative">${fmtNum(totalPerdas)}</div></div>
+          <div class="card"><div class="card-label">Total Sobras</div><div class="card-value success">${fmtNum(totalSobras)}</div></div>`;
+      }
+      if (theadEl) theadEl.innerHTML = '<tr><th></th><th>Data</th><th>Produzido</th><th>Perdas</th><th>Sobras</th><th>Lançamentos</th><th>Colaboradores Ativos</th><th>Categoria Destaque</th></tr>';
+      if (tbodyEl) {
+        if (!dias.length) { tbodyEl.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">Nenhum dado no período</td></tr>'; }
+        else tbodyEl.innerHTML = dias.map((d, idx) => {
+          const temCategorias = (d.categorias || []).length > 0;
+          const linhaPrincipal = `<tr style="${temCategorias ? 'cursor:pointer' : ''}" onclick="${temCategorias ? `toggleResumoDiaCategorias(${idx})` : ''}">
+            <td>${temCategorias ? `<span class="prod-caret" id="prodrel-dia-caret-${idx}" style="display:inline-block;width:14px">▸</span>` : ''}</td>
+            <td>${fmtDate(d.data)}</td>
+            <td><strong>${fmtNum(d.total_producao)}</strong></td>
+            <td style="color:var(--danger)">${fmtNum(d.total_perdas)}</td>
+            <td style="color:var(--success)">${fmtNum(d.total_sobras)}</td>
+            <td>${d.total_lancamentos}</td>
+            <td>${d.colaboradores_ativos}</td>
+            <td>${d.categoria_destaque || '—'} ${d.categoria_destaque ? '<span style="color:var(--muted)">(' + fmtNum(d.categoria_destaque_qtd) + ')</span>' : ''}</td>
+          </tr>`;
+          const linhaDetalhe = temCategorias ? `<tr id="prodrel-dia-detalhe-${idx}" style="display:none;background:var(--surface2)">
+            <td></td>
+            <td colspan="7" style="padding:10px 16px">
+              <div style="display:flex;flex-wrap:wrap;gap:8px">
+                ${d.categorias.map(c => `<span class="pill pill-slate">${c.categoria}: <strong>${fmtNum(c.quantidade)}</strong></span>`).join('')}
+              </div>
+            </td>
+          </tr>` : '';
+          return linhaPrincipal + linhaDetalhe;
+        }).join('');
+      }
+
+    } else if (tipo === 'meta') {
+      const resp = await api(`/relatorios/meta-producao?mes_ini=${mesIni}&mes_fim=${mesFim}`);
+      const linhas = resp.linhas || [];
+      const fab = resp.fabrica || {};
+      if (cardsEl) {
+        const acima = linhas.filter(l => l.saldo >= 0).length;
+        const abaixo = linhas.filter(l => l.saldo < 0).length;
+        let fabCard = '';
+        if (fab.dias_uteis_restantes === null || fab.dias_uteis_restantes === undefined) {
+          fabCard = `<div class="card"><div class="card-label">Projeção da Fábrica</div><div class="card-value" style="color:var(--muted);font-size:16px">Mês encerrado</div></div>`;
+        } else if (fab.meta_batida) {
+          fabCard = `<div class="card"><div class="card-label">Projeção da Fábrica</div><div class="card-value success">✅ Meta batida</div></div>`;
+        } else {
+          fabCard = `<div class="card"><div class="card-label">Fábrica precisa/dia p/ fechar</div><div class="card-value accent">${fmtNum(fab.necessario_dia)}</div><div class="card-sub">${fab.dias_uteis_restantes} dias úteis restantes</div></div>`;
+        }
+        cardsEl.innerHTML = `
+          <div class="card"><div class="card-label">Operadores</div><div class="card-value accent">${linhas.length}</div></div>
+          <div class="card"><div class="card-label">Acima da Meta</div><div class="card-value success">${acima}</div></div>
+          <div class="card"><div class="card-label">Abaixo da Meta</div><div class="card-value negative">${abaixo}</div></div>
+          ${fabCard}`;
+      }
+      if (theadEl) theadEl.innerHTML = '<tr><th>Operador</th><th>Dias Trabalhados</th><th>Meta do Período</th><th>Produzido</th><th>Saldo</th><th>Aderência</th><th>Dias Úteis Restantes</th><th>Necessário/Dia p/ Fechar o Mês</th></tr>';
+      if (tbodyEl) {
+        if (!linhas.length) { tbodyEl.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">Nenhum dado no período</td></tr>'; }
+        else tbodyEl.innerHTML = linhas.map(l => {
+          let necessarioCel;
+          if (l.dias_uteis_restantes === null || l.dias_uteis_restantes === undefined) necessarioCel = '<span style="color:var(--muted)">Mês encerrado</span>';
+          else if (l.meta_batida) necessarioCel = '<span style="color:var(--success)">✅ Meta batida</span>';
+          else if (l.necessario_dia === null) necessarioCel = '<span style="color:var(--muted)">—</span>';
+          else necessarioCel = `<strong>${fmtNum(l.necessario_dia)}</strong>/dia`;
+          return `<tr>
+          <td><strong>${l.colaborador}</strong></td>
+          <td>${l.dias_trabalhados}</td>
+          <td>${fmtNum(l.meta_periodo)}</td>
+          <td>${fmtNum(l.produzido)}</td>
+          <td style="color:${l.saldo >= 0 ? 'var(--success)' : 'var(--danger)'};font-weight:600">${l.saldo >= 0 ? '🟢 +' : '🔴 '}${fmtNum(l.saldo)}</td>
+          <td>${l.aderencia}%</td>
+          <td>${l.dias_uteis_restantes ?? '—'}</td>
+          <td>${necessarioCel}</td>
+        </tr>`;
+        }).join('');
+      }
+
+      // Cards de produção de hoje, por operador — só quando o período
+      // selecionado inclui o dia de hoje (não faz sentido pra mês encerrado)
+      const hojeMes = new Date().toISOString().slice(0, 7);
+      if (mesIni <= hojeMes && hojeMes <= mesFim && hojeWrapEl && hojeCardsEl) {
+        try {
+          const hoje = await api('/relatorios/producao-hoje-por-operador');
+          const comProducao = (hoje.operadores || []).filter(o => o.lancou);
+          if (comProducao.length) {
+            hojeWrapEl.style.display = '';
+            hojeCardsEl.innerHTML = comProducao.map(o => {
+              const cor = o.saldo >= 0 ? 'var(--success)' : 'var(--danger)';
+              const status = o.saldo >= 0 ? '🟢 Meta batida' : '🔴 Abaixo da meta';
+              return `
+              <div class="card" style="border-left:3px solid ${cor}">
+                <div class="card-label">${o.colaborador}</div>
+                <div class="card-value">${fmtNum(o.producao)}</div>
+                <div class="card-sub">Meta: ${fmtNum(o.meta)}${o.aderencia !== null ? ' · ' + o.aderencia + '%' : ''}</div>
+                <div style="font-size:12px;color:${cor};margin-top:4px;font-weight:600">${status}</div>
+              </div>`;
+            }).join('');
+          }
+        } catch (e) { /* não interrompe o resto do relatório */ }
+      }
+
+    } else if (tipo === 'perdas-tipo') {
+      const linhas = await api(`/relatorios/perdas-por-tipo?mes_ini=${mesIni}&mes_fim=${mesFim}`);
+      if (cardsEl) {
+        const total = linhas.reduce((s, l) => s + (l.quantidade || 0), 0);
+        const piorTipo = linhas[0];
+        cardsEl.innerHTML = `
+          <div class="card"><div class="card-label">Total Perdido</div><div class="card-value negative">${fmtNum(total)}</div></div>
+          <div class="card"><div class="card-label">Tipos Diferentes</div><div class="card-value accent">${linhas.length}</div></div>
+          <div class="card"><div class="card-label">Maior Causa</div><div class="card-value" style="font-size:16px">${piorTipo ? piorTipo.tipo_perda : '—'}</div><div class="card-sub">${piorTipo ? piorTipo.percentual + '% do total' : ''}</div></div>`;
+      }
+      if (theadEl) theadEl.innerHTML = '<tr><th>Tipo de Perda</th><th>Quantidade</th><th>Ocorrências</th><th>% do Total</th></tr>';
+      if (tbodyEl) {
+        if (!linhas.length) { tbodyEl.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:24px">Nenhuma perda registrada no período</td></tr>'; }
+        else tbodyEl.innerHTML = linhas.map(l => `<tr>
+          <td><strong>${l.tipo_perda}</strong></td>
+          <td style="color:var(--danger)">${fmtNum(l.quantidade)}</td>
+          <td>${l.ocorrencias}</td>
+          <td>${l.percentual}%</td>
+        </tr>`).join('');
+      }
+
+    } else if (tipo === 'maquina') {
+      const linhas = await api(`/relatorios/produtividade-maquina?mes_ini=${mesIni}&mes_fim=${mesFim}`);
+      if (cardsEl) {
+        cardsEl.innerHTML = `
+          <div class="card"><div class="card-label">Máquinas em Uso</div><div class="card-value accent">${linhas.length}</div></div>
+          <div class="card"><div class="card-label">Total Produzido</div><div class="card-value accent">${fmtNum(linhas.reduce((s,l)=>s+(l.total_producao||0),0))}</div></div>`;
+      }
+      if (theadEl) theadEl.innerHTML = '<tr><th>Máquina</th><th>Dias em Uso</th><th>Operadores Diferentes</th><th>Total Produzido</th><th>Média/Dia</th><th>Perdas</th><th>Índice de Perda</th></tr>';
+      if (tbodyEl) {
+        if (!linhas.length) { tbodyEl.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px">Nenhum dado no período</td></tr>'; }
+        else tbodyEl.innerHTML = linhas.map(l => `<tr>
+          <td><strong>${l.maquina}</strong></td>
+          <td>${l.dias_utilizada}</td>
+          <td>${l.operadores_diferentes}</td>
+          <td>${fmtNum(l.total_producao)}</td>
+          <td>${fmtNum(l.media_dia)}</td>
+          <td style="color:var(--danger)">${fmtNum(l.total_perdas)}</td>
+          <td>${l.indice_perda}%</td>
+        </tr>`).join('');
+      }
+
+    } else if (tipo === 'ociosidade') {
+      const linhas = await api(`/relatorios/dias-sem-lancamento?mes_ini=${mesIni}&mes_fim=${mesFim}`);
+      if (cardsEl) {
+        cardsEl.innerHTML = `
+          <div class="card"><div class="card-label">Operadores no Período</div><div class="card-value accent">${linhas.length}</div></div>
+          <div class="card"><div class="card-label">Dias Úteis do Período</div><div class="card-value info">${linhas[0]?.dias_uteis_periodo || 0}</div></div>`;
+      }
+      if (theadEl) theadEl.innerHTML = '<tr><th></th><th>Operador</th><th>Dias Trabalhados</th><th>Dias Úteis do Período</th><th>Dias sem Lançamento</th></tr>';
+      if (tbodyEl) {
+        if (!linhas.length) { tbodyEl.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px">Nenhum dado no período</td></tr>'; }
+        else tbodyEl.innerHTML = linhas.map((l, idx) => {
+          const temFaltas = (l.datas_faltantes || []).length > 0;
+          const principal = `<tr style="${temFaltas ? 'cursor:pointer' : ''}" onclick="${temFaltas ? `toggleOciosidadeDatas(${idx})` : ''}">
+            <td>${temFaltas ? `<span class="prod-caret" id="prodrel-ocio-caret-${idx}" style="display:inline-block;width:14px">▸</span>` : ''}</td>
+            <td><strong>${l.colaborador}</strong></td>
+            <td>${l.dias_trabalhados}</td>
+            <td>${l.dias_uteis_periodo}</td>
+            <td style="color:${l.dias_sem_lancamento > 0 ? 'var(--danger)' : 'var(--success)'};font-weight:600">${l.dias_sem_lancamento}</td>
+          </tr>`;
+          const detalhe = temFaltas ? `<tr id="prodrel-ocio-detalhe-${idx}" style="display:none;background:var(--surface2)">
+            <td></td><td colspan="4" style="padding:10px 16px">
+              <div style="display:flex;flex-wrap:wrap;gap:6px">
+                ${l.datas_faltantes.map(dt => `<span class="pill pill-danger">${fmtDate(dt)}</span>`).join('')}
+              </div>
+            </td>
+          </tr>` : '';
+          return principal + detalhe;
+        }).join('');
+      }
+
+    } else if (tipo === 'comparativo') {
+      const iniB = document.getElementById('prodrel-mes-ini-b')?.value || mesIni;
+      const fimB = document.getElementById('prodrel-mes-fim-b')?.value || mesFim;
+      const resp = await api(`/relatorios/comparativo-periodos?mes_ini_a=${mesIni}&mes_fim_a=${mesFim}&mes_ini_b=${iniB}&mes_fim_b=${fimB}`);
+      const g = resp.geral || {};
+      const linhas = resp.linhas || [];
+      if (cardsEl) {
+        const varProd = g.variacao_producao || 0;
+        cardsEl.innerHTML = `
+          <div class="card"><div class="card-label">Período A — Produzido</div><div class="card-value accent">${fmtNum(g.periodo_a?.producao)}</div></div>
+          <div class="card"><div class="card-label">Período B — Produzido</div><div class="card-value info">${fmtNum(g.periodo_b?.producao)}</div></div>
+          <div class="card"><div class="card-label">Variação</div><div class="card-value ${varProd >= 0 ? 'success' : 'negative'}">${varProd >= 0 ? '+' : ''}${varProd}%</div></div>`;
+      }
+      if (theadEl) theadEl.innerHTML = '<tr><th>Operador</th><th>Período A</th><th>Período B</th><th>Variação</th></tr>';
+      if (tbodyEl) {
+        if (!linhas.length) { tbodyEl.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:24px">Nenhum dado nos períodos</td></tr>'; }
+        else tbodyEl.innerHTML = linhas.map(l => `<tr>
+          <td><strong>${l.colaborador}</strong></td>
+          <td>${fmtNum(l.periodo_a)}</td>
+          <td>${fmtNum(l.periodo_b)}</td>
+          <td style="color:${l.variacao >= 0 ? 'var(--success)' : 'var(--danger)'};font-weight:600">${l.variacao >= 0 ? '+' : ''}${l.variacao}%</td>
+        </tr>`).join('');
+      }
+    }
+  } catch (e) {
+    if (tbodyEl) tbodyEl.innerHTML = `<tr><td colspan="99" style="text-align:center;color:var(--danger);padding:24px">Erro ao carregar: ${e.message}</td></tr>`;
+  }
+}
+window.loadProdRelatorio = loadProdRelatorio;
+
+function toggleResumoDiaCategorias(idx) {
+  const row = document.getElementById('prodrel-dia-detalhe-' + idx);
+  const caret = document.getElementById('prodrel-dia-caret-' + idx);
+  if (!row) return;
+  const mostrar = row.style.display === 'none';
+  row.style.display = mostrar ? '' : 'none';
+  if (caret) caret.textContent = mostrar ? '▾' : '▸';
+}
+window.toggleResumoDiaCategorias = toggleResumoDiaCategorias;
+
+function toggleOciosidadeDatas(idx) {
+  const row = document.getElementById('prodrel-ocio-detalhe-' + idx);
+  const caret = document.getElementById('prodrel-ocio-caret-' + idx);
+  if (!row) return;
+  const mostrar = row.style.display === 'none';
+  row.style.display = mostrar ? '' : 'none';
+  if (caret) caret.textContent = mostrar ? '▾' : '▸';
+}
+window.toggleOciosidadeDatas = toggleOciosidadeDatas;
+
+async function exportarProdRelatorio(formato) {
+  const table = document.getElementById('prodrel-table');
+  if (!table) return;
+  const titulo = document.getElementById('prodrel-title')?.textContent?.replace(/^[^\wÀ-ú]+/, '').trim() || 'Relatorio de Producao';
+  if (formato === 'pdf') {
+    const win = window.open('', '_blank');
+    win.document.write('<html><head><title>Gerando...</title></head><body style="font-family:Arial;padding:40px;color:#666">Gerando relatório...</body></html>');
+
+    // Busca os cards de produção de hoje na hora da exportação (não depende
+    // de cache de uma carga anterior, evita o relatório sair sem eles).
+    let cardsHoje = [];
+    const tipo = document.getElementById('prodrel-tipo')?.value;
+    const mesIni = document.getElementById('prodrel-mes-ini')?.value || currentMonth();
+    const mesFim = document.getElementById('prodrel-mes-fim')?.value || mesIni;
+    const hojeMes = new Date().toISOString().slice(0, 7);
+    if (tipo === 'meta' && mesIni <= hojeMes && hojeMes <= mesFim) {
+      try {
+        const hoje = await api('/relatorios/producao-hoje-por-operador');
+        cardsHoje = (hoje.operadores || []).filter(o => o.lancou);
+      } catch (e) { /* segue sem os cards se a busca falhar */ }
+    }
+
+    let hojeHtml = '';
+    if (cardsHoje.length) {
+      hojeHtml = `
+        <div style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#666;margin:18px 0 10px">Produção de hoje, por operador</div>
+        <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:20px">
+          ${cardsHoje.map(o => {
+            const bateu = o.saldo >= 0;
+            const cor = bateu ? '#10b981' : '#ef4444';
+            const status = bateu ? '🟢 Meta batida' : '🔴 Abaixo da meta';
+            return `<div style="border:1px solid #ddd;border-left:4px solid ${cor};border-radius:6px;padding:12px 16px;min-width:180px">
+              <div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.5px">${o.colaborador}</div>
+              <div style="font-size:20px;font-weight:800;margin-top:2px">${fmtNum(o.producao)}</div>
+              <div style="font-size:11px;color:#888;margin-top:2px">Meta: ${fmtNum(o.meta)}${o.aderencia !== null ? ' · ' + o.aderencia + '%' : ''}</div>
+              <div style="font-size:11px;color:${cor};font-weight:700;margin-top:4px">${status}</div>
+            </div>`;
+          }).join('')}
+        </div>`;
+    }
+
+    win.document.open();
+    win.document.write(`<html><head><title>${titulo} PRATIC</title>
+      <style>@page{margin:0}body{font-family:Arial,sans-serif;margin:15mm 15mm 22mm 15mm;font-size:11px;counter-reset:page}table{width:100%;border-collapse:collapse}th{background:#333;color:#fff;padding:6px;text-align:left;font-size:10px}td{padding:6px;border-bottom:1px solid #ddd}.print-footer{position:fixed;bottom:8mm;left:15mm;right:15mm;border-top:1px solid #ddd;padding-top:6px;display:flex;justify-content:space-between;font-size:10px;color:#777;font-family:Arial,sans-serif;counter-increment:page}.page-number::after{content:counter(page)}</style>
+      </head><body>
+      ${_getEmpresaHeader(titulo)}
+      ${hojeHtml}
+      ${table.outerHTML}
+      ${_getPrintFooter()}
+      </body></html>`);
+    win.document.close();
+    setTimeout(() => win.print(), 500);
+  } else {
+    const rows = [];
+    table.querySelectorAll('tr').forEach(tr => {
+      const row = [];
+      tr.querySelectorAll('th,td').forEach(td => row.push('"' + td.textContent.trim().replace(/"/g, '""') + '"'));
+      rows.push(row.join(';'));
+    });
+    const csv = '\uFEFF' + rows.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${titulo.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+  }
+}
+window.exportarProdRelatorio = exportarProdRelatorio;
+
+async function loadFeriados() {
+  const anoSel = document.getElementById('feriado-filtro-ano');
+  if (anoSel && !anoSel.options.length) {
+    const anoAtual = new Date().getFullYear();
+    for (let a = anoAtual - 1; a <= anoAtual + 2; a++) {
+      const opt = document.createElement('option');
+      opt.value = a; opt.textContent = a;
+      if (a === anoAtual) opt.selected = true;
+      anoSel.appendChild(opt);
+    }
+  }
+  const ano = anoSel?.value || String(new Date().getFullYear());
+  const tbody = document.getElementById('feriados-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--muted)">Carregando...</td></tr>';
+  try {
+    const lista = await api('/producao/feriados?ano=' + ano);
+    if (!lista.length) { tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--muted);padding:20px">Nenhum feriado cadastrado em ' + ano + '</td></tr>'; return; }
+    tbody.innerHTML = lista.map(f => `<tr>
+      <td>${fmtDate(f.data)}</td>
+      <td>${f.descricao || '—'}</td>
+      <td>${temPermissao('producao','deletar') ? `<button class="btn btn-sm btn-danger" onclick="deletarFeriado(${f.id})">✕</button>` : ''}</td>
+    </tr>`).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="3" style="text-align:center;color:var(--danger)">Erro: ${e.message}</td></tr>`;
+  }
+}
+window.loadFeriados = loadFeriados;
+
+async function cadastrarFeriado() {
+  const data = document.getElementById('feriado-data')?.value;
+  const descricao = document.getElementById('feriado-descricao')?.value?.trim();
+  if (!data) { showAlert('Informe a data do feriado', 'warn'); return; }
+  try {
+    await api('/producao/feriados', 'POST', { data, descricao: descricao || null });
+    showAlert('Feriado cadastrado');
+    document.getElementById('feriado-data').value = '';
+    document.getElementById('feriado-descricao').value = '';
+    const anoSel = document.getElementById('feriado-filtro-ano');
+    if (anoSel) anoSel.value = data.slice(0, 4);
+    loadFeriados();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+window.cadastrarFeriado = cadastrarFeriado;
+
+async function deletarFeriado(id) {
+  if (!confirm('Remover este feriado? Isso muda o cálculo de dias úteis do relatório Meta x Produção.')) return;
+  try {
+    await api('/producao/feriados/' + id, 'DELETE');
+    showAlert('Feriado removido');
+    loadFeriados();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+window.deletarFeriado = deletarFeriado;
+
+let maquinas = [], colaboradores = [];
+
+
+async function deletarProducao(id) {
+  if (!confirm('Remover este registro?')) return;
+  await api('/producao/' + id, 'DELETE');
+  showAlert('Registro removido');
+  loadProducao();
+  loadDashboard();
+}
+
+function toggleProdGrupo(gid, tr) {
+  const subs = document.querySelectorAll('.prod-sub-' + gid);
+  let show = false;
+  subs.forEach(sb => { show = (sb.style.display === 'none'); sb.style.display = show ? '' : 'none'; });
+  const caret = tr.querySelector('.prod-caret');
+  if (caret) caret.textContent = show ? '▾' : '▸';
+}
+window.toggleProdGrupo = toggleProdGrupo;
+
+// ── MODAL PRODUÇÃO (múltiplos produtos)
+let prodItens = [];
+let prodEstoqueCache = [];
+let prodRevendaCache = [];
+let revendaProdutos = [];
+const TIPOS_PERDA_MOD = ['Quebra','Defeito','Erro na Produção','Mal formado','Fora de especificação','Falta na embalagem','Outros'];
+
+async function openModalProducao() {
+  if (typeof _prodParaEstoqueReset === 'function') _prodParaEstoqueReset();
+  const [mqs, cols, prods, pedidos] = await Promise.all([
+    api('/maquinas/'),
+    api('/colaboradores/?contexto=producao'),
+    api('/estoque/produtos').catch(()=>[]),
+    api('/pedidos/').catch(()=>[])
+  ]);
+  // Revenda não é produzida: não aparece no registro de produção
+  prodEstoqueCache = (prods || []).filter(p => p.categoria_tipo !== 'revenda');
+  prodRevendaCache = (prods || []).filter(p => p.categoria_tipo === 'revenda');
+  document.getElementById('prod-colaborador').innerHTML = cols.map(c => `<option value="${c.id}">${c.nome}</option>`).join('');
+  document.getElementById('prod-maquina').innerHTML = mqs.filter(m=>m.ativa).map(m => `<option value="${m.id}">${m.nome}</option>`).join('');
+  document.getElementById('prod-data').value = new Date().toISOString().split('T')[0];
+  document.getElementById('prod-meta').value = META_GLOBAL;
+  aplicarTravaMetaProd();
+  document.getElementById('prod-edit-id').value = '';
+  document.getElementById('prod-pedido-manual').value = '';
+  const aviso = document.getElementById('prod-pedido-aviso');
+  if (aviso) aviso.textContent = '';
+  document.getElementById('prod-pedido').innerHTML = '<option value="">— Sem pedido vinculado —</option>' +
+    pedidos.filter(p => p.status !== 'entregue').map(p => `<option value="${p.id}">${p.numero_pedido} — ${p.cliente_nome}</option>`).join('');
+  aplicarExigirPedidoProducaoNoForm();
+  document.getElementById('modal-prod-title').textContent = 'Registrar Produção';
+  document.getElementById('prod-save-btn').textContent = 'Salvar';
+
+  // Modo de lançamento definido pelo Controle de Acesso (por perfil), não escolha do usuário.
+  const toggleContainer = document.getElementById('prod-toggle-container');
+  if (toggleContainer) toggleContainer.style.display = 'none';
+
+  const checkbox = document.getElementById('prod-toggle-simplificado');
+  if (checkbox) {
+    checkbox.checked = modoSimplificadoPerfil;
+  }
+
+  prodItens = [{ produto_id: null, producao: 0, sobra: 0, perdas: [] }];
+
+  // Clean simple inputs
+  document.getElementById('prod-simples-qtd').value = '';
+  document.getElementById('prod-simples-perda').value = '';
+  document.getElementById('prod-simples-sobra').value = '';
+  document.getElementById('prod-simples-tipo-perda').value = 'Quebra';
+
+  toggleFormSimplificado();
+  openModal('modal-producao');
+  return pedidos || [];
+}
+
+function toggleFormSimplificado() {
+  const checkbox = document.getElementById('prod-toggle-simplificado');
+  const isSimplificado = checkbox && checkbox.checked;
+
+  const secaoSimplificada = document.getElementById('prod-secao-simplificada');
+  const secaoDetalhada = document.getElementById('prod-secao-detalhada');
+
+  if (secaoSimplificada) secaoSimplificada.style.display = isSimplificado ? 'grid' : 'none';
+  if (secaoDetalhada) secaoDetalhada.style.display = isSimplificado ? 'none' : 'block';
+
+  if (checkbox) {
+    localStorage.setItem('prod-simplificado', isSimplificado ? 'true' : 'false');
+  }
+
+  if (isSimplificado) {
+    atualizarSimplificadoData();
+  } else {
+    renderProdItens();
+    atualizarTotalProd();
+  }
+}
+
+function atualizarSimplificadoData() {
+  const qtd = +document.getElementById('prod-simples-qtd').value || 0;
+  const perda = +document.getElementById('prod-simples-perda').value || 0;
+  const sobra = +document.getElementById('prod-simples-sobra').value || 0;
+  const tipoPerdaSel = document.getElementById('prod-simples-tipo-perda');
+  tipoPerdaSel.disabled = !(perda > 0);
+  tipoPerdaSel.style.opacity = (perda > 0) ? '' : '0.5';
+  tipoPerdaSel.style.cursor = (perda > 0) ? '' : 'not-allowed';
+  const tipo = tipoPerdaSel.value || 'Quebra';
+
+  const motivoContainer = document.getElementById('prod-simples-motivo-outros-container');
+  const motivoInput = document.getElementById('prod-simples-motivo-outros');
+  const mostrarMotivo = tipo === 'Outros' && perda > 0;
+  if (motivoContainer) motivoContainer.style.display = mostrarMotivo ? '' : 'none';
+  const observacao = motivoInput ? motivoInput.value : '';
+
+  prodItens = [{
+    produto_id: null,
+    producao: qtd,
+    sobra: sobra,
+    perdas: perda > 0 ? [{ quantidade: perda, tipo_perda: tipo, observacao: observacao }] : []
+  }];
+  atualizarTotalProd();
+}
+
+function findBestStockMatch(desc, stockProducts) {
+  // Só vincula sozinho quando existe UM único produto compatível; se houver empate
+  // (ex.: o PDF não traz a marca e há várias marcas no estoque), deixa para o usuário.
+  const r = findStockCandidates(desc, stockProducts);
+  return r.length === 1 ? r[0].id : null;
+}
+
+function findStockCandidates(desc, stockProducts) {
+  if (!desc || !stockProducts || stockProducts.length === 0) return [];
+  
+  const cleanDesc = desc.toUpperCase();
+  
+  // 1. Tentar match exato normalizado
+  const normDesc = cleanDesc.replace(/[^A-Z0-9]/g, '').replace(/ML$/, 'M');
+  const exact = stockProducts.find(p => {
+    const normP = p.nome.toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/ML$/, 'M');
+    return normP === normDesc;
+  });
+  if (exact) return [exact];
+  
+  // 2. Token match para descrições com grafias diferentes
+  const numbers = cleanDesc.match(/\d+/g) || [];
+
+  // Palavras do texto: "C/ FURO" vira COMFURO e "S/ FURO" vira SEMFURO,
+  // pra não confundir tampa com furo e sem furo (nem bolha com reta).
+  const _palavras = (s) => String(s || '').toUpperCase()
+    .replace(/\bC\s*\/\s*/g, 'COM')
+    .replace(/\bS\s*\/\s*/g, 'SEM')
+    .replace(/[^A-Z\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length >= 2 && !['ML', 'DE', 'DO', 'DA', 'UN', 'UND'].includes(w));
+  const _mesmaPalavra = (a, b) => {
+    if (a === b) return true;
+    const n = Math.min(a.length, b.length);
+    return n >= 6 && a.slice(0, 6) === b.slice(0, 6); // GALVANOTEC ~ GALVANOTEK, CRISTAL ~ CRISTALCOPO
+  };
+  const palavrasDesc = _palavras(cleanDesc);
+
+  let melhores = [];
+  let bestScore = 0;
+
+  for (const prod of stockProducts) {
+    const cleanProd = prod.nome.toUpperCase();
+
+    // Pelo menos 70% das palavras do pedido precisam existir no produto do estoque
+    if (palavrasDesc.length) {
+      const palavrasProd = _palavras(cleanProd);
+      const achadas = palavrasDesc.filter(w => palavrasProd.some(q => _mesmaPalavra(w, q))).length;
+      if (achadas / palavrasDesc.length < 0.7) continue;
+    }
+    
+    // Todos os números da descrição devem estar no nome do produto
+    let hasAllNumbers = true;
+    for (const num of numbers) {
+      if (!cleanProd.includes(num)) {
+        hasAllNumbers = false;
+        break;
+      }
+    }
+    if (!hasAllNumbers && numbers.length > 0) continue;
+    
+    let score = 0;
+    
+    // Dar peso para marca/característica
+    if (cleanDesc.includes("CRISTAL") && (cleanProd.includes("CRISTAL") || cleanProd.includes("CTL"))) score += 6;
+    if (cleanDesc.includes("COPO") && cleanProd.includes("COPO")) score += 2;
+    if (cleanDesc.includes("PP") && cleanProd.includes("PP")) score += 2;
+    if (cleanDesc.includes("TAMPA") && cleanProd.includes("TAMPA")) score += 3;
+    
+    // Match de substring normalizada
+    const normP = cleanProd.replace(/[^A-Z0-9]/g, '');
+    const normD = cleanDesc.replace(/[^A-Z0-9]/g, '');
+    if (normP.includes(normD) || normD.includes(normP)) {
+      score += 10;
+    }
+    
+    if (score > bestScore) {
+      bestScore = score;
+      melhores = [prod];
+    } else if (score === bestScore && score > 0) {
+      melhores.push(prod);
+    }
+  }
+  
+  return bestScore >= 3 ? melhores : [];
+}
+
+function _itemEhRevenda(i) {
+  if (!i) return false;
+  if (i.produto_id && prodRevendaCache.some(p => p.id === i.produto_id)) return true;
+  if (!i.produto_id && i.descricao && findBestStockMatch(i.descricao, prodRevendaCache)) return true;
+  return false;
+}
+
+async function buscarPedidoManual() {
+  const inp = document.getElementById('prod-pedido-manual');
+  const sel = document.getElementById('prod-pedido');
+  const aviso = document.getElementById('prod-pedido-aviso');
+  const num = ((inp && inp.value) || '').trim();
+  if (aviso) { aviso.textContent = ''; }
+  if (!num) { if (sel) sel.value = ''; return; }
+  try {
+    const lista = await api('/pedidos/');
+    const achado = (lista || []).find(p => String(p.numero_pedido).trim() === num);
+    if (achado) {
+      if (sel.value === String(achado.id)) {
+        if (aviso) { aviso.textContent = '✔ Pedido de ' + achado.cliente_nome; aviso.style.color = '#46d369'; }
+        return;
+      }
+      if (![...sel.options].some(o => o.value === String(achado.id))) {
+        const opt = document.createElement('option');
+        opt.value = achado.id;
+        opt.textContent = achado.numero_pedido + ' — ' + achado.cliente_nome;
+        sel.appendChild(opt);
+      }
+      sel.value = String(achado.id);
+      await onProdPedidoChange();
+      if (aviso) { aviso.textContent = '✔ Pedido de ' + achado.cliente_nome; aviso.style.color = '#46d369'; }
+    } else {
+      if (sel) sel.value = '';
+      if (aviso) { aviso.textContent = 'Pedido não encontrado — será salvo como número avulso'; aviso.style.color = 'var(--muted, #8b92a3)'; }
+    }
+  } catch (e) { if (aviso) aviso.textContent = ''; }
+}
+
+function _prodParaEstoqueReset() {
+  const w = document.getElementById('prod-para-estoque-wrap');
+  if (w) w.style.display = 'none';
+  const ck = document.getElementById('prod-para-estoque');
+  if (ck) { ck.checked = false; ck.dataset.original = ''; ck.dataset.pedidoId = ''; }
+}
+
+async function onProdPedidoChange() {
+  const pedId = document.getElementById('prod-pedido').value;
+  _prodParaEstoqueReset();
+  if (!pedId) {
+    prodItens = [{ produto_id: null, producao: 0, sobra: 0, perdas: [] }];
+    document.getElementById('prod-pedido-manual').value = '';
+    renderProdItens();
+    atualizarTotalProd();
+    return;
+  }
+  
+  try {
+    const p = await api('/pedidos/' + pedId);
+    
+    // Auto-preencher o número manual para compatibilidade de visualização
+    document.getElementById('prod-pedido-manual').value = p.numero_pedido;
+
+    // Destino da produção: estoque do cliente (só para pedidos ainda não liberados para a Expedição)
+    const ck = document.getElementById('prod-para-estoque');
+    const wrap = document.getElementById('prod-para-estoque-wrap');
+    if (ck && wrap && !p.origem_estoque_cliente && ['aberto', 'em_producao', 'produzido', 'em_estoque'].includes(p.status || 'aberto')) {
+      const marcado = !!p.para_estoque_cliente;
+      ck.checked = marcado;
+      ck.dataset.original = marcado ? '1' : '0';
+      ck.dataset.pedidoId = String(p.id);
+      const dica = document.getElementById('prod-para-estoque-dica');
+      if (dica) dica.textContent = p.cliente_estoque_programado && !marcado ? '(cliente com estoque programado)' : '';
+      wrap.style.display = 'flex';
+    }
+    
+    // Itens de revenda não são produzidos — não entram em "Produtos Produzidos"
+    const itensProducao = (p.itens || []).filter(i => !_itemEhRevenda(i));
+    // Mapear os itens (de produção) do pedido para prodItens
+    prodItens = itensProducao.map(i => {
+      const matchedProdId = i.produto_id || findBestStockMatch(i.descricao, prodEstoqueCache);
+      
+      const jaConcluido = (i.qtd_produzida || 0) >= i.quantidade || i.status === 'produzido' || i.status === 'entregue';
+      
+      return {
+        pedido_item_id: i.id,
+        pedido_item_desc: i.descricao,
+        pedido_item_total: i.quantidade,
+        pedido_item_atual: i.qtd_produzida || 0,
+        produto_id: matchedProdId,
+        producao: 0, // Inicia em 0 produzido hoje
+        perda: 0,
+        sobra: 0,
+        tipo_perda: 'Quebra',
+        concluido: jaConcluido
+      };
+    });
+    
+    if (!prodItens.length) prodItens = [{ produto_id: null, producao: 0, sobra: 0, perdas: [] }];
+
+    renderProdItens();
+    atualizarTotalProd();
+  } catch (e) {
+    showAlert('Erro ao buscar itens do pedido: ' + e.message, 'danger');
+  }
+}
+window.onProdPedidoChange = onProdPedidoChange;
+
+function toggleItemConcluido(idx, checked) {
+  const item = prodItens[idx];
+  if (checked) {
+    const restante = Math.max(0, item.pedido_item_total - item.pedido_item_atual);
+    item.producao = restante;
+  } else {
+    item.producao = 0;
+  }
+  
+  const input = document.getElementById(`input-producao-${idx}`);
+  if (input) input.value = item.producao || '';
+  
+  atualizarTotalProd();
+}
+window.toggleItemConcluido = toggleItemConcluido;
+
+function _totalPerdaItem(item) {
+  return (item.perdas || []).reduce((s, p) => s + (p.quantidade || 0), 0);
+}
+
+function _perdasSemMotivo(item) {
+  return (item.perdas || []).some(p => p.tipo_perda === 'Outros' && (p.quantidade || 0) > 0 && !(p.observacao || '').trim());
+}
+
+function addPerdaLinha(idx) {
+  if (!prodItens[idx].perdas) prodItens[idx].perdas = [];
+  prodItens[idx].perdas.push({ quantidade: null, tipo_perda: 'Quebra', observacao: '' });
+  renderProdItens();
+}
+
+function removePerdaLinha(idx, li) {
+  prodItens[idx].perdas.splice(li, 1);
+  renderProdItens();
+}
+
+function renderProdItens() {
+  const el = document.getElementById('prod-itens-list');
+  if (!el) return;
+  
+  el.innerHTML = prodItens.map((item, idx) => {
+    let productFieldHtml = '';
+    if (item.pedido_item_id) {
+      productFieldHtml = `
+        <div class="prod-field-col prod-field-produto" style="min-width:0; display:flex; flex-direction:column; gap:4px; min-height:38px;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="chk-item-${idx}" ${item.concluido ? 'checked disabled' : ''} onchange="toggleItemConcluido(${idx}, this.checked)" style="width:16px; height:16px; accent-color:var(--accent); cursor:pointer">
+            <div style="min-width:0; flex:1">
+              <label for="chk-item-${idx}" style="cursor:pointer; font-weight:600; color:var(--text); display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:13px; margin:0;" title="${item.pedido_item_desc}">
+                ${item.pedido_item_desc}
+              </label>
+              <span style="color:var(--muted); font-size:11px; display:block; margin-top:1px;">
+                Produzido: ${fmtNum(item.pedido_item_atual)} de ${fmtNum(item.pedido_item_total)} ${item.concluido ? '<strong style="color:var(--success)">[Concluído]</strong>' : ''}
+              </span>
+            </div>
+          </div>
+          <select onchange="prodItens[${idx}].produto_id=+this.value||null" ${item.concluido ? 'disabled' : ''} style="font-size:11px;padding:4px 6px;width:100%;min-width:0;margin-top:4px;">
+            <option value="">— Sem baixar estoque (Não vinculado) —</option>
+            ${prodEstoqueCache.map(p => `<option value="${p.id}" ${item.produto_id===p.id?'selected':''}>${_produtoLabel(p)} (${fmtNum(p.quantidade_atual)} ${p.unidade})</option>`).join('')}
+          </select>
+        </div>
+      `;
+    } else {
+      productFieldHtml = `
+        <div class="prod-field-col prod-field-produto" style="min-width:0">
+          <label class="prod-field-label">Produto do Estoque</label>
+          <select onchange="prodItens[${idx}].produto_id=+this.value||null" ${item.concluido ? 'disabled' : ''} style="font-size:13px;padding:8px 10px;width:100%;min-width:0">
+            <option value="">— Sem produto —</option>
+            ${prodEstoqueCache.map(p => `<option value="${p.id}" ${item.produto_id===p.id?'selected':''}>${_produtoLabel(p)} (${fmtNum(p.quantidade_atual)} ${p.unidade})</option>`).join('')}
+          </select>
+        </div>
+      `;
+    }
+
+    let rowStyle = 'display:grid; grid-template-columns: 2.5fr 70px 70px 70px 28px; gap:6px; align-items:flex-end;';
+    let groupStyle = 'margin-bottom:10px; border-bottom:1px solid rgba(255,255,255,0.05); padding-bottom:10px;';
+    if (item.concluido) {
+      groupStyle += ' opacity: 0.55; pointer-events: none; background: rgba(255,255,255,0.01); border-radius: 4px; padding: 4px;';
+    }
+
+    const isDeleteDisabled = item.concluido || item.pedido_item_id;
+    const totalPerda = _totalPerdaItem(item);
+
+    const perdasHtml = (item.perdas || []).map((linha, li) => {
+      const mostrarMotivo = linha.tipo_perda === 'Outros' && (linha.quantidade || 0) > 0;
+      return `
+        <div style="display:grid;grid-template-columns:80px 1fr 28px;gap:8px;align-items:flex-start;margin-bottom:6px">
+          <input type="number" value="${linha.quantidade || ''}" min="0" placeholder="0"
+                 oninput="prodItens[${idx}].perdas[${li}].quantidade=+this.value; atualizarTotalPerdaLabel(${idx})"
+                 ${item.concluido ? 'disabled' : ''}
+                 style="font-size:13px;text-align:center;padding:8px 4px;border-color:rgba(239,68,68,.35)">
+          <div>
+            <select onchange="prodItens[${idx}].perdas[${li}].tipo_perda=this.value; renderProdItens()" ${item.concluido ? 'disabled' : ''} style="font-size:12px;padding:8px 6px;width:100%">
+              ${TIPOS_PERDA_MOD.map(t => `<option value="${t}" ${linha.tipo_perda===t?'selected':''}>${t}</option>`).join('')}
+            </select>
+            ${mostrarMotivo ? `
+              <input type="text" value="${(linha.observacao || '').replace(/"/g, '&quot;')}" placeholder="Descreva o motivo (obrigatório)"
+                     oninput="prodItens[${idx}].perdas[${li}].observacao=this.value"
+                     ${item.concluido ? 'disabled' : ''}
+                     style="font-size:13px;padding:8px 10px;width:100%;margin-top:6px">
+            ` : ''}
+            <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;color:var(--warn);font-weight:600;cursor:pointer">
+              <input type="checkbox" ${linha.nao_baixar_estoque ? 'checked' : ''}
+                     onchange="prodItens[${idx}].perdas[${li}].nao_baixar_estoque=this.checked"
+                     ${item.concluido ? 'disabled' : ''}
+                     style="margin:0;width:14px;height:14px;cursor:pointer;accent-color:var(--warn)">
+              ⚠️ Não baixar do estoque (resolvido com o cliente, ex: abatimento em fatura)
+            </label>
+          </div>
+          <button class="btn btn-sm btn-danger" onclick="removePerdaLinha(${idx}, ${li})" ${item.concluido ? 'disabled' : ''} style="padding:6px 8px" title="Remover este motivo">✕</button>
+        </div>
+      `;
+    }).join('');
+
+    return `
+      <div class="prod-item-group" style="${groupStyle}">
+      <div class="prod-item-row" style="${rowStyle}">
+        ${productFieldHtml}
+        <div class="prod-field-col prod-field-producao" style="min-width:0">
+          <label class="prod-field-label">Produção</label>
+          <input type="number" id="input-producao-${idx}" value="${item.producao||''}" min="0" placeholder="0"
+                 oninput="prodItens[${idx}].producao=+this.value; const restante = Math.max(0, prodItens[${idx}].pedido_item_total - prodItens[${idx}].pedido_item_atual); const chk = document.getElementById('chk-item-${idx}'); if (chk) { chk.checked = (+this.value === restante && restante > 0); }; atualizarTotalProd()"
+                 ${item.concluido ? 'disabled' : ''}
+                 style="font-size:12px;text-align:center;padding:6px 2px;width:100%;min-width:0">
+        </div>
+        <div class="prod-field-col prod-field-perda" style="min-width:0">
+          <label class="prod-field-label">Perda</label>
+          <div id="total-perda-${idx}" style="font-size:13px;text-align:center;padding:8px 4px;color:${totalPerda > 0 ? 'var(--danger)' : 'var(--muted)'};font-weight:600">${fmtNum(totalPerda)}</div>
+        </div>
+        <div class="prod-field-col prod-field-sobra" style="min-width:0">
+          <label class="prod-field-label">Sobra</label>
+          <input type="number" value="${item.sobra||''}" min="0" placeholder="0"
+                 oninput="prodItens[${idx}].sobra=+this.value"
+                 ${item.concluido ? 'disabled' : ''}
+                 style="font-size:13px;text-align:center;padding:8px 4px;border-color:rgba(16,185,129,.35);width:100%;min-width:0">
+        </div>
+        <div class="prod-field-col prod-field-acoes" style="min-width:0">
+          <button class="btn btn-sm btn-danger" onclick="removeProdItem(${idx})" ${isDeleteDisabled?'disabled':''} style="padding:6px 8px;width:100%">✕</button>
+        </div>
+      </div>
+      <div style="margin-top:8px">
+        <label class="prod-field-label" style="display:block;margin-bottom:4px">Perdas deste item</label>
+        ${perdasHtml}
+        <button class="btn btn-sm btn-secondary" onclick="addPerdaLinha(${idx})" ${item.concluido ? 'disabled' : ''} style="font-size:12px">+ Adicionar motivo de perda</button>
+      </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function atualizarTotalPerdaLabel(idx) {
+  const el = document.getElementById('total-perda-' + idx);
+  if (!el) return;
+  const total = _totalPerdaItem(prodItens[idx]);
+  el.textContent = fmtNum(total);
+  el.style.color = total > 0 ? 'var(--danger)' : 'var(--muted)';
+}
+
+window.atualizarTotalPerdaLabel = atualizarTotalPerdaLabel;
+
+// ─── PERDAS E SOBRAS DETALHADO (página + gráfico do dashboard) ─────────────
+
+async function _psdPopularFiltros(prefixo) {
+  const selProduto = document.getElementById(prefixo + '-produto');
+  const selColab = document.getElementById(prefixo + '-colaborador');
+  const selTipo = document.getElementById(prefixo + '-tipo');
+  const selMarca = document.getElementById(prefixo + '-marca');
+  if (selProduto && selProduto.options.length <= 1) {
+    try {
+      const prods = await api('/estoque/produtos');
+      selProduto.innerHTML = '<option value="">Todos os produtos</option>' +
+        (prods || []).map(p => `<option value="${p.id}">${p.codigo ? '[' + p.codigo + '] ' : ''}${p.nome}</option>`).join('');
+    } catch (e) {}
+  }
+  if (selColab && selColab.options.length <= 1) {
+    try {
+      const cols = await api('/colaboradores/');
+      selColab.innerHTML = '<option value="">Todos os operadores</option>' +
+        (cols || []).map(c => `<option value="${c.id}">${c.nome}</option>`).join('');
+    } catch (e) {}
+  }
+  if (selTipo && selTipo.options.length <= 1) {
+    selTipo.innerHTML = '<option value="">Todos os tipos</option>' +
+      TIPOS_PERDA_MOD.map(t => `<option value="${t}">${t}</option>`).join('');
+  }
+  if (selMarca && selMarca.options.length <= 1) {
+    try {
+      const marcas = await api('/relatorios/perdas-sobras-marcas');
+      selMarca.innerHTML = '<option value="">Todas as marcas</option>' +
+        (marcas || []).map(m => `<option value="${m}">${m}</option>`).join('');
+    } catch (e) {}
+  }
+}
+
+function _psdDefaultDatas(iniId, fimId) {
+  const ini = document.getElementById(iniId);
+  const fim = document.getElementById(fimId);
+  if (fim && !fim.value) fim.value = new Date().toISOString().slice(0, 10);
+  if (ini && !ini.value) {
+    const d = new Date();
+    d.setDate(d.getDate() - 29);
+    ini.value = d.toISOString().slice(0, 10);
+  }
+}
+
+function _psdQueryString(prefixo, iniId, fimId) {
+  const params = new URLSearchParams();
+  const ini = document.getElementById(iniId)?.value;
+  const fim = document.getElementById(fimId)?.value;
+  const produto = document.getElementById(prefixo + '-produto')?.value;
+  const colaborador = document.getElementById(prefixo + '-colaborador')?.value;
+  const tipo = document.getElementById(prefixo + '-tipo')?.value;
+  const marca = document.getElementById(prefixo + '-marca')?.value;
+  if (ini) params.set('data_inicio', ini);
+  if (fim) params.set('data_fim', fim);
+  if (produto) params.set('produto_id', produto);
+  if (colaborador) params.set('colaborador_id', colaborador);
+  if (tipo) params.set('tipo_perda', tipo);
+  if (marca) params.set('marca', marca);
+  return params.toString();
+}
+
+let psdVisaoAtual = 'detalhado';
+let psdUltimoResultado = null;
+
+function psdMudarVisao(modo) {
+  psdVisaoAtual = modo;
+  const btnDet = document.getElementById('psd-btn-detalhado');
+  const btnAgr = document.getElementById('psd-btn-agrupado');
+  const tabDet = document.getElementById('psd-tabela-detalhado');
+  const tabAgr = document.getElementById('psd-tabela-agrupado');
+  if (btnDet) btnDet.classList.toggle('btn-primary', modo === 'detalhado');
+  if (btnAgr) btnAgr.classList.toggle('btn-primary', modo === 'agrupado');
+  if (tabDet) tabDet.style.display = modo === 'detalhado' ? '' : 'none';
+  if (tabAgr) tabAgr.style.display = modo === 'agrupado' ? '' : 'none';
+  if (psdUltimoResultado) _psdRenderizar(psdUltimoResultado);
+}
+
+function _psdRenderizar(res) {
+  const ocorrencias = res.ocorrencias || [];
+  const agrupado = res.agrupado || [];
+  const cardsEl = document.getElementById('psd-cards');
+  if (cardsEl) {
+    cardsEl.innerHTML = `
+      <div class="card"><div class="card-label">Total perdido</div><div style="font-family:var(--font-head);font-weight:800;font-size:20px;color:var(--danger)">${fmtNum(res.total_perda)}</div></div>
+      <div class="card"><div class="card-label">Total sobra</div><div style="font-family:var(--font-head);font-weight:800;font-size:20px;color:var(--success)">${fmtNum(res.total_sobra)}</div></div>
+      <div class="card"><div class="card-label">Ocorrências</div><div style="font-family:var(--font-head);font-weight:800;font-size:20px">${ocorrencias.length}</div></div>
+    `;
+  }
+
+  const tbody = document.getElementById('psd-tbody');
+  if (tbody) {
+    if (!ocorrencias.length) {
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted)">Nenhuma ocorrência no período/filtros selecionados</td></tr>';
+    } else {
+      tbody.innerHTML = ocorrencias.map(o => `
+        <tr>
+          <td>${fmtDate(o.data)}</td>
+          <td>${o.produto_nome || '—'}</td>
+          <td>${o.marca || '—'}</td>
+          <td>${o.colaborador_nome || '—'}</td>
+          <td>${o.maquina_nome || '—'}</td>
+          <td>${o.tipo_perda || '—'}</td>
+          <td style="color:${o.perda_quantidade > 0 ? 'var(--danger)' : 'inherit'}">${fmtNum(o.perda_quantidade)}</td>
+          <td style="color:${o.sobra_quantidade > 0 ? 'var(--success)' : 'inherit'}">${fmtNum(o.sobra_quantidade)}</td>
+          <td>${o.pedido_numero || '—'}</td>
+        </tr>
+      `).join('');
+    }
+  }
+
+  const tbodyAgr = document.getElementById('psd-tbody-agrupado');
+  if (tbodyAgr) {
+    if (!agrupado.length) {
+      tbodyAgr.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--muted)">Nenhuma perda no período/filtros selecionados</td></tr>';
+    } else {
+      tbodyAgr.innerHTML = agrupado.map(a => `
+        <tr>
+          <td>${a.marca}</td>
+          <td>${a.tipo_perda}</td>
+          <td>${a.ocorrencias}</td>
+          <td style="color:var(--danger);font-weight:600">${fmtNum(a.quantidade)}</td>
+        </tr>
+      `).join('');
+    }
+  }
+}
+
+async function loadPerdasSobrasDetalhado() {
+  await _psdPopularFiltros('psd');
+  _psdDefaultDatas('psd-data-ini', 'psd-data-fim');
+  const qs = _psdQueryString('psd', 'psd-data-ini', 'psd-data-fim');
+  const tbody = document.getElementById('psd-tbody');
+  if (tbody) tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted)">Carregando...</td></tr>';
+  try {
+    const res = await api('/relatorios/perdas-sobras-detalhado?' + qs);
+    psdUltimoResultado = res;
+    psdMudarVisao(psdVisaoAtual);
+  } catch (e) {
+    if (tbody) tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--danger)">${e.message}</td></tr>`;
+  }
+}
+window.loadPerdasSobrasDetalhado = loadPerdasSobrasDetalhado;
+
+async function loadGraficoPerdasSobras() {
+  await _psdPopularFiltros('graf-ps');
+  _psdDefaultDatas('graf-ps-data-ini', 'graf-ps-data-fim');
+  ensureChartBox('chart-perdas-sobras-detalhado', 280);
+  const qs = _psdQueryString('graf-ps', 'graf-ps-data-ini', 'graf-ps-data-fim');
+  const kpiEl = document.getElementById('graf-ps-kpi');
+  try {
+    const [pontos, resumo] = await Promise.all([
+      api('/relatorios/perdas-sobras-grafico?' + qs),
+      api('/relatorios/perdas-sobras-detalhado?' + qs)
+    ]);
+    if (kpiEl) {
+      kpiEl.innerHTML = `
+        <div class="card"><div class="card-label">Total perdido no período</div><div style="font-family:var(--font-head);font-weight:800;font-size:18px;color:var(--danger)">${fmtNum(resumo.total_perda)}</div></div>
+        <div class="card"><div class="card-label">Total sobra no período</div><div style="font-family:var(--font-head);font-weight:800;font-size:18px;color:var(--success)">${fmtNum(resumo.total_sobra)}</div></div>
+      `;
+    }
+    if (!pontos.length) {
+      grafBoxMsg('chart-perdas-sobras-detalhado', 'Sem perdas ou sobras no período/filtros selecionados');
+      return;
+    }
+    destroyGrafChart('perdas-sobras-detalhado');
+    const colors = getChartThemeColors();
+    grafCharts['perdas-sobras-detalhado'] = new Chart(document.getElementById('chart-perdas-sobras-detalhado'), {
+      type: 'bar',
+      data: {
+        labels: pontos.map(p => fmtDate(p.data)),
+        datasets: [
+          { label: 'Perda', data: pontos.map(p => p.total_perda || 0), backgroundColor: colors.dangerColor, borderRadius: 4 },
+          { label: 'Sobra', data: pontos.map(p => p.total_sobra || 0), backgroundColor: colors.successColor, borderRadius: 4 }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: colors.textColor } } },
+        scales: {
+          x: { ticks: { color: colors.textColor }, grid: { color: colors.gridColor } },
+          y: { beginAtZero: true, ticks: { color: colors.textColor }, grid: { color: colors.gridColor } }
+        }
+      }
+    });
+  } catch (e) {
+    grafBoxMsg('chart-perdas-sobras-detalhado', e.message, true);
+  }
+}
+window.loadGraficoPerdasSobras = loadGraficoPerdasSobras;
+
+
+function addItemProducao() {
+  prodItens.push({ produto_id: null, producao: 0, sobra: 0, perdas: [] });
+  renderProdItens();
+}
+
+function removeProdItem(idx) {
+  if (prodItens.length <= 1) return;
+  prodItens.splice(idx, 1);
+  renderProdItens();
+  atualizarTotalProd();
+}
+
+function atualizarTotalProd() {
+  const total = prodItens.reduce((s, i) => s + (i.producao || 0), 0);
+  const el = document.getElementById('prod-total-label');
+  if (el) el.textContent = fmtNum(total);
+}
+
+function aplicarTravaMetaProd() {
+  const el = document.getElementById('prod-meta');
+  if (!el) return;
+  const isGestor = (window.usuarioLogado && window.usuarioLogado.role === 'gestor');
+  el.readOnly = !isGestor;
+  el.style.opacity = isGestor ? '' : '0.6';
+  el.style.cursor = isGestor ? '' : 'not-allowed';
+  el.title = isGestor ? '' : 'Meta global definida pelo gestor — nao editavel';
+}
+async function editarProducao(id, colId, maqId, data, meta, producao, produtoEstoqueId = null, perdaQtd = 0, sobraQtd = 0, pedidoNumero = '') {
+  const pedidos = await openModalProducao();
+  document.getElementById('prod-edit-id').value = id;
+  document.getElementById('prod-colaborador').value = colId;
+  document.getElementById('prod-maquina').value = maqId;
+  document.getElementById('prod-data').value = data;
+  document.getElementById('prod-meta').value = meta;
+  aplicarTravaMetaProd();
+  document.getElementById('prod-pedido-manual').value = pedidoNumero || '';
+  document.getElementById('modal-prod-title').textContent = 'Editar Produção';
+  document.getElementById('prod-save-btn').textContent = 'Atualizar';
+
+  const isSimplificado = !produtoEstoqueId;
+  const toggleContainerEdit = document.getElementById('prod-toggle-container');
+  if (toggleContainerEdit) toggleContainerEdit.style.display = 'none';
+  const checkbox = document.getElementById('prod-toggle-simplificado');
+  if (checkbox) {
+    checkbox.checked = isSimplificado;
+  }
+
+  if (isSimplificado) {
+    document.getElementById('prod-simples-qtd').value = producao || '';
+    document.getElementById('prod-simples-perda').value = perdaQtd || '';
+    document.getElementById('prod-simples-sobra').value = sobraQtd || '';
+    document.getElementById('prod-simples-tipo-perda').value = 'Quebra';
+    prodItens = [{ produto_id: null, producao: producao, sobra: sobraQtd, perdas: (perdaQtd > 0 ? [{ quantidade: perdaQtd, tipo_perda: 'Quebra', observacao: '' }] : []) }];
+  } else {
+    prodItens = [{ produto_id: produtoEstoqueId, producao: producao, sobra: sobraQtd, perdas: (perdaQtd > 0 ? [{ quantidade: perdaQtd, tipo_perda: 'Quebra', observacao: '' }] : []) }];
+  }
+
+  toggleFormSimplificado();
+  atualizarTotalProd();
+
+  if (pedidoNumero) {
+    const num = String(pedidoNumero).trim();
+    const achado = (pedidos || []).find(p => String(p.numero_pedido).trim() === num);
+    if (achado) {
+      const sel = document.getElementById('prod-pedido');
+      const aviso = document.getElementById('prod-pedido-aviso');
+      if (sel) {
+        if (![...sel.options].some(o => o.value === String(achado.id))) {
+          const opt = document.createElement('option');
+          opt.value = achado.id;
+          opt.textContent = achado.numero_pedido + ' — ' + achado.cliente_nome;
+          sel.appendChild(opt);
+        }
+        sel.value = String(achado.id);
+      }
+      if (aviso) {
+        aviso.textContent = '✔ Pedido de ' + achado.cliente_nome;
+        aviso.style.color = '#46d369';
+      }
+    }
+  }
+}
+
+async function postProducaoComConfirmacao(payload) {
+  try {
+    return await api('/producao/', 'POST', payload);
+  } catch (e) {
+    if ((e.message || '').includes('pedido_duplicado')) {
+      const ok = confirm('Já existe um lançamento do pedido ' + (payload.pedido_numero || '') + ' nesta data.\n\nDeseja lançar mesmo assim?');
+      if (!ok) throw new Error('__CANCELADO__');
+      return await api('/producao/', 'POST', Object.assign({}, payload, { confirmado: true }));
+    }
+    throw e;
+  }
+}
+
+function showConfirmProducao(titulo, html, onConfirm) {
+  const antigo = document.getElementById('popup-overlay-dyn');
+  if (antigo) antigo.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'popup-overlay-dyn';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:var(--surface,#161922);border:1px solid var(--border,rgba(255,255,255,.12));border-radius:12px;padding:20px 24px;max-width:520px;width:100%;box-shadow:0 12px 48px rgba(0,0,0,.55);max-height:88vh;overflow-y:auto';
+  box.innerHTML = '<div style="font-size:16px;font-weight:700;margin-bottom:12px">' + titulo + '</div>'
+    + '<div style="font-size:14px;line-height:1.5">' + html + '</div>'
+    + '<div style="display:flex;gap:10px;justify-content:flex-end;margin-top:18px">'
+    + '<button class="btn btn-secondary" id="popup-nao-dyn">Não, revisar</button>'
+    + '<button class="btn btn-primary" id="popup-sim-dyn">Sim, salvar</button>'
+    + '</div>';
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+  const fechar = () => overlay.remove();
+  box.querySelector('#popup-nao-dyn').onclick = fechar;
+  box.querySelector('#popup-sim-dyn').onclick = () => { fechar(); onConfirm(); };
+  overlay.onclick = (e) => { if (e.target === overlay) fechar(); };
+}
+
+async function salvarProducao() {
+  const colId = +document.getElementById('prod-colaborador').value;
+  const data = document.getElementById('prod-data').value;
+  let valid = true;
+  clearFieldHighlights('modal-producao');
+  if (!data) { highlightField('prod-data', true, 'Informe a data'); valid = false; }
+  else { highlightField('prod-data', false); }
+  if (!colId) { highlightField('prod-colaborador', true, 'Selecione o colaborador'); valid = false; }
+  else { highlightField('prod-colaborador', false); }
+  if (!valid) return;
+
+  const editId = document.getElementById('prod-edit-id').value;
+  const itens = prodItens.filter(i => (i.producao || 0) > 0 || _totalPerdaItem(i) > 0 || (i.sobra || 0) > 0);
+  if (!editId && !itens.length) { showAlert('Informe pelo menos um item com produção ou perda', 'danger'); return; }
+  const itensSemMotivo = prodItens.filter(i => _perdasSemMotivo(i));
+  if (itensSemMotivo.length) { showAlert('Informe o motivo da perda para os itens com tipo "Outros"', 'danger'); return; }
+  const base = itens.length ? itens : prodItens;
+  const total = prodItens.reduce((s, i) => s + (i.producao || 0), 0);
+  const pedido = document.getElementById('prod-pedido-manual').value.trim();
+  if (EXIGIR_PEDIDO_PRODUCAO && !pedido) {
+    highlightField('prod-pedido', true, 'Número do pedido é obrigatório (configuração ativada)');
+    showAlert('Número do pedido é obrigatório para lançar produção — ative a seleção de um pedido antes de salvar.', 'danger');
+    return;
+  }
+
+  const linhas = base.map(i => {
+    const prod = prodEstoqueCache.find(p => p.id === i.produto_id);
+    const nome = prod ? _produtoLabel(prod) : 'Sem produto vinculado (não baixa estoque)';
+    const perdaTotal = _totalPerdaItem(i);
+    const partes = [];
+    if (i.producao > 0) partes.push('produção ' + fmtNum(i.producao));
+    if (perdaTotal > 0) partes.push('perda ' + fmtNum(perdaTotal));
+    if (i.sobra > 0) partes.push('sobra ' + fmtNum(i.sobra));
+    let saldo = '';
+    if (prod && !editId) {
+      const baixa = (i.producao || 0) + perdaTotal - (i.sobra || 0);
+      const novo = Math.max(0, (prod.quantidade_atual || 0) - baixa);
+      saldo = '<br><span style="color:var(--muted);font-size:12px">estoque: ' + fmtNum(prod.quantidade_atual || 0) + ' &rarr; <b style="color:var(--text,#e6e9ef)">' + fmtNum(novo) + '</b> ' + (prod.unidade || '') + '</span>';
+    }
+    return '<li style="margin-bottom:8px"><b>' + nome + '</b> <span style="color:var(--muted);font-size:12.5px">&middot; ' + (partes.join(' &middot; ') || '-') + '</span>' + saldo + '</li>';
+  }).join('');
+
+  const html = '<div style="background:rgba(245,179,1,.08);border:1px solid rgba(245,179,1,.25);border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:13px"><b>Atenção:</b> ao confirmar, o <b>estoque dos produtos vinculados será baixado automaticamente</b>.</div>'
+    + (pedido ? '<div style="margin-bottom:10px">Pedido: <b>' + pedido + '</b></div>' : '')
+    + '<ul style="margin:0 0 12px;padding-left:18px">' + linhas + '</ul>'
+    + '<div style="border-top:1px solid var(--border,rgba(255,255,255,.1));padding-top:10px">Total produzido: <b>' + fmtNum(total) + ' peças</b></div>';
+
+  showConfirmProducao('Confirmar lançamento de produção', html, executarSalvarProducao);
+}
+
+async function executarSalvarProducao() {
+  const editId = document.getElementById('prod-edit-id').value;
+  const colId = +document.getElementById('prod-colaborador').value;
+  const maqId = +document.getElementById('prod-maquina').value;
+  const data = document.getElementById('prod-data').value;
+  const meta = +document.getElementById('prod-meta').value;
+  const pedidoManual = document.getElementById('prod-pedido-manual').value.trim();
+
+  let valid = true;
+  clearFieldHighlights('modal-producao');
+  if (!data) { highlightField('prod-data', true, 'Informe a data'); valid = false; }
+  else { highlightField('prod-data', false); }
+  if (!colId) { highlightField('prod-colaborador', true, 'Selecione o colaborador'); valid = false; }
+  else { highlightField('prod-colaborador', false); }
+  if (!valid) return;
+
+  const totalProducao = prodItens.reduce((s, i) => s + (i.producao || 0), 0);
+  
+
+
+  try {
+    if (editId) {
+      const item = prodItens[0];
+      await api('/producao/' + editId, 'PUT', {
+        colaborador_id: colId, maquina_id: maqId, data, meta,
+        producao: item.producao || 0,
+        produto_estoque_id: item.produto_id,
+        perdas: (item.perdas || []).map(pl => ({ quantidade: pl.quantidade || 0, tipo_perda: pl.tipo_perda, observacao: pl.observacao || null, nao_baixar_estoque: !!pl.nao_baixar_estoque })),
+        sobra_quantidade: item.sobra || 0,
+        pedido_numero: pedidoManual || null
+      });
+      showAlert('Produção atualizada!');
+    } else {
+      const itensValidos = prodItens.filter(i => (i.producao || 0) > 0 || _totalPerdaItem(i) > 0 || (i.sobra || 0) > 0);
+      if (!itensValidos.length) { showAlert('Informe pelo menos um item com produção ou perda', 'danger'); return; }
+
+      let res;
+
+      if (itensValidos.length === 1) {
+        // Apenas um item válido: o backend desconta do estoque de forma automática e registra a perda/sobra
+        const primItem = itensValidos[0];
+        res = await postProducaoComConfirmacao({
+          colaborador_id: colId, maquina_id: maqId, data, meta,
+          producao: totalProducao,
+          produto_estoque_id: primItem.produto_id,
+          perdas: (primItem.perdas || []).map(pl => ({ quantidade: pl.quantidade || 0, tipo_perda: pl.tipo_perda, observacao: pl.observacao || null, nao_baixar_estoque: !!pl.nao_baixar_estoque })),
+          sobra_quantidade: primItem.sobra || 0,
+          pedido_numero: pedidoManual || null
+        });
+      } else {
+        // Múltiplos produtos válidos: registra a produção diária principal sem
+        // vincular a um produto estoque (evitando que o backend dê baixa da soma
+        // total em um único produto) e envia a SOMA de perda/sobra de todos os
+        // itens para os relatórios do cabeçalho. O backend faz a baixa/sobra/perda
+        // item a item a partir da lista "itens", já vinculando cada movimentação
+        // ao próprio lançamento (producao_diaria_id) — por isso não fazemos mais
+        // as chamadas manuais de /estoque/movimentacoes aqui: além de redundante,
+        // elas ficavam sem esse vínculo e podiam ser revertidas por engano ao
+        // editar/excluir OUTRO lançamento do mesmo colaborador no mesmo dia.
+        const totalPerda = itensValidos.reduce((s, i) => s + _totalPerdaItem(i), 0);
+        const totalSobra = itensValidos.reduce((s, i) => s + (i.sobra || 0), 0);
+        res = await postProducaoComConfirmacao({
+          colaborador_id: colId, maquina_id: maqId, data, meta,
+          producao: totalProducao,
+          produto_estoque_id: null,
+          perda_quantidade: totalPerda,
+          sobra_quantidade: totalSobra,
+          pedido_numero: pedidoManual || null,
+          itens: itensValidos.map(i => ({
+            produto_estoque_id: i.produto_id,
+            quantidade: i.producao || 0,
+            sobra_quantidade: i.sobra || 0,
+            perdas: (i.perdas || []).map(pl => ({ quantidade: pl.quantidade || 0, tipo_perda: pl.tipo_perda, observacao: pl.observacao || null, nao_baixar_estoque: !!pl.nao_baixar_estoque }))
+          }))
+        });
+      }
+
+      // Destino do pedido (estoque do cliente) antes de atualizar o progresso, para o status sair certo
+      const ckEst = document.getElementById('prod-para-estoque');
+      if (ckEst && ckEst.dataset.pedidoId && (ckEst.checked ? '1' : '0') !== ckEst.dataset.original) {
+        try { await api('/pedidos/' + ckEst.dataset.pedidoId + '/para-estoque', 'PUT', { ativo: ckEst.checked }); }
+        catch (err) { showAlert('Produção salva, mas não deu para marcar o estoque do cliente: ' + err.message, 'warn'); }
+      }
+
+      // Atualizar o progresso de produção dos itens do pedido associado
+      for (const item of itensValidos) {
+        if (item.pedido_item_id && (item.producao > 0 || item.concluido)) {
+          try {
+            const novaQtd = item.pedido_item_atual + (item.producao || 0);
+            let novoStatus = 'aberto';
+            if (novaQtd >= item.pedido_item_total || item.concluido) {
+              novoStatus = 'produzido';
+            } else if (novaQtd > 0) {
+              novoStatus = 'em_producao';
+            }
+            await api('/pedidos/itens/' + item.pedido_item_id + '/status', 'PUT', {
+              status: novoStatus,
+              qtd_produzida: Math.min(item.pedido_item_total, novaQtd),
+              split_if_partial: true
+            });
+          } catch (err) {
+            console.error('Erro ao atualizar status do item do pedido:', err);
+          }
+        }
+      }
+
+      showAlert('Produção registrada! Total: ' + fmtNum(totalProducao) + ' peças');
+    }
+    closeModal('modal-producao');
+    // Atualizar seletor de mês para o mês do registro salvo
+    const mesEl = document.getElementById('prod-mes');
+    if (mesEl) mesEl.value = data.slice(0, 7);
+    loadProducao();
+  } catch(e) { if (e.message !== '__CANCELADO__') showAlert(e.message, 'danger'); }
+}
+
+// ─── PREMIAÇÃO ────────────────────────────────────────────────────────────────
+
+async function loadPremiacao() {
+  const mesEl = document.getElementById('prem-mes');
+  if (!mesEl.value) mesEl.value = currentMonth();
+  const mes = mesEl.value;
+  const topbarMesEl = document.getElementById('topbar-mes');
+  if (topbarMesEl) topbarMesEl.textContent = mesLabel(mes);
+
+  try {
+    const [ops, auxs] = await Promise.all([
+      api('/premiacao/operadores/' + mes),
+      api('/premiacao/auxiliares/' + mes)
+    ]);
+
+    // Cálculos para o Painel de Análise
+    const concorrentes = ops.filter(op => !op.eh_lider);
+    const elegiveis = concorrentes.filter(op => op.elegivel);
+    const totalPremioOps = elegiveis.reduce((sum, op) => sum + (op.valor_premio || 0), 0);
+    const totalPremioAuxs = auxs.reduce((sum, a) => sum + (a.valor_bonus || 0), 0);
+    const totalPremios = totalPremioOps + totalPremioAuxs;
+    
+    const pctMeta = concorrentes.length > 0 ? Math.round((elegiveis.length / concorrentes.length) * 100) : 0;
+    const melhorOp = ops.length > 0 ? ops[0] : null;
+    const mediaSetor = concorrentes.length > 0 ? Math.round(concorrentes.reduce((sum, op) => sum + (op.media_diaria || 0), 0) / concorrentes.length) : 0;
+
+    const insightsEl = document.getElementById('prem-insights-cards');
+    if (insightsEl) {
+      insightsEl.innerHTML = `
+        <div class="card" style="border-left: 3px solid var(--accent)">
+          <div class="card-label">Total em Prêmios</div>
+          <div class="card-value accent">${fmtBRL(totalPremios)}</div>
+          <div style="font-size:11px;color:var(--muted)">${fmtBRL(totalPremioOps)} Op. | ${fmtBRL(totalPremioAuxs)} Aux.</div>
+        </div>
+        <div class="card" style="border-left: 3px solid var(--success)">
+          <div class="card-label">Aderência à Meta</div>
+          <div class="card-value success">${pctMeta}%</div>
+          <div style="font-size:11px;color:var(--muted)">${elegiveis.length} de ${concorrentes.length} operadores atingiram a meta</div>
+        </div>
+        <div class="card" style="border-left: 3px solid var(--accent2)">
+          <div class="card-label">Média do Setor</div>
+          <div class="card-value info">${fmtNum(mediaSetor)}</div>
+          <div style="font-size:11px;color:var(--muted)">peças/dia por operador</div>
+        </div>
+        <div class="card" style="border-left: 3px solid var(--success)">
+          <div class="card-label">Destaque Operador</div>
+          <div class="card-value success" style="font-size:18px; line-height: 1.4">${melhorOp ? melhorOp.colaborador : '—'}</div>
+          <div style="font-size:11px;color:var(--muted)">${melhorOp ? `${fmtNum(melhorOp.total_producao)} peças no mês` : 'Nenhum lançamento'}</div>
+        </div>
+      `;
+    }
+
+    document.getElementById('prem-operadores').innerHTML = ops.length
+      ? ops.map((op, i) => `
+        <div class="rank-card">
+          <div class="rank-num ${i === 0 ? 'gold' : i === 1 ? 'silver' : ''}">${i + 1}º</div>
+          <div class="rank-info">
+            <div class="rank-name">${op.colaborador}</div>
+            <div class="rank-detail">
+              Média: ${fmtNum(Math.round(op.media_diaria || 0))} pçs/dia &nbsp;|&nbsp;
+              ${op.dias_trabalhados} dias
+            </div>
+          </div>
+          <div class="rank-premio">
+            ${op.eh_lider
+              ? `<span class="pill pill-info" style="font-size:11px">Líder · não concorre</span>`
+              : op.elegivel
+              ? `<div class="rank-valor">${fmtBRL(op.valor_premio)}</div><div class="pill pill-success" style="font-size:11px">✓ Elegível</div>`
+              : `<span class="pill pill-danger">Abaixo da média</span>`
+            }
+          </div>
+        </div>`).join('')
+      : '<p class="text-muted">Sem dados para este mês.</p>';
+
+    document.getElementById('prem-auxiliares').innerHTML = auxs.length
+      ? auxs.map(a => `
+        <div class="rank-card">
+          <div class="rank-num ${a.posicao === 1 ? 'gold' : 'silver'}">${a.posicao}º</div>
+          <div class="rank-info">
+            <div class="rank-name">${a.colaborador_nome}</div>
+            <div class="rank-detail">${a.observacao || '—'}</div>
+          </div>
+          <div class="rank-premio">
+            <div class="rank-valor">${fmtBRL(a.valor_bonus)}</div>
+            ${temPermissao('premiacao', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="removerAuxiliar(${a.id})" style="margin-top:4px">✕</button>` : ''}
+          </div>
+        </div>`).join('')
+      : '<p class="text-muted">Nenhum auxiliar premiado.</p>';
+  } catch (e) {
+    showAlert('Erro: ' + e.message, 'danger');
+  }
+}
+
+async function openModalAuxiliar() {
+  const auxs = await api('/colaboradores/?tipo=auxiliar');
+  document.getElementById('aux-colaborador').innerHTML =
+    auxs.map(c => `<option value="${c.id}">${c.nome}</option>`).join('');
+  const config = await api('/configuracoes/');
+  const b1 = config.find(c => c.chave === 'bonus_auxiliar_1');
+  if (b1) document.getElementById('aux-valor').value = b1.valor;
+  openModal('modal-auxiliar');
+}
+
+async function salvarAuxiliar() {
+  const mes = document.getElementById('prem-mes').value || currentMonth();
+  try {
+    const body = {
+      colaborador_id: +document.getElementById('aux-colaborador').value,
+      mes_referencia: mes,
+      posicao: +document.getElementById('aux-posicao').value,
+      valor_bonus: +document.getElementById('aux-valor').value,
+      observacao: document.getElementById('aux-obs').value
+    };
+    await api('/premiacao/auxiliares', 'POST', body);
+    showAlert('Premiação de auxiliar salva!');
+    closeModal('modal-auxiliar');
+    loadPremiacao();
+  } catch (e) {
+    showAlert(e.message, 'danger');
+  }
+}
+
+async function removerAuxiliar(id) {
+  if (!confirm('Remover premiação?')) return;
+  await api('/premiacao/auxiliares/' + id, 'DELETE');
+  loadPremiacao();
+}
+
+// ─── COLABORADORES ────────────────────────────────────────────────────────────
+
+function tipoKeyColaborador(tipo) {
+  return (tipo || '')
+    .toString()
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '');
+}
+
+function formatTipoColaborador(tipo) {
+  return (tipo || '')
+    .toString()
+    .trim()
+    .toLowerCase()
+    .split(/([\s-]+)/)
+    .map(parte => /^[\s-]+$/.test(parte) ? parte : parte.charAt(0).toUpperCase() + parte.slice(1))
+    .join('');
+}
+
+function pillTipoColaborador(tipo) {
+  const key = tipoKeyColaborador(tipo);
+  const mapa = {
+    operador: 'pill-info',
+    auxiliar: 'pill-warn',
+    lider: 'pill-purple',
+    supervisor: 'pill-success',
+    conferente: 'pill-teal',
+    estoquista: 'pill-pink'
+  };
+  if (mapa[key]) return mapa[key];
+  const cores = ['pill-purple', 'pill-success', 'pill-teal', 'pill-pink', 'pill-slate'];
+  let soma = 0;
+  for (let i = 0; i < key.length; i++) soma += key.charCodeAt(i);
+  return cores[soma % cores.length];
+}
+
+async function carregarTiposColaborador(selected = 'operador') {
+  const tipos = await api('/colaboradores/tipos').catch(() => ([
+    { nome: 'operador' },
+    { nome: 'auxiliar' }
+  ]));
+  const sel = document.getElementById('col-tipo');
+  if (sel) {
+    sel.innerHTML = tipos.map(t => {
+      const nome = t.nome || '';
+      return `<option value="${nome}" ${nome === selected ? 'selected' : ''}>${formatTipoColaborador(nome)}</option>`;
+    }).join('');
+    if (selected && !tipos.some(t => t.nome === selected)) {
+      sel.innerHTML += `<option value="${selected}" selected>${formatTipoColaborador(selected)}</option>`;
+    }
+  }
+  return tipos;
+}
+
+async function openModalTipoColaborador() {
+  document.getElementById('col-tipo-novo').value = '';
+  await renderTiposColaborador();
+  openModal('modal-tipo-colaborador');
+}
+
+async function renderTiposColaborador() {
+  const lista = document.getElementById('col-tipos-lista');
+  if (!lista) return;
+  const tipos = await api('/colaboradores/tipos').catch(() => []);
+  lista.innerHTML = tipos.length ? tipos.map(t => `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;flex-wrap:wrap">
+      <span class="pill ${pillTipoColaborador(t.nome)}">${formatTipoColaborador(t.nome)}</span>
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer">
+          <input type="checkbox" ${t.aparece_producao ? 'checked' : ''} onchange="toggleFlagTipo(${t.id},'aparece_producao',this.checked)"> Aparece na Produção
+        </label>
+        <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);cursor:pointer">
+          <input type="checkbox" ${t.concorre_premio ? 'checked' : ''} onchange="toggleFlagTipo(${t.id},'concorre_premio',this.checked)"> Concorre ao prêmio
+        </label>
+        ${['operador','auxiliar'].includes(t.nome) ? '' : (temPermissao('colaboradores', 'deletar') ? `<button class="btn btn-sm btn-danger" style="padding:2px 8px" onclick="deletarTipoColaborador(${t.id})">×</button>` : '')}
+      </div>
+    </div>
+  `).join('') : '<span style="color:var(--muted)">Nenhum tipo cadastrado</span>';
+}
+
+async function toggleFlagTipo(id, campo, valor) {
+  try {
+    await api('/colaboradores/tipos/' + id + '/flags', 'PUT', { [campo]: valor ? 1 : 0 });
+    showAlert('Configuração atualizada');
+  } catch (e) {
+    showAlert('Erro ao atualizar: ' + e.message, 'danger');
+    renderTiposColaborador();
+  }
+}
+
+async function salvarTipoColaborador() {
+  const input = document.getElementById('col-tipo-novo');
+  const nome = (input?.value || '').trim();
+  clearFieldHighlights('modal-tipo-colaborador');
+  if (!nome) { highlightField('col-tipo-novo', true, 'Informe o tipo'); return; }
+  const btn = document.getElementById('btn-salvar-tipo-colaborador');
+  if (btn) btn.disabled = true;
+  try {
+    await api('/colaboradores/tipos', 'POST', { nome });
+    showAlert('Tipo cadastrado!');
+    input.value = '';
+    await renderTiposColaborador();
+    await carregarTiposColaborador(nome.toLowerCase());
+  } catch (e) {
+    showAlert(e.message || 'Erro ao salvar tipo de colaborador', 'danger');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function deletarTipoColaborador(id) {
+  if (!confirm('Desativar este tipo?')) return;
+  try {
+    await api('/colaboradores/tipos/' + id, 'DELETE');
+    showAlert('Tipo desativado');
+    await renderTiposColaborador();
+    await carregarTiposColaborador();
+  } catch (e) {
+    showAlert(e.message, 'danger');
+  }
+}
+
+async function loadColaboradores() {
+  const rows = await api('/colaboradores/');
+  const tbody = document.getElementById('col-tbody');
+  tbody.innerHTML = rows.map(c => `
+    <tr>
+      <td><strong>${c.nome}</strong></td>
+      <td><span class="pill ${pillTipoColaborador(c.tipo)}">${formatTipoColaborador(c.tipo)}</span></td>
+      <td>${c.maquina_nome || '—'}</td>
+      <td><span class="pill pill-success">Ativo</span></td>
+      <td class="flex gap-2">
+        ${temPermissao('colaboradores', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="editColaborador(${c.id})">Editar</button>` : ''}
+        ${temPermissao('colaboradores', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="deletarColaborador(${c.id})">Remover</button>` : ''}
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function openModalColaborador() {
+  document.getElementById('col-id').value = '';
+  document.getElementById('col-nome').value = '';
+  await carregarTiposColaborador('operador');
+  const mqs = await api('/maquinas/');
+  document.getElementById('col-maquina').innerHTML =
+    mqs.filter(m => m.ativa).map(m => `<option value="${m.id}">${m.nome}</option>`).join('');
+  toggleMaquina();
+  openModal('modal-colaborador');
+}
+
+function toggleMaquina() {
+  const tipo = document.getElementById('col-tipo').value;
+  document.getElementById('col-maquina-group').style.display = tipo === 'operador' ? '' : 'none';
+}
+
+async function editColaborador(id) {
+  const c = await api('/colaboradores/' + id);
+  const mqs = await api('/maquinas/');
+  document.getElementById('col-id').value = c.id;
+  document.getElementById('col-nome').value = c.nome;
+  await carregarTiposColaborador(c.tipo);
+  document.getElementById('col-maquina').innerHTML =
+    mqs.filter(m => m.ativa).map(m =>
+      `<option value="${m.id}" ${m.id === c.maquina_id ? 'selected' : ''}>${m.nome}</option>`
+    ).join('');
+  toggleMaquina();
+  openModal('modal-colaborador');
+}
+
+async function salvarColaborador() {
+  const id = document.getElementById('col-id').value;
+  const tipo = document.getElementById('col-tipo').value;
+  const nome = document.getElementById('col-nome').value.trim();
+
+  clearFieldHighlights('modal-colaborador');
+  if (!nome) { highlightField('col-nome', true, 'Informe o nome'); return; }
+  if (!tipo) { highlightField('col-tipo', true, 'Selecione o tipo'); return; }
+
+  const maquinaVal = document.getElementById('col-maquina')?.value || '';
+  const body = {
+    nome,
+    tipo,
+    maquina_id: tipo === 'operador' && maquinaVal ? +maquinaVal : null,
+    ativo: 1
+  };
+  const btn = document.getElementById('btn-salvar-colaborador');
+  if (btn) btn.disabled = true;
+  try {
+    if (id) await api('/colaboradores/' + id, 'PUT', body);
+    else await api('/colaboradores/', 'POST', body);
+    showAlert('Colaborador salvo!');
+    closeModal('modal-colaborador');
+    await loadColaboradores();
+  } catch (e) {
+    showAlert(e.message || 'Erro ao salvar colaborador', 'danger');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function deletarColaborador(id) {
+  if (!confirm('Desativar este colaborador?')) return;
+  await api('/colaboradores/' + id, 'DELETE');
+  showAlert('Colaborador desativado');
+  loadColaboradores();
+}
+
+// ─── MÁQUINAS ─────────────────────────────────────────────────────────────────
+
+async function loadMaquinas() {
+  const rows = await api('/maquinas/');
+  const tbody = document.getElementById('maq-tbody');
+  tbody.innerHTML = rows.map(m => `
+    <tr>
+      <td><strong>${m.nome}</strong></td>
+      <td>${m.setor || '—'}</td>
+      <td>${fmtNum(m.meta_padrao)} pçs/dia</td>
+      <td><span class="pill ${m.ativa ? 'pill-success' : 'pill-danger'}">${m.ativa ? 'Ativa' : 'Inativa'}</span></td>
+      <td class="flex gap-2">
+        ${temPermissao('maquinas', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="editMaquina(${m.id})">Editar</button>` : ''}
+        ${temPermissao('maquinas', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="deletarMaquina(${m.id})">Desativar</button>` : ''}
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function openModalMaquina() {
+  document.getElementById('maq-id').value = '';
+  document.getElementById('maq-nome').value = '';
+  document.getElementById('maq-setor').value = '';
+  document.getElementById('maq-meta').value = META_GLOBAL;
+  openModal('modal-maquina');
+}
+
+async function editMaquina(id) {
+  const m = await api('/maquinas/' + id);
+  document.getElementById('maq-id').value = m.id;
+  document.getElementById('maq-nome').value = m.nome;
+  document.getElementById('maq-setor').value = m.setor || '';
+  document.getElementById('maq-meta').value = m.meta_padrao;
+  openModal('modal-maquina');
+}
+
+async function salvarMaquina() {
+  const id = document.getElementById('maq-id').value;
+  const nome = document.getElementById('maq-nome').value.trim();
+
+  clearFieldHighlights('modal-maquina');
+  if (!nome) { highlightField('maq-nome', true, 'Informe o nome'); return; }
+
+  const body = {
+    nome,
+    setor: document.getElementById('maq-setor').value,
+    meta_padrao: +document.getElementById('maq-meta').value,
+    ativa: 1
+  };
+  try {
+    if (id) await api('/maquinas/' + id, 'PUT', body);
+    else await api('/maquinas/', 'POST', body);
+    showAlert('Máquina salva!');
+    closeModal('modal-maquina');
+    loadMaquinas();
+  } catch (e) {
+    showAlert(e.message, 'danger');
+  }
+}
+
+async function deletarMaquina(id) {
+  if (!confirm('Desativar esta máquina?')) return;
+  await api('/maquinas/' + id, 'DELETE');
+  showAlert('Máquina desativada');
+  loadMaquinas();
+}
+
+
+// ─── RELATÓRIOS ───────────────────────────────────────────────────────────────
+
+let charts = {};
+
+function destroyChart(id) {
+  if (charts[id]) { charts[id].destroy(); delete charts[id]; }
+}
+
+function mesLabel2(mes) {
+  if (!mes) return '';
+  const [y, m] = mes.split('-');
+  const n = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+  return n[+m-1] + '/' + y.slice(2);
+}
+
+const CORES = ['#f0b429','#3b82f6','#10b981','#f43f5e','#a855f7','#f97316'];
+
+async function loadRelatorios() {
+  const mes = new Date().toISOString().slice(0,7);
+  const topbarMesEl = document.getElementById('topbar-mes');
+  if (topbarMesEl) topbarMesEl.textContent = mesLabel(mes);
+
+  // Inicializar filtros se os elementos existirem (nova versão com abas)
+  const mesIniEl = document.getElementById('rel-prod-mes-ini');
+  const mesFimEl = document.getElementById('rel-prod-mes-fim');
+  const premEl = document.getElementById('rel-prem-mes');
+  const anaIniEl = document.getElementById('rel-ana-mes-ini');
+  const anaFimEl = document.getElementById('rel-ana-mes-fim');
+  if (mesIniEl && !mesIniEl.value) mesIniEl.value = mes;
+  if (mesFimEl && !mesFimEl.value) mesFimEl.value = mes;
+  if (premEl && !premEl.value) premEl.value = mes;
+  if (anaIniEl && !anaIniEl.value) anaIniEl.value = mes;
+  if (anaFimEl && !anaFimEl.value) anaFimEl.value = mes;
+  try {
+    const cols = await api('/colaboradores/');
+    const sel = document.getElementById('rel-prod-col');
+    if (sel && sel.options.length<=1) cols.forEach(c => { const o=document.createElement('option'); o.value=c.id; o.textContent=c.nome; sel.appendChild(o); });
+  } catch(e) {}
+  await carregarCategoriasRelEstoque();
+  // Só carrega se a aba produção estiver visível
+  if (document.getElementById('rel-content-producao')) loadRelProducao();
+}
+
+async function loadRelProducao() {
+  const mesIni = document.getElementById('rel-prod-mes-ini')?.value || new Date().toISOString().slice(0,7);
+  const mesFim = document.getElementById('rel-prod-mes-fim')?.value || '';
+  const colId = document.getElementById('rel-prod-col')?.value || '';
+  let url = '/producao/?';
+  if (mesIni) url += 'mes=' + mesIni;
+  if (colId) url += '&colaborador_id=' + colId;
+  const rows = await api(url);
+  const tbody = document.getElementById('rel-prod-tbody');
+  if (!rows.length) { tbody.innerHTML='<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:24px">Nenhum registro</td></tr>'; return; }
+  const total = rows.reduce((s,r)=>s+(r.producao||0),0);
+  const totalPerda = rows.reduce((s,r)=>s+(r.perda_quantidade||0),0);
+  document.getElementById('rel-prod-cards').innerHTML = `
+    <div class="card"><div class="card-label">Total Registros</div><div class="card-value accent">${rows.length}</div></div>
+    <div class="card"><div class="card-label">Total Produzido</div><div class="card-value info">${fmtNum(total)}</div></div>
+    <div class="card"><div class="card-label">Total Perdas</div><div class="card-value danger">${fmtNum(totalPerda)}</div></div>
+  `;
+  tbody.innerHTML = rows.map(r => {
+    const exc = r.excedente||0;
+    return `<tr>
+      <td>${fmtDate(r.data)}</td>
+      <td><strong>${r.colaborador_nome}</strong></td>
+      <td>${r.maquina_nome}</td>
+      <td>${fmtNum(r.meta)}</td>
+      <td>${fmtNum(r.producao)}</td>
+      <td class="${exc>=0?'positive':'negative'}">${exc>=0?'+':''}${fmtNum(exc)}</td>
+      <td class="danger">${r.perda_quantidade>0?fmtNum(r.perda_quantidade):'—'}</td>
+      <td class="positive">${r.sobra_quantidade>0?fmtNum(r.sobra_quantidade):'—'}</td>
+      <td style="color:var(--muted)">${r.pedido_numero||'—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function loadRelAnaliticos() {
+  const mesIni = document.getElementById('rel-ana-mes-ini')?.value || new Date().toISOString().slice(0,7);
+  const mesFim = document.getElementById('rel-ana-mes-fim')?.value || '';
+  const tipoAna = document.getElementById('rel-ana-tipo')?.value || 'rendimento';
+  
+  let endpoint = '';
+  if (tipoAna === 'rendimento') {
+    endpoint = '/relatorios/rendimento-insumos?';
+  } else if (tipoAna === 'evolucao') {
+    endpoint = '/relatorios/evolucao-mensal?';
+  } else if (tipoAna === 'ranking') {
+    endpoint = '/relatorios/ranking-historico?';
+  }
+  
+  if (mesIni) endpoint += 'mes_ini=' + mesIni;
+  if (mesFim) endpoint += '&mes_fim=' + mesFim;
+  
+  try {
+    const data = await api(endpoint);
+    const titleEl = document.getElementById('rel-ana-title');
+    const thead = document.getElementById('rel-ana-thead');
+    const tbody = document.getElementById('rel-ana-tbody');
+    const cardsEl = document.getElementById('rel-ana-cards');
+    
+    if (!tbody || !thead) return;
+    
+    if (tipoAna === 'rendimento') {
+      if (titleEl) titleEl.textContent = 'Rendimento e Perdas de Insumos';
+      thead.innerHTML = `
+        <tr>
+          <th>Código/ID</th>
+          <th>Produto/Insumo</th>
+          <th>Unidade</th>
+          <th>Produção Real</th>
+          <th>Perda Física</th>
+          <th>Sobra</th>
+          <th>Consumo Total</th>
+          <th>Índice de Perda (%)</th>
+          <th>Custo Médio</th>
+          <th>Custo Desperdiçado</th>
+        </tr>
+      `;
+      
+      if (!data.length) {
+        tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:24px">Nenhum registro</td></tr>';
+        if (cardsEl) cardsEl.innerHTML = `
+          <div class="card"><div class="card-label">Total Produzido</div><div class="card-value info">0</div></div>
+          <div class="card"><div class="card-label">Total Perdas</div><div class="card-value danger">0</div></div>
+          <div class="card"><div class="card-label">Custo do Desperdício</div><div class="card-value danger">${fmtBRL(0)}</div></div>
+        `;
+        return;
+      }
+      
+      const totalProduzido = data.reduce((s, r) => s + (r.total_produzido || 0), 0);
+      const totalPerda = data.reduce((s, r) => s + (r.total_perda || 0), 0);
+      const totalDesperdicio = data.reduce((s, r) => s + (r.custo_total_perda || 0), 0);
+      
+      if (cardsEl) cardsEl.innerHTML = `
+        <div class="card"><div class="card-label">Total Produzido</div><div class="card-value info">${fmtNum(totalProduzido)}</div></div>
+        <div class="card"><div class="card-label">Total Perdas</div><div class="card-value danger">${fmtNum(totalPerda)}</div></div>
+        <div class="card"><div class="card-label">Custo do Desperdício</div><div class="card-value danger">${fmtBRL(totalDesperdicio)}</div></div>
+      `;
+      
+      tbody.innerHTML = data.map(r => {
+        const prod = r.total_produzido || 0;
+        const perda = r.total_perda || 0;
+        const sobra = r.total_sobra || 0;
+        const consumo = r.total_consumido || 0;
+        const idxPerda = r.indice_perda || 0;
+        const custoMed = r.custo_medio || 0;
+        const custoTotalPerda = r.custo_total_perda || 0;
+        const unidade = r.unidade || '';
+        
+        return `<tr>
+          <td>${r.produto_codigo ? `<strong>${r.produto_codigo}</strong>` : `ID: ${r.produto_id}`}</td>
+          <td>${r.produto_nome}</td>
+          <td>${unidade}</td>
+          <td>${fmtNum(prod)}</td>
+          <td class="danger">${fmtNum(perda)}</td>
+          <td class="positive">${fmtNum(sobra)}</td>
+          <td><strong>${fmtNum(consumo)}</strong></td>
+          <td style="color:${idxPerda > 0 ? 'var(--danger)' : 'inherit'};font-weight:${idxPerda > 0 ? 'bold' : 'normal'}">${fmtNum(idxPerda)}%</td>
+          <td>${fmtBRL(custoMed)}</td>
+          <td class="danger" style="font-weight:bold">${fmtBRL(custoTotalPerda)}</td>
+        </tr>`;
+      }).join('');
+      
+    } else if (tipoAna === 'evolucao') {
+      if (titleEl) titleEl.textContent = 'Evolução Mensal da Produção';
+      thead.innerHTML = `
+        <tr>
+          <th>Mês</th>
+          <th>Colaborador</th>
+          <th>Dias Trabalhados</th>
+          <th>Produção Total</th>
+          <th>Média Diária</th>
+          <th>Meta Média</th>
+          <th>Excedente Acumulado</th>
+          <th>Total Perdas</th>
+          <th>Total Sobras</th>
+        </tr>
+      `;
+      
+      if (!data.length) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:24px">Nenhum registro</td></tr>';
+        if (cardsEl) cardsEl.innerHTML = `
+          <div class="card"><div class="card-label">Total Produzido</div><div class="card-value info">0</div></div>
+          <div class="card"><div class="card-label">Dias Trabalhados</div><div class="card-value info">0</div></div>
+          <div class="card"><div class="card-label">Total Perdas</div><div class="card-value danger">0</div></div>
+        `;
+        return;
+      }
+      
+      const totalProduzido = data.reduce((s, r) => s + (r.total_producao || 0), 0);
+      const totalPerda = data.reduce((s, r) => s + (r.total_perdas || 0), 0);
+      const totalDias = data.reduce((s, r) => s + (r.dias_trabalhados || 0), 0);
+      
+      if (cardsEl) cardsEl.innerHTML = `
+        <div class="card"><div class="card-label">Total Produzido</div><div class="card-value info">${fmtNum(totalProduzido)}</div></div>
+        <div class="card"><div class="card-label">Lançamentos / Dias</div><div class="card-value info">${fmtNum(totalDias)}</div></div>
+        <div class="card"><div class="card-label">Total Perdas</div><div class="card-value danger">${fmtNum(totalPerda)}</div></div>
+      `;
+      
+      tbody.innerHTML = data.map(r => {
+        const mes = r.mes_referencia;
+        const col = r.colaborador;
+        const dias = r.dias_trabalhados || 0;
+        const prod = r.total_producao || 0;
+        const med = r.media_diaria || 0;
+        const meta = r.meta_media || 0;
+        const exc = r.excedente_total || 0;
+        const per = r.total_perdas || 0;
+        const sob = r.total_sobras || 0;
+        
+        return `<tr>
+          <td><strong>${mesLabel(mes)}</strong></td>
+          <td><strong>${col}</strong></td>
+          <td>${fmtNum(dias)}</td>
+          <td>${fmtNum(prod)}</td>
+          <td>${fmtNum(Math.round(med))}</td>
+          <td>${fmtNum(Math.round(meta))}</td>
+          <td class="${exc>=0?'positive':'negative'}">${exc>=0?'+':''}${fmtNum(Math.round(exc))}</td>
+          <td class="danger">${per>0?fmtNum(per):'—'}</td>
+          <td class="positive">${sob>0?fmtNum(sob):'—'}</td>
+        </tr>`;
+      }).join('');
+      
+    } else if (tipoAna === 'ranking') {
+      if (titleEl) titleEl.textContent = 'Ranking Histórico de Operadores';
+      thead.innerHTML = `
+        <tr>
+          <th>Operador</th>
+          <th>Meses Ativos</th>
+          <th>Total Produzido</th>
+          <th>Média Geral</th>
+          <th>Média da Meta</th>
+          <th>Saldo Excedente</th>
+          <th>Aderência à Meta</th>
+          <th>Total Perdas</th>
+          <th>Total Sobras</th>
+          <th>Melhor Dia</th>
+        </tr>
+      `;
+      
+      if (!data.length) {
+        tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:24px">Nenhum registro</td></tr>';
+        if (cardsEl) cardsEl.innerHTML = `
+          <div class="card"><div class="card-label">Melhor Operador</div><div class="card-value success">—</div></div>
+          <div class="card"><div class="card-label">Melhor Média</div><div class="card-value info">0</div></div>
+          <div class="card"><div class="card-label">Total Geral</div><div class="card-value info">0</div></div>
+        `;
+        return;
+      }
+      
+      const melhorOp = data[0]?.colaborador || '—';
+      const melhorMed = data[0]?.media_geral || 0;
+      const totalGeral = data.reduce((s, r) => s + (r.total_geral || 0), 0);
+      
+      if (cardsEl) cardsEl.innerHTML = `
+        <div class="card" style="border-left:3px solid var(--success)"><div class="card-label">Melhor Operador</div><div class="card-value success" style="font-size:18px">${melhorOp}</div></div>
+        <div class="card" style="border-left:3px solid var(--accent)"><div class="card-label">Média Diária do Operador</div><div class="card-value info">${fmtNum(Math.round(melhorMed))} pçs/dia</div></div>
+        <div class="card" style="border-left:3px solid var(--accent2)"><div class="card-label">Total Geral Produzido</div><div class="card-value info">${fmtNum(totalGeral)}</div></div>
+      `;
+      
+      tbody.innerHTML = data.map(r => {
+        const col = r.colaborador;
+        const meses = r.meses_trabalhados || 0;
+        const total = r.total_geral || 0;
+        const med = r.media_geral || 0;
+        const meta = r.media_meta || 0;
+        const exc = r.saldo_excedente || 0;
+        const pct = r.pct_acima_meta || 0;
+        const per = r.total_perdas || 0;
+        const sob = r.total_sobras || 0;
+        const melhor = r.melhor_dia || 0;
+        
+        return `<tr>
+          <td><strong>${col}</strong></td>
+          <td>${fmtNum(meses)}</td>
+          <td><strong>${fmtNum(total)}</strong></td>
+          <td>${fmtNum(Math.round(med))}</td>
+          <td>${fmtNum(Math.round(meta))}</td>
+          <td class="${exc>=0?'positive':'negative'}">${exc>=0?'+':''}${fmtNum(Math.round(exc))}</td>
+          <td style="font-weight:bold;color:${pct>=80?'var(--success)':pct>=50?'var(--warn)':'var(--danger)'}">${fmtNum(pct)}%</td>
+          <td class="danger">${per>0?fmtNum(per):'—'}</td>
+          <td class="positive">${sob>0?fmtNum(sob):'—'}</td>
+          <td class="positive"><strong>${fmtNum(melhor)}</strong></td>
+        </tr>`;
+      }).join('');
+    }
+  } catch (err) {
+    showAlert('Erro ao carregar relatório analítico: ' + err.message, 'danger');
+  }
+}
+
+function onChangeRelAnaTipo() {
+  loadRelAnaliticos();
+}
+
+window.onChangeRelAnaTipo = onChangeRelAnaTipo;
+window.loadRelAnaliticos = loadRelAnaliticos;
+
+
+async function carregarCategoriasRelEstoque() {
+  const sel = document.getElementById('rel-est-categoria');
+  if (!sel) return;
+  const atual = sel.value || '';
+  try {
+    const cats = await api('/estoque/categorias');
+    sel.innerHTML = '<option value="">Todas as categorias</option>' + cats.map(c => `<option value="${c.id}">${c.nome}</option>`).join('');
+    if (atual) sel.value = atual;
+  } catch (e) {
+    console.warn('Não foi possível carregar categorias do relatório de estoque', e);
+  }
+}
+
+function statusEstoqueRel(p) {
+  const saldo = Number(p.quantidade_atual || 0);
+  const minimo = Number(p.estoque_minimo || 0);
+  if (saldo <= 0) return { texto: 'Falta em estoque', pill: 'pill-danger', cor: 'var(--danger)' };
+  if (saldo <= minimo) return { texto: 'Abaixo do mínimo', pill: 'pill-warn', cor: 'var(--warn)' };
+  return { texto: 'OK', pill: 'pill-success', cor: 'var(--success)' };
+}
+
+function cardRelatorioEstoque(titulo, valor, detalhe) {
+  return `<div class="card metric-card"><div class="metric-label">${titulo}</div><div class="metric-value">${valor}</div><div class="metric-sub">${detalhe || ''}</div></div>`;
+}
+
+
+
+
+
+async function sairSistema() {
+  if (!confirm('Deseja realmente sair do sistema PRATIC?')) return;
+  try { await fetch('/api/auth/logout', { method: 'POST' }); } catch (e) { console.error(e); }
+  try { localStorage.removeItem('user_nome'); localStorage.removeItem('user_role'); localStorage.removeItem('user_username'); } catch (e) {}
+  document.body.innerHTML = `
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#0d0f14;font-family:'DM Sans',sans-serif">
+      <div style="text-align:center;padding:40px">
+        <div style="font-family:'Syne',sans-serif;font-size:32px;font-weight:800;color:#f0b429;letter-spacing:3px;margin-bottom:8px">PRATIC</div>
+        <div style="font-size:14px;color:#6b7280;margin-bottom:32px">Sistema de Produção</div>
+        <div style="font-size:16px;color:#e8eaf0;margin-bottom:24px">Sessão encerrada com sucesso.</div>
+        <button onclick="location.href='/login'" style="padding:14px 32px;background:#f0b429;color:#000;border:none;border-radius:10px;font-family:'Syne',sans-serif;font-size:15px;font-weight:700;cursor:pointer;letter-spacing:.5px">
+          → Entrar novamente
+        </button>
+      </div>
+    </div>`;
+}
+
+// ─── TABS RELATÓRIOS ──────────────────────────────────────────────────────────
+
+function switchRelTab(tab) {
+  ['producao','premiacao','estoque','pedidos','epi','analiticos'].forEach(t=>{
+    const el=document.getElementById('rel-content-'+t);
+    const btn=document.getElementById('rtab-'+t);
+    if(el) el.style.display = t===tab?'':'none';
+    if(btn){btn.style.borderColor=t===tab?'var(--accent)':'';btn.style.color=t===tab?'var(--accent)':'';}
+  });
+  if(tab==='producao') loadRelProducao();
+  if(tab==='premiacao') loadRelPremiacao();
+  if(tab==='estoque') loadRelEstoque();
+  if(tab==='pedidos') loadRelPedidos();
+  if(tab==='epi') loadRelEPI();
+  if(tab==='analiticos') loadRelAnaliticos();
+}
+
+async function loadRelPremiacao() {
+  const mes = document.getElementById('rel-prem-mes')?.value || new Date().toISOString().slice(0,7);
+  const [ops,auxs] = await Promise.all([api('/premiacao/operadores/'+mes),api('/premiacao/auxiliares/'+mes)]);
+  const el = document.getElementById('rel-prem-content');
+  if(!el) return;
+  const STATUS_PILL = {aberto:'pill-info',em_producao:'pill-warn',produzido:'pill-success',entregue:'pill-success'};
+  el.innerHTML = `
+    <div class="table-wrap" style="margin-bottom:20px">
+      <div class="table-head"><span class="table-head-title">Operadores — ${mes}</span></div>
+      <table><thead><tr><th>Pos.</th><th>Colaborador</th><th>Total</th><th>Média/Dia</th><th>Dias</th><th>Elegível</th><th>Prêmio</th></tr></thead>
+      <tbody>${ops.map((r,i)=>`<tr><td><strong>${i+1}º</strong></td><td>${r.colaborador}</td><td>${fmtNum(r.total_producao)}</td><td>${fmtNum(Math.round(r.media_diaria||0))}</td><td>${r.dias_trabalhados}</td><td><span class="pill ${r.eh_lider?'pill-info':(r.elegivel?'pill-success':'pill-danger')}">${r.eh_lider?'Líder':(r.elegivel?'✓':'✕')}</span></td><td>${fmtBRL(r.valor_premio)}</td></tr>`).join('')}</tbody>
+      </table></div>
+    <div class="table-wrap">
+      <div class="table-head"><span class="table-head-title">Auxiliares — ${mes}</span></div>
+      <table><thead><tr><th>Pos.</th><th>Nome</th><th>Bônus</th><th>Observação</th></tr></thead>
+      <tbody>${auxs.length?auxs.map(a=>`<tr><td><strong>${a.posicao}º</strong></td><td>${a.colaborador_nome}</td><td>${fmtBRL(a.valor_bonus)}</td><td style="color:var(--muted)">${a.observacao||'—'}</td></tr>`).join(''):'<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:20px">Sem auxiliares premiados</td></tr>'}</tbody>
+      </table></div>`;
+}
+
+async function loadRelEstoque() {
+  await carregarCategoriasRelEstoque();
+
+  const modelo = document.getElementById('rel-est-modelo')?.value || 'geral';
+  const categoriaId = document.getElementById('rel-est-categoria')?.value || '';
+  const tipoMov = document.getElementById('rel-est-tipo-mov')?.value || '';
+  const dataIni = document.getElementById('rel-est-data-ini')?.value || '';
+  const dataFim = document.getElementById('rel-est-data-fim')?.value || '';
+
+  const isMov = modelo === 'movimentacoes';
+  ['rel-est-tipo-mov','rel-est-data-ini','rel-est-data-sep','rel-est-data-fim'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = isMov ? '' : 'none';
+  });
+
+  const tbody = document.getElementById('rel-est-tbody');
+  const thead = document.getElementById('rel-est-thead');
+  const title = document.getElementById('rel-est-title');
+  const cards = document.getElementById('rel-est-cards');
+  if (!tbody || !thead) return;
+
+  if (isMov) {
+    const params = [];
+    if (categoriaId) params.push('categoria_id=' + encodeURIComponent(categoriaId));
+    if (tipoMov) params.push('tipo=' + encodeURIComponent(tipoMov));
+    if (dataIni) params.push('data_inicio=' + encodeURIComponent(dataIni));
+    if (dataFim) params.push('data_fim=' + encodeURIComponent(dataFim));
+    const movs = await api('/estoque/movimentacoes' + (params.length ? '?' + params.join('&') : ''));
+
+    const entradas = movs.filter(m => m.tipo === 'entrada').reduce((a,m)=>a+Number(m.quantidade||0),0);
+    const saidas = movs.filter(m => ['saida','perda'].includes(m.tipo)).reduce((a,m)=>a+Number(m.quantidade||0),0);
+    if (title) title.textContent = 'Movimentações de Estoque';
+    if (cards) cards.innerHTML = [
+      cardRelatorioEstoque('Movimentações', movs.length, 'registros encontrados'),
+      cardRelatorioEstoque('Entradas', fmtNum(entradas), 'quantidade movimentada'),
+      cardRelatorioEstoque('Saídas/Perdas', fmtNum(saidas), 'quantidade movimentada')
+    ].join('');
+    thead.innerHTML = '<tr><th>Data</th><th>Código</th><th>Produto</th><th>Categoria</th><th>Tipo</th><th>Quantidade</th><th>Saldo Depois</th><th>Motivo/Obs.</th></tr>';
+    tbody.innerHTML = movs.length ? movs.map(m => {
+      const tipoLabel = {entrada:'Entrada',saida:'Saída',perda:'Perda',ajuste:'Ajuste'}[m.tipo] || m.tipo;
+      const pill = m.tipo === 'entrada' ? 'pill-success' : (m.tipo === 'perda' ? 'pill-danger' : 'pill-warn');
+      return `<tr>
+        <td>${fmtDate(m.data)}</td>
+        <td><strong>${m.produto_codigo || '—'}</strong></td>
+        <td>${m.produto_nome || '—'}</td>
+        <td>${m.categoria_nome || '—'}</td>
+        <td><span class="pill ${pill}">${tipoLabel}</span></td>
+        <td>${fmtNum(m.quantidade)}</td>
+        <td>${fmtNum(m.saldo_posterior)}</td>
+        <td>${m.motivo || m.observacao || '—'}</td>
+      </tr>`;
+    }).join('') : '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:28px">Nenhuma movimentação encontrada</td></tr>';
+    return;
+  }
+
+  let prods = await api('/estoque/produtos' + (categoriaId ? '?categoria_id=' + encodeURIComponent(categoriaId) : ''));
+  const todos = prods.slice();
+
+  if (modelo === 'falta') prods = prods.filter(p => Number(p.quantidade_atual || 0) <= 0);
+  if (modelo === 'baixo') prods = prods.filter(p => Number(p.quantidade_atual || 0) > 0 && Number(p.quantidade_atual || 0) <= Number(p.estoque_minimo || 0));
+  if (modelo === 'positivo') prods = prods.filter(p => Number(p.quantidade_atual || 0) > 0);
+  if (modelo === 'sem_minimo') prods = prods.filter(p => Number(p.estoque_minimo || 0) <= 0);
+  if (modelo === 'sem_movimento') {
+    let movs = [];
+    try { movs = await api('/estoque/movimentacoes'); } catch(e) { movs = []; }
+    const idsComMov = new Set(movs.map(m => Number(m.produto_id)));
+    prods = prods.filter(p => !idsComMov.has(Number(p.id)));
+  }
+
+  const titulos = {
+    geral: 'Relatório Geral de Estoque',
+    categoria: 'Produtos por Categoria',
+    falta: 'Produtos em Falta no Estoque',
+    baixo: 'Produtos com Estoque Baixo',
+    positivo: 'Produtos com Saldo Positivo',
+    sem_minimo: 'Produtos sem Estoque Mínimo Cadastrado',
+    sem_movimento: 'Produtos sem Movimentação'
+  };
+  if (title) title.textContent = titulos[modelo] || 'Posição de Estoque';
+
+  const totalGeral = todos.length;
+  const totalFalta = todos.filter(p => Number(p.quantidade_atual || 0) <= 0).length;
+  const totalBaixo = todos.filter(p => Number(p.quantidade_atual || 0) > 0 && Number(p.quantidade_atual || 0) <= Number(p.estoque_minimo || 0)).length;
+  const totalOk = todos.filter(p => Number(p.quantidade_atual || 0) > Number(p.estoque_minimo || 0)).length;
+  if (cards) cards.innerHTML = [
+    cardRelatorioEstoque('Itens filtrados', prods.length, `de ${totalGeral} produtos ativos`),
+    cardRelatorioEstoque('Falta em estoque', totalFalta, 'saldo igual ou menor que zero'),
+    cardRelatorioEstoque('Estoque baixo', totalBaixo, 'saldo abaixo ou igual ao mínimo'),
+    cardRelatorioEstoque('Estoque OK', totalOk, 'acima do mínimo')
+  ].join('');
+
+  thead.innerHTML = '<tr><th>Código</th><th>Produto</th><th>Categoria</th><th>Unidade</th><th>Saldo Atual</th><th>Mínimo</th><th>Situação</th></tr>';
+  tbody.innerHTML = prods.length ? prods.map(p => {
+    const st = statusEstoqueRel(p);
+    return `<tr>
+      <td><strong>${p.codigo || '—'}</strong></td>
+      <td><strong>${p.nome}${p.marca ? ' — ' + p.marca : ''}</strong></td>
+      <td>${p.categoria_nome || '—'}</td>
+      <td>${p.unidade || '—'}</td>
+      <td style="font-weight:700;color:${st.cor}">${fmtNum(p.quantidade_atual)}</td>
+      <td>${fmtNum(p.estoque_minimo)}</td>
+      <td><span class="pill ${st.pill}">${st.texto}</span></td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:28px">Nenhum produto encontrado para este filtro</td></tr>';
+}
+
+async function loadRelPedidos() {
+  const status = document.getElementById('rel-ped-status')?.value||'';
+  let url = '/pedidos/'; if(status) url+='?status='+status;
+  const rows = await api(url);
+  const SL={aberto:'📋 Aberto',em_producao:'🏭 Em produção',produzido:'✅ Produzido',entregue:'📦 Entregue'};
+  const SP={aberto:'pill-info',em_producao:'pill-warn',produzido:'pill-success',entregue:'pill-success'};
+  const tbody = document.getElementById('rel-ped-tbody');
+  if(!tbody) return;
+  tbody.innerHTML = rows.map(p=>{
+    const dias=Math.round(p.dias_restantes);
+    const cor=dias<0?'var(--danger)':dias<=3?'var(--warn)':'var(--success)';
+    return `<tr><td><strong>${p.numero_pedido}</strong></td><td>${p.cliente_nome}</td><td>${p.vendedor || '—'}</td><td>${fmtDate(p.prazo_entrega)}</td><td style="color:${cor};font-weight:700">${dias<0?'Vencido':dias+'d'}</td><td>${p.itens_entregues}/${p.total_itens}</td><td><span class="pill ${SP[p.status]}">${SL[p.status]}</span></td></tr>`;
+  }).join('');
+}
+
+async function loadRelEPI() {
+  const rows = await api('/epi/entregas');
+  const ES={ativo:'pill-success',vencendo:'pill-warn',vencido:'pill-danger',devolvido:'pill-info',extraviado:'pill-danger'};
+  const tbody = document.getElementById('rel-epi-tbody');
+  if(!tbody) return;
+  tbody.innerHTML = rows.map(r=>{
+    const sc=r.status_calculado||r.status;
+    const dias=r.dias_restantes;
+    const cor=dias<0?'var(--danger)':dias<=30?'var(--warn)':'var(--success)';
+    return `<tr><td><strong>${r.colaborador_nome}</strong></td><td>${r.epi_nome}</td><td>${r.epi_categoria||'—'}</td><td>${fmtDate(r.data_entrega)}</td><td>${fmtDate(r.data_validade)}</td><td style="color:${cor};font-weight:700">${dias<0?'Vencido':dias+'d'}</td><td><span class="pill ${ES[sc]||'pill-info'}">${sc}</span></td></tr>`;
+  }).join('');
+}
+
+function _getEmpresaHeader(titulo) {
+  const emp = window.empresaDados || {};
+  const nome = emp.nome || 'PRATIC';
+  const cnpj = emp.cnpj ? `CNPJ: ${emp.cnpj}` : '';
+  const telefone = emp.telefone ? `Tel: ${emp.telefone}` : '';
+  const email = emp.email ? `E-mail: ${emp.email}` : '';
+  
+  let endereco = '';
+  if (emp.logradouro) {
+    endereco = `${emp.logradouro}`;
+    if (emp.numero) endereco += `, ${emp.numero}`;
+    if (emp.complemento) endereco += ` - ${emp.complemento}`;
+    if (emp.bairro) endereco += `, ${emp.bairro}`;
+    if (emp.cep) endereco += ` - CEP: ${emp.cep}`;
+    if (emp.cidade) {
+      endereco += `, ${emp.cidade}`;
+      if (emp.uf) endereco += `/${emp.uf.toUpperCase()}`;
+    }
+  }
+
+  const logoHtml = emp.logo 
+    ? `<img src="${emp.logo}" style="max-height: 70px; max-width: 200px; object-fit: contain; margin-right: 15px;">` 
+    : '';
+
+  const infoContato = [cnpj, telefone, email].filter(Boolean).join(' | ');
+
+  return `
+    <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 2px solid #333; padding-bottom: 12px; margin-bottom: 20px; font-family: sans-serif; color: #111;">
+      <div style="display: flex; align-items: center;">
+        ${logoHtml}
+        <div>
+          <div style="font-size: 20px; font-weight: bold; text-transform: uppercase;">${nome}</div>
+          <div style="font-size: 11px; color: #555; margin-top: 4px;">${infoContato}</div>
+          ${endereco ? `<div style="font-size: 11px; color: #555; margin-top: 2px;">${endereco}</div>` : ''}
+        </div>
+      </div>
+      <div style="text-align: right;">
+        <div style="font-size: 18px; font-weight: bold; color: #333;">${titulo}</div>
+      </div>
+    </div>
+  `;
+}
+
+function _getPrintFooter() {
+  return `
+    <div class="print-footer">
+      <span>Emitido em: ${new Date().toLocaleString('pt-BR')}</span>
+      <span>Página <span class="page-number"></span></span>
+    </div>
+  `;
+}
+
+async function exportarRelatorio(tipo, formato) {
+  if (formato==='pdf') {
+    const maps={producao:'rel-prod-tbody',premiacao:'rel-prem-content',estoque:'rel-est-tbody',pedidos:'rel-ped-tbody',epi:'rel-epi-tbody',analiticos:'rel-ana-tbody'};
+    const tits={producao:'Relatório de Produção',premiacao:'Relatório de Premiação',estoque:'Relatório de Estoque',pedidos:'Relatório de Pedidos',epi:'Relatório de EPI',analiticos:'Relatório Analítico de Insumos'};
+    let tituloReport = tits[tipo];
+    if (tipo === 'analiticos') {
+      const elTit = document.getElementById('rel-ana-title');
+      if (elTit) tituloReport = elTit.textContent;
+    }
+    const el=document.getElementById(maps[tipo]);
+    const tabela=el?.closest('table')||el;
+    const win=window.open('','_blank');
+    win.document.write(`<html><head><title>${tituloReport}</title><style>@page{margin:0}body{font-family:Arial,sans-serif;margin:15mm 15mm 22mm 15mm;font-size:12px;counter-reset:page}table{width:100%;border-collapse:collapse}th{background:#333;color:#fff;padding:8px;text-align:left}td{padding:7px;border-bottom:1px solid #ddd}.print-footer{position:fixed;bottom:8mm;left:15mm;right:15mm;border-top:1px solid #ddd;padding-top:6px;display:flex;justify-content:space-between;font-size:10px;color:#777;font-family:Arial,sans-serif;counter-increment:page}.page-number::after{content:counter(page)}</style></head><body>${_getEmpresaHeader(tituloReport)}${tabela?.outerHTML||'<p>Sem dados</p>'}${_getPrintFooter()}</body></html>`);
+    win.document.close();
+    setTimeout(()=>win.print(),500);
+  } else {
+    const maps={producao:'rel-prod-tbody',estoque:'rel-est-tbody',pedidos:'rel-ped-tbody',epi:'rel-epi-tbody',analiticos:'rel-ana-tbody'};
+    const el=document.getElementById(maps[tipo]);
+    if(!el) return;
+    const table=el.closest('table');
+    if(!table) return;
+    const rows=[];
+    table.querySelectorAll('tr').forEach(tr=>{const row=[];tr.querySelectorAll('th,td').forEach(td=>row.push('"'+td.textContent.trim().replace(/"/g,'""')+'"'));rows.push(row.join(';'));});
+    const csv='\uFEFF'+rows.join('\n');
+    const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    
+    let downloadName = `pratic_${tipo}_${new Date().toISOString().slice(0,10)}.csv`;
+    if (tipo === 'analiticos') {
+      const tipoAna = document.getElementById('rel-ana-tipo')?.value || 'insumos';
+      downloadName = `pratic_analiticos_${tipoAna}_${new Date().toISOString().slice(0,10)}.csv`;
+    }
+    
+    a.download=downloadName;
+    a.click();
+  }
+}
+
+// ─── CONFIGURAÇÕES ────────────────────────────────────────────────────────────
+
+async function loadConfiguracoes() {
+  const configs = await api('/configuracoes/');
+  const form = document.getElementById('config-form');
+  if (!form) return;
+
+  const byKey = {};
+  (configs || []).forEach(c => { byKey[c.chave] = c; });
+  const has = k => byKey[k] !== undefined;
+  const val = k => has(k) ? byKey[k].valor : '';
+
+  const field = (k, label, pre) => {
+    if (!has(k)) return '';
+    return `
+      <div class="bonif-field">
+        <label>${label}</label>
+        <div class="bonif-input">
+          ${pre ? `<span class="bonif-pre">${pre}</span>` : ''}
+          <input type="number" id="cfg-${k}" value="${val(k)}" inputmode="numeric" min="0">
+        </div>
+      </div>`;
+  };
+
+  const card = (cls, em, titulo, nota, campos, btn) => {
+    const keys = campos.filter(c => has(c[0])).map(c => c[0]);
+    if (!keys.length) return '';
+    const inner = campos.map(c => field(c[0], c[1], c[2])).join('');
+    return `
+      <div class="bonif-card ${cls}">
+        <div class="bonif-head"><span class="bonif-em">${em}</span><h2>${titulo}</h2></div>
+        ${nota ? `<p class="bonif-note">${nota}</p>` : ''}
+        ${inner}
+        <div class="bonif-foot">
+          <button class="bonif-save" onclick='salvarCardBonif(${JSON.stringify(keys)}, this)'>${btn}</button>
+        </div>
+      </div>`;
+  };
+
+  form.innerHTML = `
+    <style>
+      #config-form .bonif-sub{color:var(--muted,#8b92a3);font-size:13.5px;margin:0 0 22px}
+      #config-form .bonif-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;max-width:980px}
+      #config-form .bonif-card{background:var(--surface,#161922);border:1px solid var(--border,rgba(255,255,255,.08));border-radius:14px;padding:20px 20px 18px;display:flex;flex-direction:column}
+      #config-form .bonif-card.full{grid-column:1 / -1}
+      #config-form .bonif-head{display:flex;align-items:center;gap:10px;margin-bottom:4px}
+      #config-form .bonif-em{font-size:19px;width:34px;height:34px;display:grid;place-items:center;border-radius:9px;background:var(--surface-2,#1d2130);border:1px solid var(--border-soft,rgba(255,255,255,.06))}
+      #config-form .bonif-head h2{font-size:15.5px;margin:0;font-weight:700;color:var(--text,#e6e9ef)}
+      #config-form .bonif-note{color:var(--muted,#8b92a3);font-size:12.5px;margin:6px 0 16px;line-height:1.5}
+      #config-form .bonif-field{margin-bottom:13px}
+      #config-form .bonif-field label{display:block;font-size:12.5px;color:var(--muted,#8b92a3);margin-bottom:6px;font-weight:500}
+      #config-form .bonif-input{display:flex;align-items:center;background:var(--surface-2,#1d2130);border:1px solid var(--border,rgba(255,255,255,.08));border-radius:9px;overflow:hidden;height:42px;max-width:280px}
+      #config-form .bonif-input:focus-within{border-color:rgba(245,179,1,.55)}
+      #config-form .bonif-pre{padding:0 11px;color:var(--muted,#6b7280);font-size:13.5px;font-weight:600;border-right:1px solid var(--border-soft,rgba(255,255,255,.06));align-self:stretch;display:flex;align-items:center}
+      #config-form .bonif-input input{flex:1;background:transparent;border:0;outline:0;color:var(--text,#e6e9ef);font-size:15px;padding:0 12px;font-weight:600;min-width:0;-moz-appearance:textfield}
+      #config-form .bonif-input input::-webkit-outer-spin-button,#config-form .bonif-input input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+      #config-form .bonif-foot{margin-top:auto;display:flex;justify-content:flex-end;padding-top:14px;border-top:1px solid var(--border-soft,rgba(255,255,255,.06))}
+      #config-form .bonif-save{background:#f5b301;color:#1a1400;border:0;border-radius:9px;padding:9px 20px;font-size:13.5px;font-weight:700;cursor:pointer;font-family:inherit}
+      #config-form .bonif-save:hover{filter:brightness(1.07)}
+      #config-form .bonif-save:disabled{opacity:.6;cursor:default}
+      @media(max-width:680px){#config-form .bonif-grid{grid-template-columns:1fr}}
+    </style>
+    <p class="bonif-sub">Defina a meta de produ\u00e7\u00e3o e os valores de b\u00f4nus e pr\u00eamios da equipe.</p>
+    <div class="bonif-grid">
+      ${card('full','\ud83c\udfaf','Meta de Produ\u00e7\u00e3o',
+        'M\u00ednimo que o operador deve produzir no dia. \u00c9 a <b>base</b> de quem entra na premia\u00e7\u00e3o \u2014 a partir dela \u00e9 calculada toda a bonifica\u00e7\u00e3o.',
+        [['meta_padrao','Meta di\u00e1ria (pe\u00e7as)','']],
+        'Salvar meta')}
+      ${card('','\ud83c\udfc5','B\u00f4nus dos Auxiliares',
+        'Valores pagos aos auxiliares destaque do m\u00eas.',
+        [['qtd_auxiliares_premiados','Quantos auxiliares s\u00e3o premiados por m\u00eas',''],
+         ['bonus_auxiliar_1','1\u00ba auxiliar destaque','R$'],
+         ['bonus_auxiliar_2','2\u00ba auxiliar destaque','R$'],
+         ['bonus_auxiliar_3','3\u00ba auxiliar destaque','R$']],
+        'Salvar b\u00f4nus')}
+      ${card('','\ud83c\udfc6','Pr\u00eamios dos Operadores',
+        'Valores pagos aos operadores conforme o desempenho.',
+        [['valor_premio_operador','Por bater a m\u00e9dia','R$'],
+         ['valor_premio_operador_1','1\u00ba colocado','R$'],
+         ['valor_premio_operador_2','2\u00ba colocado','R$']],
+        'Salvar pr\u00eamios')}
+    </div>`;
+}
+
+async function salvarCardBonif(keys, btn) {
+  const original = btn ? btn.textContent : '';
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Salvando...'; }
+    for (const k of keys) {
+      const el = document.getElementById('cfg-' + k);
+      if (!el) continue;
+      await api('/configuracoes/' + k, 'PUT', { valor: el.value });
+    }
+    if (keys.includes('meta_padrao')) {
+      const mv = document.getElementById('cfg-meta_padrao');
+      if (mv && !isNaN(+mv.value)) META_GLOBAL = +mv.value;
+    }
+    showAlert('Bonifica\u00e7\u00f5es salvas!');
+  } catch (e) {
+    showAlert(e.message, 'danger');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = original; }
+  }
+}
+
+async function salvarConfig(chave) {
+  const val = document.getElementById('cfg-' + chave)?.value;
+  if (val === undefined) return;
+  try {
+    await api('/configuracoes/' + chave, 'PUT', { valor: val });
+    showAlert('Configuração salva!');
+  } catch(e) { showAlert(e.message, 'danger'); }
+}
+
+// ─── ESTOQUE ──────────────────────────────────────────────────────────────────
+
+
+
+async function loadAlertasEstoque() {
+  try {
+    const alertas = await api('/estoque/alertas');
+    const bannerEl = document.getElementById('dash-alerta-estoque');
+    const badge = document.getElementById('nav-alerta-badge');
+    if (alertas && alertas.length > 0) {
+      if (badge) badge.style.display = 'inline';
+      if (bannerEl) bannerEl.innerHTML = `
+        <div style="background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.35);border-radius:10px;padding:14px 18px;margin-bottom:20px;display:flex;align-items:center;gap:14px">
+          <span style="font-size:22px">⚠️</span>
+          <div style="flex:1">
+            <div style="font-family:var(--font-head);font-weight:700;color:var(--danger);margin-bottom:4px">${alertas.length} produto(s) abaixo do estoque mínimo</div>
+            <div style="font-size:13px;color:var(--muted)">${alertas.map(a=>`<strong>${a.codigo?'['+a.codigo+'] ':''}${a.nome}</strong>: ${a.quantidade_atual} ${a.unidade} (mín: ${a.estoque_minimo})`).join(' | ')}</div>
+          </div>
+          <button class="btn btn-sm btn-secondary" onclick="showPage('estoque')">Ver estoque →</button>
+        </div>`;
+    } else {
+      if (badge) badge.style.display = 'none';
+      if (bannerEl) bannerEl.innerHTML = '';
+    }
+  } catch(e) {}
+}
+
+
+
+async function loadPermissoes() {
+  try { permissoesAtuais = await api('/configuracoes/permissoes/all'); } catch(e) {
+    permissoesAtuais = {
+      perm_gestor:'dashboard,producao,premiacao,colaboradores,maquinas,pedidos,estoque,epi,graficos,relatorios,configuracoes,backup,permissoes,empresa',
+      perm_producao:'dashboard,producao,premiacao,relatorios',
+      perm_comercial:'dashboard,pedidos,relatorios',
+      perm_estoque:'dashboard,estoque,relatorios'
+    };
+  }
+
+  let perfisExigemPedido = [];
+  try {
+    const configs = await api('/configuracoes/');
+    const ep = (configs || []).find(c => c.chave === 'exigir_pedido_producao_perfis');
+    perfisExigemPedido = ep ? ep.valor.split(',').map(x => x.trim()).filter(Boolean) : [];
+  } catch (e) {}
+
+  const tbody = document.getElementById('perm-tbody');
+  if (!tbody) return;
+  
+  let html = '';
+
+  // Regras de lançamento — mesmo padrão visual das páginas, mas controla uma
+  // regra de negócio (obrigar número do pedido), não acesso a página.
+  html += `<tr><td colspan="${PERFIS.length + 1}" class="perm-group-header">⚙️ Regras de Lançamento</td></tr>`;
+  html += (() => {
+    const cols = PERFIS.map(perf => {
+      const checked = perfisExigemPedido.includes(perf.key);
+      return `
+        <td style="text-align:center; vertical-align:middle; padding:8px 0;">
+          <label class="switch-container">
+            <input type="checkbox" id="regra_exigir_pedido_${perf.key}" ${checked?'checked':''}>
+            <span class="switch-slider"></span>
+          </label>
+        </td>`;
+    }).join('');
+    return `<tr><td style="font-weight:500; vertical-align:middle; padding-left:16px;" title="Bloqueia o lançamento &quot;Manual&quot; (sem pedido vinculado) na Produção Diária para o perfil marcado">🔒 Exigir nº do pedido em Produção Diária</td>${cols}</tr>`;
+  })();
+  
+  // Section 1: Painel Principal
+  html += `<tr><td colspan="${PERFIS.length + 1}" class="perm-group-header" style="border-top:1px solid var(--border)">🖥️ Módulos do Painel Principal (Gestor)</td></tr>`;
+  html += PAGINAS_SISTEMA.map(pg => {
+    const cols = PERFIS.map(perf => {
+      const chave = 'perm_' + perf.key;
+      const perms = (permissoesAtuais[chave]||'').split(',').map(p=>p.trim());
+      const checked = perms.includes(pg.key);
+      return `
+        <td style="text-align:center; vertical-align:middle; padding:8px 0;">
+          <label class="switch-container">
+            <input type="checkbox" id="perm_${perf.key}_${pg.key}" ${checked?'checked':''}>
+            <span class="switch-slider"></span>
+          </label>
+        </td>`;
+    }).join('');
+    return `<tr><td style="font-weight:500; vertical-align:middle; padding-left:16px;">${pg.label}</td>${cols}</tr>`;
+  }).join('');
+  
+  // Section 2: Portais & Apps Mobile
+  html += `<tr><td colspan="${PERFIS.length + 1}" class="perm-group-header" style="border-top:1px solid var(--border)">📱 Postos de Trabalho & Apps Mobile</td></tr>`;
+  html += PORTAIS_MOBILE.map(pg => {
+    const cols = PERFIS.map(perf => {
+      const chave = 'perm_' + perf.key;
+      const perms = (permissoesAtuais[chave]||'').split(',').map(p=>p.trim());
+      const checked = perms.includes(pg.key);
+      return `
+        <td style="text-align:center; vertical-align:middle; padding:8px 0;">
+          <label class="switch-container">
+            <input type="checkbox" id="perm_${perf.key}_${pg.key}" ${checked?'checked':''}>
+            <span class="switch-slider"></span>
+          </label>
+        </td>`;
+    }).join('');
+    return `<tr style="background:rgba(240,180,41,.02)"><td style="font-weight:500; vertical-align:middle; padding-left:16px;">${pg.label}</td>${cols}</tr>`;
+  }).join('');
+  
+  tbody.innerHTML = html;
+
+  // URLs
+  let host = window.location.hostname;
+  let isLoopback = host === 'localhost' || host === '127.0.0.1';
+  if (isLoopback) {
+    try {
+      const res = await api('/configuracoes/local-ip');
+      if (res && res.ip && res.ip !== '127.0.0.1') {
+        host = res.ip;
+        isLoopback = false;
+      }
+    } catch (e) {
+      console.warn('Não foi possível obter o IP local da máquina:', e);
+    }
+  }
+  const port = window.location.port || '8000';
+  const urlsEl = document.getElementById('perm-urls');
+  if (urlsEl) {
+    const cardsHtml = [
+      {perfil:'🖥️ Gestor',url:'/'},
+      {perfil:'🏭 Setor Produção',url:'/producao-setor'},
+      {perfil:'🏢 Comercial',url:'/?perfil=comercial'},
+      {perfil:'📱 Mobile Operador',url:'/mobile'},
+      {perfil:'📦 Mobile Estoque',url:'/estoque-mobile'},
+      {perfil:'📖 Manual do Usuário',url:'/manual.html'},
+    ].map(u=>`
+      <div class="perm-url-card">
+        <div style="font-weight:600; font-family:var(--font-head); font-size:14px;">${u.perfil}</div>
+        <a href="${window.location.origin}${u.url}" target="_blank" style="text-decoration:none;display:flex;align-items:center;gap:8px;min-width:0;overflow:hidden">
+          <span class="badge-url" style="min-width:0;overflow:hidden;text-overflow:ellipsis;">${window.location.origin}${u.url}</span>
+          <span style="padding:8px 14px;font-size:12px;white-space:nowrap;background:var(--accent);color:#000;border-radius:6px;font-weight:bold;font-family:var(--font-head);cursor:pointer;transition:all 0.2s;flex-shrink:0;">Acessar ↗</span>
+        </a>
+      </div>
+    `).join('');
+
+    const tipHtml = `
+      <div style="grid-column:1/-1;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.2);border-radius:8px;padding:12px 16px;margin-top:8px;font-size:13px;line-height:1.5;color:var(--text)">
+        <div style="font-weight:700;color:var(--accent2);margin-bottom:4px;display:flex;align-items:center;gap:6px">💡 Dica de Acesso Mobile:</div>
+        <p>Para acessar o sistema de outro dispositivo (como celular ou tablet conectado na mesma rede Wi-Fi):</p>
+        <ul style="margin-left:20px;margin-top:4px;color:var(--muted)">
+          <li>Use o endereço contendo o IP local da máquina: <strong>${window.location.origin}/mobile</strong></li>
+          <li>Certifique-se de que o computador e o dispositivo móvel estão conectados no <strong>mesmo Wi-Fi</strong>.</li>
+          <li>Caso não consiga conectar, garanta que a rede do Windows está configurada como <strong>Particular (Privada)</strong> ou que o <strong>Firewall do Windows</strong> possui uma regra de entrada liberando a porta necessária.</li>
+        </ul>
+      </div>
+    `;
+    urlsEl.innerHTML = cardsHtml + tipHtml;
+  }
+}
+
+// ─── EPI ──────────────────────────────────────────────────────────────────────
+
+let EPI_ENTREGAS_ATUAIS = [];
+
+const EPI_STATUS = {
+  ativo:{label:'✓ Ativo',pill:'pill-success'},
+  vencendo:{label:'⚠ Vencendo',pill:'pill-warn'},
+  vencido:{label:'✕ Vencido',pill:'pill-danger'},
+  devolvido:{label:'↩ Devolvido',pill:'pill-info'},
+  extraviado:{label:'? Extraviado',pill:'pill-danger'}
+};
+
+async function loadEPI() {
+  await loadColsFiltroEPI();
+  await loadEntregas();
+  await checkAlertasEPI();
+}
+
+function switchEpiTab(tab) {
+  ['entregas','cadastro','funcoes','alertas'].forEach(t=>{
+    const el=document.getElementById('epi-content-'+t);
+    const btn=document.getElementById('epi-tab-'+t);
+    if(el) el.style.display=t===tab?'':'none';
+    if(btn){btn.style.borderColor=t===tab?'var(--accent)':'';btn.style.color=t===tab?'var(--accent)':'';}
+  });
+  if(tab==='entregas') loadEntregas();
+  if(tab==='cadastro') loadEPILista();
+  if(tab==='funcoes') loadFuncaoEPIs();
+  if(tab==='alertas') loadAlertasEPI();
+}
+
+async function checkAlertasEPI() {
+  try {
+    const al = await api('/epi/alertas');
+    const badge = document.getElementById('nav-epi-badge');
+    const total = (al.vencidos||0) + (al.vencendo||0);
+    if(badge){badge.style.display=total>0?'inline':'none';badge.textContent=total;}
+    const banner = document.getElementById('epi-alerta-banner');
+    if(banner && total>0) {
+      banner.innerHTML=`<div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:var(--danger)">⚠️ <strong>${al.vencidos} EPI(s) vencido(s)</strong> | <strong>${al.vencendo} vencendo em 30 dias</strong> <button class="btn btn-sm btn-secondary" onclick="switchEpiTab('alertas')" style="margin-left:8px">Ver →</button></div>`;
+    } else if(banner) banner.innerHTML='';
+  } catch(e) {}
+}
+
+async function loadColsFiltroEPI() {
+  const cols = await api('/colaboradores/');
+  const sel = document.getElementById('epi-filtro-col');
+  if(!sel || sel.options.length>1) return;
+  cols.forEach(c=>{const o=document.createElement('option');o.value=c.id;o.textContent=c.nome;sel.appendChild(o);});
+}
+
+async function loadEntregas() {
+  const colId = document.getElementById('epi-filtro-col')?.value||'';
+  const status = document.getElementById('epi-filtro-status')?.value||'';
+  let url='/epi/entregas';
+  const p=[];
+  if(colId) p.push('colaborador_id='+colId);
+  if(status) p.push('status='+status);
+  if(p.length) url+='?'+p.join('&');
+  const rows = await api(url);
+  EPI_ENTREGAS_ATUAIS = Array.isArray(rows) ? rows : [];
+  const tbody = document.getElementById('epi-entregas-tbody');
+  if(!tbody) return;
+  if(!rows.length){tbody.innerHTML='<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:28px">Nenhum registro</td></tr>';return;}
+  tbody.innerHTML = rows.map(r=>{
+    const sc=r.status_calculado||r.status;
+    const st=EPI_STATUS[sc]||{label:sc,pill:'pill-info'};
+    const dias=r.dias_restantes;
+    const cor=dias<0?'var(--danger)':dias<=30?'var(--warn)':'var(--success)';
+    return `<tr>
+      <td><strong>${r.colaborador_nome}</strong></td>
+      <td>${r.epi_nome}</td>
+      <td style="color:var(--muted)">${r.epi_categoria||'—'}</td>
+      <td>${fmtDate(r.data_entrega)}</td>
+      <td>${fmtDate(r.data_validade)}</td>
+      <td style="color:${cor};font-weight:600">${dias<0?'Vencido':dias+'d'}</td>
+      <td><span class="pill ${st.pill}">${st.label}</span></td>
+      <td class="flex gap-2">
+        <button class="btn btn-sm btn-secondary" title="Gerar comprovante deste funcionário" onclick="gerarComprovante(${r.colaborador_id})">🖨️</button>
+        ${temPermissao('epi', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="renovarEPI(${r.id},${r.colaborador_id},${r.epi_id})">🔄</button>` : ''}
+        ${temPermissao('epi', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="deletarEntrega(${r.id})">✕</button>` : ''}
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function loadEPILista() {
+  const rows = await api('/epi/epis');
+  const tbody = document.getElementById('epi-lista-tbody');
+  if(!tbody) return;
+  tbody.innerHTML = rows.map(r=>`<tr>
+    <td><strong>${r.nome}</strong></td>
+    <td><span class="pill pill-info">${r.categoria||'—'}</span></td>
+    <td style="color:var(--muted)">${r.descricao||'—'}</td>
+    <td><span class="pill ${r.ativo?'pill-success':'pill-danger'}">${r.ativo?'Ativo':'Inativo'}</span></td>
+    <td class="flex gap-2">
+      ${temPermissao('epi', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="editEPI(${r.id},'${r.nome.replace(/'/g,"\\'")}','${r.categoria||''}','${r.descricao||''}')">✏️</button>` : ''}
+      ${temPermissao('epi', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="deletarEPI(${r.id})">✕</button>` : ''}
+    </td>
+  </tr>`).join('');
+}
+
+async function loadFuncaoEPIs() {
+  const [epis, funcaoEpis] = await Promise.all([api('/epi/epis'),api('/epi/funcoes-epis')]);
+  const funcoes=['Operador MQ','Auxiliar','Gestor','Manutenção','Administrativo'];
+  const el=document.getElementById('epi-funcoes-grid');
+  if(!el) return;
+  el.innerHTML = funcoes.map(f=>{
+    const selecionados=(funcaoEpis[f]||[]).map(e=>e.epi_id);
+    return `<div class="card" style="margin-bottom:16px">
+      <div style="font-family:var(--font-head);font-weight:700;font-size:15px;margin-bottom:14px">⚙️ ${f}</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:8px;margin-bottom:14px">
+        ${epis.map(e=>`<label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="funcao_${f.replace(/\s/g,'_')}_${e.id}" ${selecionados.includes(e.id)?'checked':''} style="width:16px;height:16px;accent-color:var(--accent)">
+          ${e.nome} <span style="color:var(--muted);font-size:11px">(${e.categoria||'—'})</span>
+        </label>`).join('')}
+      </div>
+      <button class="btn btn-sm btn-primary" onclick="salvarFuncaoEPI('${f}',${JSON.stringify(epis.map(e=>e.id))})">Salvar</button>
+    </div>`;
+  }).join('');
+}
+
+async function salvarFuncaoEPI(funcao, todosIds) {
+  const selecionados = todosIds.filter(id=>{
+    const el=document.getElementById(`funcao_${funcao.replace(/\s/g,'_')}_${id}`);
+    return el&&el.checked;
+  });
+  try {
+    await api('/epi/funcoes-epis','POST',{funcao,epi_ids:selecionados});
+    showAlert(`EPIs da função "${funcao}" salvos!`);
+  } catch(e){showAlert(e.message,'danger');}
+}
+
+async function loadAlertasEPI() {
+  const al = await api('/epi/alertas');
+  const el = document.getElementById('epi-alertas-content');
+  if(!el) return;
+  el.innerHTML = `
+    <div class="cards-grid" style="margin-bottom:24px">
+      <div class="card"><div class="card-label">EPIs Vencidos</div><div class="card-value danger">${al.vencidos}</div></div>
+      <div class="card"><div class="card-label">Vencendo em 30 dias</div><div class="card-value accent">${al.vencendo}</div></div>
+    </div>
+    <div class="table-wrap">
+      <div class="table-head"><span class="table-head-title">Pendências</span></div>
+      <table><thead><tr><th>Funcionário</th><th>EPI</th><th>Validade</th><th>Situação</th></tr></thead>
+      <tbody>${al.lista.length?al.lista.map(r=>{
+        const cor=r.dias_restantes<0?'var(--danger)':'var(--warn)';
+        return `<tr><td><strong>${r.colaborador}</strong></td><td>${r.epi}</td><td>${fmtDate(r.data_validade)}</td><td style="color:${cor};font-weight:600">${r.dias_restantes<0?'Vencido há '+Math.abs(r.dias_restantes)+'d':'Vence em '+r.dias_restantes+'d'}</td></tr>`;
+      }).join(''):'<tr><td colspan="4" style="text-align:center;color:var(--muted);padding:20px">Nenhuma pendência</td></tr>'}</tbody></table>
+    </div>`;
+}
+
+function openModalEPI() {
+  document.getElementById('epi-id').value='';
+  document.getElementById('epi-nome').value='';
+  document.getElementById('epi-descricao').value='';
+  document.getElementById('modal-epi-title').textContent='Cadastrar EPI';
+  openModal('modal-epi');
+}
+
+function editEPI(id,nome,cat,desc) {
+  document.getElementById('epi-id').value=id;
+  document.getElementById('epi-nome').value=nome;
+  document.getElementById('epi-categoria').value=cat;
+  document.getElementById('epi-descricao').value=desc;
+  document.getElementById('modal-epi-title').textContent='Editar EPI';
+  openModal('modal-epi');
+}
+
+async function salvarEPI() {
+  const id=document.getElementById('epi-id').value;
+  const body={nome:document.getElementById('epi-nome').value,categoria:document.getElementById('epi-categoria').value,descricao:document.getElementById('epi-descricao').value,ativo:1};
+  try {
+    if(id) await api('/epi/epis/'+id,'PUT',body);
+    else await api('/epi/epis','POST',body);
+    showAlert('EPI salvo!');
+    closeModal('modal-epi');
+    loadEPILista();
+  } catch(e){showAlert(e.message,'danger');}
+}
+
+async function deletarEPI(id) {
+  if(!confirm('Desativar este EPI?')) return;
+  await api('/epi/epis/'+id,'DELETE');
+  showAlert('EPI desativado');
+  loadEPILista();
+}
+
+async function openModalEntrega() {
+  const [cols,epis] = await Promise.all([api('/colaboradores/'),api('/epi/epis')]);
+  document.getElementById('entrega-colaborador').innerHTML=cols.map(c=>`<option value="${c.id}" data-tipo="${c.tipo}">${c.nome} (${formatTipoColaborador(c.tipo)})</option>`).join('');
+  document.getElementById('entrega-epi').innerHTML=epis.map(e=>`<option value="${e.id}">${e.nome} — ${e.categoria||'—'}</option>`).join('');
+  document.getElementById('entrega-data').value=new Date().toISOString().split('T')[0];
+  document.getElementById('entrega-validade').value='';
+  document.getElementById('entrega-responsavel').value='';
+  document.getElementById('entrega-obs').value='';
+  document.getElementById('entrega-sugestoes').style.display='none';
+  openModal('modal-entrega-epi');
+}
+
+async function sugerirEPIs() {
+  const sel=document.getElementById('entrega-colaborador').selectedOptions[0];
+  const tipo=sel?.getAttribute('data-tipo')||'';
+  if(!tipo) return;
+  try {
+    const epis=await api('/epi/epis-por-funcao/'+encodeURIComponent(tipo));
+    if(epis.length){
+      document.getElementById('entrega-sugestoes').style.display='';
+      document.getElementById('entrega-sugestoes-lista').textContent=epis.map(e=>e.nome).join(', ');
+    } else document.getElementById('entrega-sugestoes').style.display='none';
+  } catch(e){}
+}
+
+async function salvarEntrega() {
+  const body={
+    colaborador_id:+document.getElementById('entrega-colaborador').value,
+    epi_id:+document.getElementById('entrega-epi').value,
+    data_entrega:document.getElementById('entrega-data').value,
+    data_validade:document.getElementById('entrega-validade').value,
+    motivo:document.getElementById('entrega-motivo').value,
+    responsavel:document.getElementById('entrega-responsavel').value,
+    observacao:document.getElementById('entrega-obs').value
+  };
+  if(!body.data_validade){showAlert('Informe a data de validade','danger');return;}
+  try {
+    await api('/epi/entregas','POST',body);
+    showAlert('Entrega registrada!');
+    closeModal('modal-entrega-epi');
+    loadEntregas();
+    checkAlertasEPI();
+  } catch(e){showAlert(e.message,'danger');}
+}
+
+async function renovarEPI(id,colId,epiId) {
+  await openModalEntrega();
+  document.getElementById('entrega-colaborador').value=colId;
+  document.getElementById('entrega-epi').value=epiId;
+  document.getElementById('entrega-motivo').value='Troca periódica';
+}
+
+async function deletarEntrega(id) {
+  if(!confirm('Remover registro?')) return;
+  await api('/epi/entregas/'+id,'DELETE');
+  showAlert('Registro removido');
+  loadEntregas();
+}
+
+async function gerarComprovante(colaboradorId = null) {
+  let colId = colaboradorId || document.getElementById('epi-filtro-col')?.value || '';
+
+  if (!colId) {
+    const idsVisiveis = [...new Set((EPI_ENTREGAS_ATUAIS || []).map(r => String(r.colaborador_id)).filter(Boolean))];
+    if (idsVisiveis.length === 1) {
+      colId = idsVisiveis[0];
+    }
+  }
+
+  if(!colId){
+    showAlert('Selecione um funcionário no filtro ou clique no botão de comprovante da linha do funcionário.','danger');
+    return;
+  }
+
+  const data = await api('/epi/comprovante/' + colId);
+  const emp = data.empresa || {};
+  const agora = new Date();
+  const dataHoraGeracao = agora.toLocaleString('pt-BR', { dateStyle:'short', timeStyle:'short' });
+  const dataGeracaoExtenso = agora.toLocaleDateString('pt-BR', { day:'2-digit', month:'long', year:'numeric' });
+
+  const safe = (v) => String(v ?? '').trim();
+  const line = (...vals) => vals.map(safe).filter(Boolean).join(' ');
+  const join = (sep, ...vals) => vals.map(safe).filter(Boolean).join(sep);
+  const empresaNome = safe(emp.nome) || 'PRATIC';
+  const enderecoLinha1 = join(', ', safe(emp.logradouro || emp.endereco), safe(emp.numero));
+  const enderecoLinha2 = join(' - ', safe(emp.bairro), safe(emp.complemento));
+  const cidadeUF = join('/', safe(emp.cidade), safe(emp.uf));
+  const cep = safe(emp.cep);
+  const cidadeRodape = cidadeUF || safe(emp.cidade) || 'Cidade não informada';
+  const logoHtml = emp.logo
+    ? `<img src="${emp.logo}" style="max-height:72px;max-width:210px;object-fit:contain">`
+    : `<div style="font-size:24px;font-weight:800;letter-spacing:.5px">${empresaNome}</div>`;
+  const epis = Array.isArray(data.epis) ? data.epis : [];
+
+  document.getElementById('comprovante-content').innerHTML = `
+    <div id="print-area" style="font-family:Arial,sans-serif;font-size:12px;color:#111;line-height:1.35;max-width:900px;margin:0 auto;min-height:1040px;position:relative;padding:14px 20px 54px;background:#fff">
+      <div style="display:grid;grid-template-columns:220px 1fr;gap:20px;align-items:center;border-bottom:2px solid #222;padding-bottom:12px;margin-bottom:12px">
+        <div style="display:flex;align-items:center;justify-content:flex-start;min-height:76px">${logoHtml}</div>
+        <div style="text-align:right;font-size:11px;color:#333">
+          <div style="font-size:15px;font-weight:800;text-transform:uppercase;color:#111;margin-bottom:4px">${empresaNome}</div>
+          <div>${line('CNPJ:', emp.cnpj)}</div>
+          <div>${line('Telefone:', emp.telefone)}${emp.email ? ' | E-mail: ' + safe(emp.email) : ''}</div>
+          <div>${enderecoLinha1}</div>
+          <div>${enderecoLinha2}</div>
+          <div>${cidadeUF}${cep ? ' | CEP: ' + cep : ''}</div>
+        </div>
+      </div>
+
+      <h2 style="text-align:center;margin:8px 0 12px;font-size:16px;text-transform:uppercase;letter-spacing:.3px">Comprovante de Entrega de EPI</h2>
+
+      <table style="width:100%;border-collapse:collapse;margin-bottom:12px;font-size:12px">
+        <tbody>
+          <tr>
+            <td style="border:1px solid #ddd;padding:7px;background:#f3f4f6;width:18%;font-weight:bold">Funcionário</td>
+            <td style="border:1px solid #ddd;padding:7px;width:32%">${safe(data.colaborador?.nome)}</td>
+            <td style="border:1px solid #ddd;padding:7px;background:#f3f4f6;width:15%;font-weight:bold">Função</td>
+            <td style="border:1px solid #ddd;padding:7px;width:35%">${safe(data.colaborador?.tipo || 'Não informada')}</td>
+          </tr>
+          <tr>
+            <td style="border:1px solid #ddd;padding:7px;background:#f3f4f6;font-weight:bold">Data do comprovante</td>
+            <td style="border:1px solid #ddd;padding:7px">${fmtDate(data.data_geracao)}</td>
+            <td style="border:1px solid #ddd;padding:7px;background:#f3f4f6;font-weight:bold">Gerado em</td>
+            <td style="border:1px solid #ddd;padding:7px">${dataHoraGeracao}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div style="border:1px solid #ddd;background:#fafafa;padding:10px 12px;margin:0 0 12px;font-size:11.5px;text-align:justify">
+        <strong>Motivo e base legal:</strong> o presente comprovante registra a entrega gratuita de Equipamento de Proteção Individual ao colaborador acima identificado, para proteção contra riscos ocupacionais da função e controle formal de fornecimento pela empresa. Conforme o art. 166 da CLT, a empresa deve fornecer gratuitamente EPI adequado ao risco, em perfeito estado de conservação e funcionamento, quando as medidas de proteção coletiva não oferecerem proteção completa. Conforme a NR-6, cabe à organização adquirir EPI aprovado, orientar e treinar o empregado quanto ao uso adequado, guarda e conservação, exigir seu uso, substituir quando danificado ou extraviado e registrar o fornecimento. O colaborador declara ciência de que deve utilizar o EPI apenas para a finalidade a que se destina, zelar pela guarda e conservação e comunicar qualquer alteração que o torne impróprio para uso.
+      </div>
+
+      <table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:12px">
+        <thead>
+          <tr style="background:#222;color:#fff">
+            <th style="padding:8px;text-align:left;border:1px solid #222">EPI Entregue</th>
+            <th style="padding:8px;text-align:left;border:1px solid #222">Categoria</th>
+            <th style="padding:8px;text-align:center;border:1px solid #222">Entregue em</th>
+            <th style="padding:8px;text-align:center;border:1px solid #222">Válido até</th>
+            <th style="padding:8px;text-align:left;border:1px solid #222">Motivo</th>
+          </tr>
+        </thead>
+        <tbody>${epis.length ? epis.map((e,i)=>`<tr style="background:${i%2?'#fbfbfb':'#fff'}">
+          <td style="padding:7px 8px;border:1px solid #ddd;font-weight:bold">${safe(e.epi_nome)}</td>
+          <td style="padding:7px 8px;border:1px solid #ddd">${safe(e.categoria) || '—'}</td>
+          <td style="padding:7px 8px;border:1px solid #ddd;text-align:center">${fmtDate(e.data_entrega)}</td>
+          <td style="padding:7px 8px;border:1px solid #ddd;text-align:center">${fmtDate(e.data_validade)}</td>
+          <td style="padding:7px 8px;border:1px solid #ddd">${safe(e.motivo) || 'Entrega inicial'}</td>
+        </tr>`).join('') : `<tr><td colspan="5" style="padding:10px;border:1px solid #ddd;text-align:center;color:#666">Nenhum EPI ativo encontrado para este colaborador.</td></tr>`}</tbody>
+      </table>
+
+      <div style="border:1px solid #ddd;padding:10px 12px;margin-bottom:34px;font-size:11.5px;text-align:justify">
+        Declaro que recebi os EPIs listados neste comprovante, em boas condições de uso, bem como as orientações necessárias sobre utilização, conservação, guarda e comunicação de qualquer irregularidade, comprometendo-me a utilizá-los corretamente durante a execução das minhas atividades.
+      </div>
+
+      <div style="margin-top:30px;display:grid;grid-template-columns:1fr 1fr;gap:44px">
+        <div style="text-align:center"><div style="border-top:1px solid #333;padding-top:8px;font-size:12px;font-weight:bold">Assinatura do Funcionário</div><div style="font-size:11px;color:#555;margin-top:4px">${safe(data.colaborador?.nome)}</div></div>
+        <div style="text-align:center"><div style="border-top:1px solid #333;padding-top:8px;font-size:12px;font-weight:bold">Responsável pela Entrega</div><div style="font-size:11px;color:#555;margin-top:4px">${safe(epis[0]?.responsavel) || '_______________'}</div></div>
+      </div>
+
+      <div style="position:absolute;left:20px;right:20px;bottom:12px;border-top:1px solid #ddd;padding-top:7px;font-size:10.5px;color:#555;display:flex;justify-content:space-between;gap:20px">
+        <span>${cidadeRodape}, ${dataGeracaoExtenso} — gerado às ${agora.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'})}</span>
+        <span>Comprovante emitido pelo sistema PRATIC</span>
+      </div>
+    </div>`;
+  openModal('modal-comprovante');
+}
+
+function imprimirComprovante() {
+  const content = document.getElementById('print-area')?.outerHTML;
+  if(!content) return;
+  const win = window.open('', '_blank');
+  win.document.write(`<html><head><title>Comprovante de Entrega de EPI</title><style>
+    @page { size: A4; margin: 0; }
+    * { box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; margin: 12mm; background: #fff; }
+    table { page-break-inside: auto; }
+    tr { page-break-inside: avoid; page-break-after: auto; }
+    img { max-width: 100%; }
+  </style></head><body>${content}</body></html>`);
+  win.document.close();
+  win.focus();
+  setTimeout(() => win.print(), 300);
+}
+
+// ─── PEDIDOS ──────────────────────────────────────────────────────────────────
+
+const STATUS_LABEL_PED={aberto:'📋 Aberto',em_producao:'🏭 Em produção',produzido:'✅ Produzido',em_estoque:'🏷️ Em estoque do cliente',aguardando_nf:'🧾 Aguardando NF',aguardando_retirada:'🙋 Aguardando retirada',enviado:'🚚 Enviado',retirado:'✅ Retirado',entregue:'📦 Entregue'};
+const STATUS_PILL_PED={aberto:'pill-info',em_producao:'pill-warn',produzido:'pill-success',em_estoque:'pill-info',aguardando_nf:'pill-warn',aguardando_retirada:'pill-warn',enviado:'pill-info',retirado:'pill-success',entregue:'pill-success'};
+const STATUS_NEXT_PED={aberto:'em_producao',em_producao:'produzido',produzido:null,entregue:null};
+const STATUS_NEXT_LABEL_PED={aberto:'→ Iniciar',em_producao:'→ Produzido',produzido:null,entregue:null};
+// Considera o item como produzido pela quantidade real, não só pelo campo status (evita divergência)
+const _itemProduzido = i => (((i.qtd_produzida||0) >= i.quantidade) && i.quantidade>0) || i.status==='produzido' || i.status==='entregue';
+const _itemStatusEf = i => i.status==='entregue' ? 'produzido' : (_itemProduzido(i) ? 'produzido' : (((i.qtd_produzida||0)>0 || i.status==='em_producao') ? 'em_producao' : 'aberto'));
+
+function switchPedidosTab(tab) {
+  ['fila','programacao','pedidos','clientes','transportadora','acompanhamento'].forEach(t=>{
+    const el=document.getElementById('ped-tab-'+t);
+    const btn=document.getElementById('ptab-'+t);
+    if(el) el.style.display=t===tab?'':'none';
+    if(btn){btn.style.borderColor=t===tab?'var(--accent)':'';btn.style.color=t===tab?'var(--accent)':'';}
+  });
+  if(tab==='fila') loadFila();
+  if(tab==='pedidos') loadPedidos();
+  if(tab==='clientes') loadClientes();
+  if(tab==='acompanhamento') loadAcompanhamento();
+  if(tab==='transportadora') {
+    switchTranspTab('fila');
+    loadTransportadora();
+  }
+}
+
+// Selo de tempo parado na etapa: verde até 1 dia, amarelo 2–3, vermelho 4+
+let _prazosParados = { amarelo: 2, vermelho: 4 };
+async function _carregarPrazosParados() {
+  try { _prazosParados = await api('/pedidos/prazos-parados'); } catch (e) {}
+  return _prazosParados;
+}
+function _seloDiasEtapa(dias) {
+  const n = Math.max(0, Number(dias) || 0);
+  let bg = 'rgba(16,185,129,.15)', cor = 'var(--success)';
+  if (n >= _prazosParados.vermelho) { bg = 'rgba(239,68,68,.15)'; cor = 'var(--danger)'; }
+  else if (n >= _prazosParados.amarelo) { bg = 'rgba(240,180,41,.15)'; cor = 'var(--accent)'; }
+  const txt = n === 0 ? 'hoje' : n === 1 ? '1 dia' : n + ' dias';
+  return `<span style="display:inline-flex;align-items:center;gap:6px;background:${bg};color:${cor};border-radius:12px;padding:3px 10px;font-size:12px;font-weight:700;white-space:nowrap"><span style="width:7px;height:7px;border-radius:4px;background:${cor}"></span>${txt}</span>`;
+}
+function _diasDesde(s) {
+  if (!s) return 0;
+  const d = new Date(String(s).replace(' ', 'T'));
+  if (isNaN(d)) return 0;
+  return Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000));
+}
+
+async function loadTransportadora() {
+  const sel = document.getElementById('ped-transp-filtro');
+  const ehGestor = window.usuarioLogado && window.usuarioLogado.role === 'gestor';
+  // "Aguardando vendedor" só para o Gestor: a Expedição só vê o que o vendedor liberou
+  const optVend = sel ? sel.querySelector('option[value="aguardando_vendedor"]') : null;
+  if (optVend) optVend.hidden = !ehGestor;
+  let filtro = sel?.value || 'aguardando_nf';
+  if (filtro === 'aguardando_vendedor' && !ehGestor) { filtro = 'aguardando_nf'; if (sel) sel.value = filtro; }
+  const busca = (document.getElementById('ped-transp-busca')?.value || '').trim().toLowerCase();
+  await _carregarPrazosParados();
+  let rows = await api('/pedidos/');
+  const st = p => p.status_efetivo || p.status;
+  const mapa = {
+    aguardando_nf: ['aguardando_nf'],
+    aguardando_retirada: ['aguardando_retirada'],
+    aguardando_vendedor: ['produzido'],
+    enviado: ['enviado'],
+    retirado: ['retirado'],
+    entregue: ['entregue'],
+    todos: ['enviado', 'retirado', 'entregue'],
+  };
+  let lista = rows.filter(p => (mapa[filtro] || ['aguardando_nf']).includes(st(p)));
+  if (busca) lista = lista.filter(p =>
+    String(p.numero_pedido || '').toLowerCase().includes(busca) ||
+    String(p.cliente_nome || '').toLowerCase().includes(busca) ||
+    String(p.vendedor_usuario_nome || p.vendedor || '').toLowerCase().includes(busca));
+  // Pendentes: mais antigos na etapa primeiro. Concluídos: mais recentes primeiro.
+  if (['enviado', 'retirado', 'entregue', 'todos'].includes(filtro)) lista.sort((a, b) => String(b.status_desde || '').localeCompare(String(a.status_desde || '')));
+  else lista.sort((a, b) => String(a.status_desde || '').localeCompare(String(b.status_desde || '')));
+
+  const resumo = document.getElementById('ped-transp-resumo');
+  if (resumo) {
+    const n = s2 => rows.filter(p => st(p) === s2).length;
+    const chip = (txt, qtd, alvo, cor) => `<button type="button" onclick="document.getElementById('ped-transp-filtro').value='${alvo}';loadTransportadora()" style="background:var(--surface2);border:1px solid ${filtro === alvo ? 'var(--accent)' : 'var(--border)'};border-radius:8px;padding:8px 12px;font-size:13px;color:var(--text);cursor:pointer;white-space:nowrap">${txt} <strong style="color:${cor}">${qtd}</strong></button>`;
+    resumo.innerHTML = chip('🧾 Aguardando NF', n('aguardando_nf'), 'aguardando_nf', 'var(--accent)')
+      + chip('🙋 Aguardando retirada', n('aguardando_retirada'), 'aguardando_retirada', 'var(--accent)')
+      + (ehGestor ? chip('⏳ Aguardando vendedor', n('produzido'), 'aguardando_vendedor', 'var(--danger)') : '');
+  }
+
+  const tbody = document.getElementById('ped-transp-tbody');
+  if (!tbody) return;
+  if (!lista.length) { tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:24px">Nenhum pedido nesta visão</td></tr>'; return; }
+  const podeDespachar = temPermissao('expedicao', 'despachar');
+  tbody.innerHTML = lista.map(p => {
+    const s2 = st(p);
+    const revPend = p.revenda_pendentes || 0;
+    const btnRevenda = `<button class="btn btn-sm btn-secondary" style="color:var(--warn);border-color:var(--warn)" title="Separe as tampas/revenda antes de concluir" onclick="verDetalhesPedido(${p.id})">⚠ Separar ${revPend} revenda</button>`;
+    let acoes = '';
+    if (s2 === 'aguardando_nf' && podeDespachar) {
+      acoes = revPend > 0 ? btnRevenda : `<button class="btn btn-sm btn-primary" onclick="abrirDespacho(${p.id})">📦 Lançar NF e despachar</button>`;
+    } else if (s2 === 'aguardando_retirada' && podeDespachar) {
+      acoes = revPend > 0 ? btnRevenda : `<button class="btn btn-sm btn-primary" onclick="abrirRetirada(${p.id})">✅ Lançar NF e registrar retirada</button>`;
+    } else if (s2 === 'produzido' && ehGestor) {
+      acoes = `<span style="font-size:12px;color:var(--muted)">aguardando o vendedor</span> <button class="btn btn-sm btn-secondary" title="Exceção do Gestor: despachar sem o vendedor ter definido o frete" onclick="abrirDespacho(${p.id})">📦 Despachar direto</button>`;
+    } else if (s2 === 'enviado' && podeDespachar) {
+      acoes = `<button class="btn btn-sm btn-secondary" onclick="verProdutosEnviados(${p.id})">👁 Produtos</button> <button class="btn btn-sm btn-secondary" onclick="abrirDespacho(${p.id})">✏️</button> <button class="btn btn-sm btn-primary" onclick="confirmarEntrega(${p.id})">✓ Entregue</button>`;
+    } else if (['enviado', 'retirado', 'entregue'].includes(s2)) {
+      acoes = `<button class="btn btn-sm btn-secondary" onclick="verProdutosEnviados(${p.id})">👁 Produtos</button>`;
+    }
+    const pendente = ['aguardando_nf', 'aguardando_retirada', 'produzido'].includes(s2);
+    let previsao = '—';
+    if (s2 === 'aguardando_retirada') previsao = p.retirada_prevista ? fmtDate(p.retirada_prevista) : '—';
+    else if (p.previsao_entrega) previsao = fmtDate(p.previsao_entrega);
+    const obsV = p.obs_vendedor ? `<div style="font-size:11px;color:var(--muted);max-width:240px" title="Observação do vendedor">💬 ${_escHtml(p.obs_vendedor)}</div>` : '';
+    return `<tr>
+      <td><strong>${p.numero_pedido}</strong></td>
+      <td>${p.cliente_nome||'—'}${obsV}</td>
+      <td>${_escHtml(p.vendedor_usuario_nome || p.vendedor || '—')}</td>
+      <td>${s2 === 'aguardando_retirada' ? '<span style="color:var(--muted)">Cliente retira</span>' : _escHtml(p.transportadora || '—')}</td>
+      <td>${s2 === 'aguardando_retirada' ? '—' : fmtBRL(p.frete || 0)}</td>
+      <td>${previsao}</td>
+      <td style="white-space:nowrap">${p.nota_fiscal||'—'}${_nfPdfLink(p)}</td>
+      <td>${pendente ? _seloDiasEtapa(_diasDesde(p.status_desde)) : (p.data_despacho ? fmtDate(p.data_despacho) : '—')}</td>
+      <td><span class="pill ${s2 === 'produzido' ? 'pill-danger' : STATUS_PILL_PED[s2]}">${s2 === 'produzido' ? '⏳ Aguardando vendedor' : STATUS_LABEL_PED[s2]}</span></td>
+      <td class="flex gap-2" style="flex-wrap:wrap">${acoes}</td>
+    </tr>`;
+  }).join('');
+}
+window.loadTransportadora = loadTransportadora;
+
+function adicionarDiasUteis(dataStr, dias) {
+  if (!dataStr) return '';
+  const parts = dataStr.split('-');
+  let date = new Date(parts[0], parts[1] - 1, parts[2]);
+  let added = 0;
+  while (added < dias) {
+    date.setDate(date.getDate() + 1);
+    const dayOfWeek = date.getDay();
+    if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+      added++;
+    }
+  }
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+window.adicionarDiasUteis = adicionarDiasUteis;
+
+function atualizarPrevisaoEntrega() {
+  const dispatchDate = document.getElementById('desp-data').value;
+  if (dispatchDate) {
+    document.getElementById('desp-previsao').value = adicionarDiasUteis(dispatchDate, 8);
+  }
+}
+window.atualizarPrevisaoEntrega = atualizarPrevisaoEntrega;
+
+async function abrirDespacho(id) {
+  const p = await api('/pedidos/' + id);
+  document.getElementById('desp-pedido-id').value = id;
+  
+  // Cabeçalho destacado e legível
+  document.getElementById('desp-cabecalho').innerHTML = `
+    Pedido: <strong style="color:var(--accent); font-size:16px;">${p.numero_pedido}</strong> — Cliente: <strong style="color:var(--text);">${p.cliente_nome||''}</strong><br>
+    Vendedor: <strong style="color:var(--text); font-weight:bold;">${p.vendedor || 'Não informado'}</strong>
+    ${p.envio_definido_em ? `<br><span style="color:var(--muted);font-size:12px">Frete definido por ${_escHtml(p.envio_definido_por || 'vendedor')} em ${fmtDate(String(p.envio_definido_em).slice(0,10))}${p.obs_vendedor ? ' · 💬 ' + _escHtml(p.obs_vendedor) : ''}</span>` : ''}
+  `;
+  
+  await _preencherSelectTransp(document.getElementById('desp-transportadora'), p.transportadora || '');
+  document.getElementById('desp-nf').value = p.nota_fiscal || '';
+  document.getElementById('desp-rastreio').value = p.rastreio || '';
+  document.getElementById('desp-volumes').value = p.volumes || 1;
+  document.getElementById('desp-frete').value = p.frete || 0;
+  
+  const dataDespacho = p.data_despacho || new Date().toISOString().slice(0,10);
+  document.getElementById('desp-data').value = dataDespacho;
+  document.getElementById('desp-previsao').value = p.previsao_entrega || adicionarDiasUteis(dataDespacho, 8);
+  document.getElementById('desp-obs').value = p.obs_envio || '';
+
+  // Endereço de entrega: o já salvo neste pedido, senão o do cadastro do cliente
+  const temEndPedido = !!(p.entrega_cep || p.entrega_logradouro || p.entrega_cidade);
+  const src = temEndPedido ? 'entrega_' : 'cliente_';
+  ['cep','logradouro','numero','complemento','bairro','cidade','uf'].forEach(c => {
+    const el = document.getElementById('desp-end-' + c);
+    if (el) el.value = p[src + c] || '';
+  });
+  const cepEl = document.getElementById('desp-end-cep');
+  if (cepEl) cepEl.value = _fmtCepDesp(cepEl.value);
+  _despCepBuscado = cepEl ? cepEl.value.replace(/\D/g, '') : '';
+  const orig = document.getElementById('desp-end-origem');
+  if (orig) orig.textContent = temEndPedido ? 'Endereço específico deste pedido' : 'Do cadastro do cliente — confira antes de despachar';
+  const chk = document.getElementById('desp-end-atualizar-cad');
+  if (chk) chk.checked = false;
+  _nfPdfWidget('desp-nf-pdf', id, p, 'desp-nf');
+  openModal('modal-despacho');
+  // Volumes e peso calculados pelas caixas (cadastro do produto + lançamentos manuais)
+  if (typeof resumoCotacaoHTML === 'function') {
+    const d = await resumoCotacaoHTML(id, document.getElementById('desp-volumes-resumo'));
+    if (d && !p.volumes && d.totais && d.totais.caixas > 0) {
+      document.getElementById('desp-volumes').value = Math.ceil(d.totais.caixas);
+    }
+  }
+}
+window.abrirDespacho = abrirDespacho;
+
+// Quando a Expedição lança/exclui caixas com o despacho aberto, atualiza o resumo e os volumes
+window.cotAoAlterar = function (pedidoId, d) {
+  const det = document.getElementById('ped-det-embalagem');
+  const detModal = document.getElementById('modal-ped-detalhe');
+  if (det && detModal && detModal.classList.contains('open')) resumoCotacaoHTML(pedidoId, det);
+  const el = document.getElementById('desp-volumes-resumo');
+  const modal = document.getElementById('modal-despacho');
+  if (!el || !modal || !modal.classList.contains('open')) return;
+  if (String(document.getElementById('desp-pedido-id').value) !== String(pedidoId)) return;
+  resumoCotacaoHTML(pedidoId, el);
+  if (d && d.totais && d.totais.caixas > 0) document.getElementById('desp-volumes').value = Math.ceil(d.totais.caixas);
+};
+
+let _despCepBuscado = '';
+function _fmtCepDesp(v) {
+  const d = String(v || '').replace(/\D/g, '').slice(0, 8);
+  return d.length > 5 ? d.slice(0, 5) + '-' + d.slice(5) : d;
+}
+
+async function buscarCepDespacho() {
+  const el = document.getElementById('desp-end-cep');
+  if (!el) return;
+  const cep = el.value.replace(/\D/g, '');
+  el.value = _fmtCepDesp(cep);
+  if (cep.length !== 8 || cep === _despCepBuscado) return;
+  try {
+    const d = await api('/pedidos/busca-cep/' + cep);
+    _despCepBuscado = cep;
+    if (d.logradouro) document.getElementById('desp-end-logradouro').value = d.logradouro;
+    if (d.bairro) document.getElementById('desp-end-bairro').value = d.bairro;
+    if (d.cidade) document.getElementById('desp-end-cidade').value = d.cidade;
+    if (d.uf) document.getElementById('desp-end-uf').value = d.uf;
+    document.getElementById('desp-end-numero').value = '';
+    document.getElementById('desp-end-complemento').value = '';
+    document.getElementById('desp-end-numero').focus();
+  } catch (e) {
+    showAlert('CEP não encontrado: ' + e.message, 'danger');
+  }
+}
+window.buscarCepDespacho = buscarCepDespacho;
+
+async function salvarDespacho() {
+  const id = document.getElementById('desp-pedido-id').value;
+  const freteVal = parseFloat(document.getElementById('desp-frete').value) || 0;
+  const body = {
+    transportadora: document.getElementById('desp-transportadora').value.trim(),
+    nota_fiscal: document.getElementById('desp-nf').value.trim(),
+    rastreio: document.getElementById('desp-rastreio').value.trim(),
+    volumes: parseInt(document.getElementById('desp-volumes').value) || 0,
+    frete: freteVal,
+    frete_pago: freteVal,
+    data_despacho: document.getElementById('desp-data').value,
+    previsao_entrega: document.getElementById('desp-previsao').value,
+    obs_envio: document.getElementById('desp-obs').value.trim()
+  };
+  ['cep','logradouro','numero','complemento','bairro','cidade','uf'].forEach(c => {
+    const el = document.getElementById('desp-end-' + c);
+    if (el) body['entrega_' + c] = el.value.trim();
+  });
+  const chkCad = document.getElementById('desp-end-atualizar-cad');
+  body.atualizar_cadastro_cliente = !!(chkCad && chkCad.checked);
+  if (!body.transportadora) { showAlert('Informe a transportadora', 'danger'); return; }
+  if (!body.nota_fiscal) { showAlert('Informe o número da nota fiscal', 'danger'); return; }
+  try {
+    await api('/pedidos/' + id + '/despachar', 'POST', body);
+    closeModal('modal-despacho');
+    showAlert('Pedido despachado!');
+    loadTransportadora();
+  } catch(e) { showAlert(e.message, 'danger'); }
+}
+window.salvarDespacho = salvarDespacho;
+
+// ─── PDF DA NOTA FISCAL (Expedição anexa; vendedor e gestor abrem) ──────────
+function _nfPdfWidget(elId, pedidoId, p, inputNfId) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  const pode = temPermissao('expedicao', 'despachar') || (window.meuUsuario && window.meuUsuario.role === 'gestor') || localStorage.getItem('user_role') === 'gestor';
+  const tem = !!(p && p.nf_arquivo);
+  const url = API + '/pedidos/' + pedidoId + '/nf-arquivo';
+  let html = '';
+  if (tem) {
+    html = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.3);border-radius:8px;padding:8px 12px;font-size:13px">
+      <span>📄 <strong>${_escHtml(p.nf_arquivo_nome || 'nota-fiscal.pdf')}</strong>${p.nf_arquivo_por ? ` <span style="color:var(--muted)">· ${_escHtml(p.nf_arquivo_por)}${p.nf_arquivo_em ? ' em ' + fmtDate(String(p.nf_arquivo_em).slice(0, 10)) : ''}</span>` : ''}</span>
+      <a class="btn btn-sm btn-secondary" href="${url}" target="_blank" rel="noopener" style="text-decoration:none">👁 Ver</a>
+      ${pode ? `<label class="btn btn-sm btn-secondary" style="cursor:pointer;margin:0">🔄 Trocar<input type="file" accept="application/pdf,.pdf" style="display:none" onchange="_nfPdfEnviar(this,'${elId}',${pedidoId},${inputNfId ? `'${inputNfId}'` : 'null'})"></label>
+      <button type="button" class="btn btn-sm btn-secondary" onclick="_nfPdfRemover('${elId}',${pedidoId},${inputNfId ? `'${inputNfId}'` : 'null'})">🗑</button>` : ''}
+    </div>`;
+  } else if (pode) {
+    html = `<label class="btn btn-secondary" style="cursor:pointer;margin:0;display:inline-flex;align-items:center;gap:6px">📎 Anexar PDF da NF<input type="file" accept="application/pdf,.pdf" style="display:none" onchange="_nfPdfEnviar(this,'${elId}',${pedidoId},${inputNfId ? `'${inputNfId}'` : 'null'})"></label>
+      <span style="font-size:12px;color:var(--muted);margin-left:8px">O número da NF é preenchido a partir do PDF, quando possível.</span>`;
+  } else {
+    html = '<span style="font-size:13px;color:var(--muted)">Sem PDF anexado.</span>';
+  }
+  el.innerHTML = html;
+}
+window._nfPdfWidget = _nfPdfWidget;
+
+function _nfPdfLink(p) {
+  return p && p.nf_arquivo ? ` <a href="${API}/pedidos/${p.id}/nf-arquivo" target="_blank" rel="noopener" title="Abrir o PDF da nota fiscal" style="text-decoration:none">📄</a>` : '';
+}
+window._nfPdfLink = _nfPdfLink;
+
+async function _nfPdfRecarregar(elId, pedidoId, inputNfId) {
+  try { const p = await api('/pedidos/' + pedidoId); _nfPdfWidget(elId, pedidoId, p, inputNfId); } catch (e) {}
+  if (typeof loadTransportadora === 'function' && document.getElementById('ped-transp-filtro')) { try { loadTransportadora(); } catch (e) {} }
+}
+
+async function _nfPdfEnviar(input, elId, pedidoId, inputNfId) {
+  const f = input.files && input.files[0];
+  if (!f) return;
+  const el = document.getElementById(elId);
+  if (el) el.innerHTML = '<span style="font-size:13px;color:var(--muted)">Enviando PDF...</span>';
+  try {
+    const fd = new FormData(); fd.append('arquivo', f);
+    const r = await fetch(API + '/pedidos/' + pedidoId + '/nf-arquivo', { method: 'POST', body: fd, credentials: 'same-origin' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || 'Erro ao enviar o PDF');
+    const nfEl = inputNfId ? document.getElementById(inputNfId) : null;
+    if (nfEl && !nfEl.value.trim() && d.numero_nf) {
+      nfEl.value = d.numero_nf;
+      showAlert('PDF anexado. Número da NF preenchido pelo PDF: ' + d.numero_nf + ' — confira.');
+    } else showAlert('PDF da nota fiscal anexado.');
+  } catch (e) { showAlert(e.message, 'danger'); }
+  await _nfPdfRecarregar(elId, pedidoId, inputNfId);
+}
+window._nfPdfEnviar = _nfPdfEnviar;
+
+async function _nfPdfRemover(elId, pedidoId, inputNfId) {
+  if (!confirm('Remover o PDF da nota fiscal deste pedido?')) return;
+  try { await api('/pedidos/' + pedidoId + '/nf-arquivo', 'DELETE'); showAlert('PDF removido'); }
+  catch (e) { showAlert(e.message, 'danger'); }
+  await _nfPdfRecarregar(elId, pedidoId, inputNfId);
+}
+window._nfPdfRemover = _nfPdfRemover;
+
+async function abrirRetirada(id) {
+  let p;
+  try { p = await api('/pedidos/' + id); } catch (e) { showAlert('Erro ao carregar pedido: ' + e.message, 'danger'); return; }
+  document.getElementById('ret-pedido-id').value = id;
+  document.getElementById('ret-cabecalho').innerHTML = `
+    Pedido: <strong style="color:var(--accent); font-size:16px;">${p.numero_pedido}</strong> — Cliente: <strong>${p.cliente_nome || ''}</strong><br>
+    Vendedor: <strong>${p.vendedor || 'Não informado'}</strong>${p.retirada_prevista ? ' · Previsão de retirada: <strong>' + fmtDate(p.retirada_prevista) + '</strong>' : ''}
+    ${p.obs_vendedor ? '<br><span style="color:var(--muted);font-size:12px">💬 ' + _escHtml(p.obs_vendedor) + '</span>' : ''}`;
+  document.getElementById('ret-nf').value = '';
+  document.getElementById('ret-data').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('ret-volumes').value = 1;
+  document.getElementById('ret-obs').value = '';
+  _nfPdfWidget('ret-nf-pdf', id, p, 'ret-nf');
+  openModal('modal-retirada');
+}
+window.abrirRetirada = abrirRetirada;
+
+async function salvarRetirada() {
+  const id = document.getElementById('ret-pedido-id').value;
+  const body = {
+    nota_fiscal: document.getElementById('ret-nf').value.trim(),
+    data_retirada: document.getElementById('ret-data').value,
+    volumes: parseInt(document.getElementById('ret-volumes').value) || 0,
+    obs: document.getElementById('ret-obs').value.trim()
+  };
+  if (!body.nota_fiscal) { showAlert('Informe o número da nota fiscal', 'danger'); return; }
+  try {
+    await api('/pedidos/' + id + '/retirar', 'POST', body);
+    closeModal('modal-retirada');
+    showAlert('Retirada registrada!');
+    loadTransportadora();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+window.salvarRetirada = salvarRetirada;
+
+// ─── CADASTRO DE TRANSPORTADORAS ──────────────────────────────────────────────
+let _transpCache = [];
+
+function _podeEditarTransp() {
+  const r = window.usuarioLogado && window.usuarioLogado.role;
+  return r === 'gestor' || r === 'expedicao';
+}
+
+async function _preencherSelectTransp(sel, atual) {
+  if (!sel) return;
+  let lista = [];
+  try { lista = await api('/pedidos/transportadoras?ativos=1'); } catch (e) { lista = []; }
+  const nomes = lista.map(t => t.nome);
+  let html = '<option value="">— Selecione a transportadora —</option>' + nomes.map(n => `<option value="${_escHtml(n)}">${_escHtml(n)}</option>`).join('');
+  if (atual && !nomes.some(n => n.toLowerCase() === String(atual).toLowerCase())) {
+    html += `<option value="${_escHtml(atual)}">${_escHtml(atual)} (fora do cadastro)</option>`;
+  }
+  sel.innerHTML = html;
+  const achado = nomes.find(n => n.toLowerCase() === String(atual || '').toLowerCase());
+  sel.value = achado || atual || '';
+}
+
+async function loadCadastroTransp() {
+  const tbody = document.getElementById('transp-cad-tbody');
+  if (!tbody) return;
+  const btnNovo = document.getElementById('transp-cad-novo');
+  if (btnNovo) btnNovo.style.display = _podeEditarTransp() ? '' : 'none';
+  try { _transpCache = await api('/pedidos/transportadoras'); } catch (e) { tbody.innerHTML = `<tr><td colspan="9" style="color:var(--danger);padding:16px">${_escHtml(e.message)}</td></tr>`; return; }
+  const busca = (document.getElementById('transp-cad-busca')?.value || '').trim().toLowerCase();
+  const lista = busca ? _transpCache.filter(t => (t.nome + ' ' + (t.cnpj || '') + ' ' + (t.contato || '')).toLowerCase().includes(busca)) : _transpCache;
+  if (!lista.length) { tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:24px">Nenhuma transportadora cadastrada</td></tr>'; return; }
+  const pode = _podeEditarTransp();
+  tbody.innerHTML = lista.map(t => `<tr style="${t.ativo ? '' : 'opacity:.55'}">
+    <td><strong>${_escHtml(t.nome)}</strong>${t.observacoes ? `<div style="font-size:11px;color:var(--muted)">${_escHtml(t.observacoes)}</div>` : ''}</td>
+    <td>${_escHtml(t.cnpj || '—')}</td>
+    <td>${_escHtml(t.telefone || '—')}${t.contato ? `<div style="font-size:11px;color:var(--muted)">${_escHtml(t.contato)}</div>` : ''}</td>
+    <td>${t.site_rastreio ? `<a href="${_escHtml(/^https?:\/\//i.test(t.site_rastreio) ? t.site_rastreio : 'https://' + t.site_rastreio)}" target="_blank" rel="noopener" style="color:var(--accent2)">abrir ↗</a>` : '—'}</td>
+    <td>${t.envios || 0}</td>
+    <td>${t.ultimo_envio ? fmtDate(t.ultimo_envio) : '—'}</td>
+    <td>${fmtBRL(t.total_frete || 0)}</td>
+    <td><span class="pill ${t.ativo ? 'pill-success' : 'pill-danger'}">${t.ativo ? 'Ativa' : 'Inativa'}</span></td>
+    <td class="flex gap-2" style="flex-wrap:wrap">${pode ? `<button class="btn btn-sm btn-secondary" onclick="abrirModalTransp(${t.id})">✏️ Editar</button><button class="btn btn-sm btn-secondary" title="Juntar com outra transportadora repetida" onclick="abrirUnificarTransp(${t.id})">🔗 Unificar</button>` : ''}</td>
+  </tr>`).join('');
+}
+
+function abrirModalTransp(id) {
+  const t = id ? _transpCache.find(x => x.id === id) : null;
+  document.getElementById('transp-modal-title').textContent = t ? '🚚 Editar transportadora' : '🚚 Nova transportadora';
+  document.getElementById('transp-id').value = t ? t.id : '';
+  const campos = { nome: 'nome', cnpj: 'cnpj', telefone: 'telefone', contato: 'contato', email: 'email', site: 'site_rastreio', obs: 'observacoes' };
+  Object.entries(campos).forEach(([el, k]) => { document.getElementById('transp-' + el).value = t ? (t[k] || '') : ''; });
+  document.getElementById('transp-ativo').value = t ? String(t.ativo ? 1 : 0) : '1';
+  openModal('modal-transportadora');
+}
+
+async function salvarTransp() {
+  const id = document.getElementById('transp-id').value;
+  const body = {
+    nome: document.getElementById('transp-nome').value.trim(),
+    cnpj: document.getElementById('transp-cnpj').value.trim(),
+    telefone: document.getElementById('transp-telefone').value.trim(),
+    contato: document.getElementById('transp-contato').value.trim(),
+    email: document.getElementById('transp-email').value.trim(),
+    site_rastreio: document.getElementById('transp-site').value.trim(),
+    observacoes: document.getElementById('transp-obs').value.trim(),
+    ativo: +document.getElementById('transp-ativo').value
+  };
+  if (!body.nome) { showAlert('Informe o nome da transportadora', 'danger'); return; }
+  try {
+    if (id) await api('/pedidos/transportadoras/' + id, 'PUT', body);
+    else await api('/pedidos/transportadoras', 'POST', body);
+    closeModal('modal-transportadora');
+    showAlert('Transportadora salva!');
+    loadCadastroTransp();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+
+function abrirUnificarTransp(id) {
+  const t = _transpCache.find(x => x.id === id);
+  if (!t) return;
+  document.getElementById('unif-de-id').value = id;
+  document.getElementById('unif-texto').innerHTML = `Os pedidos de <strong style="color:var(--text)">${_escHtml(t.nome)}</strong> passam para a transportadora escolhida abaixo, e o cadastro de <strong style="color:var(--text)">${_escHtml(t.nome)}</strong> é removido. Use para juntar nomes repetidos (ex.: “BRASPRESS” e “Braspress Ltda”).`;
+  document.getElementById('unif-para').innerHTML = _transpCache.filter(x => x.id !== id).map(x => `<option value="${x.id}">${_escHtml(x.nome)}${x.ativo ? '' : ' (inativa)'}</option>`).join('');
+  openModal('modal-unificar-transp');
+}
+
+async function confirmarUnificarTransp() {
+  const de = document.getElementById('unif-de-id').value;
+  const para = document.getElementById('unif-para').value;
+  if (!para) return;
+  try {
+    const r = await api('/pedidos/transportadoras/' + de + '/unificar', 'POST', { para_id: +para });
+    closeModal('modal-unificar-transp');
+    showAlert(r.mensagem);
+    loadCadastroTransp();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+
+window.loadCadastroTransp = loadCadastroTransp;
+window.abrirModalTransp = abrirModalTransp;
+window.salvarTransp = salvarTransp;
+window.abrirUnificarTransp = abrirUnificarTransp;
+window.confirmarUnificarTransp = confirmarUnificarTransp;
+
+async function verProdutosEnviados(id) {
+  let p;
+  try { p = await api('/pedidos/' + id); } catch(e) { showAlert('Erro ao carregar pedido: ' + e.message, 'danger'); return; }
+  document.getElementById('envio-detalhe-pedido-id').value = id;
+  const itens = p.itens || [];
+  document.getElementById('envio-detalhe-content').innerHTML = `
+    <div style="font-size:13px;color:var(--text);margin-bottom:16px;background:rgba(255,255,255,0.05);padding:10px 12px;border-radius:8px;border-left:4px solid var(--accent);line-height:1.7">
+      Pedido: <strong style="color:var(--accent)">${p.numero_pedido}</strong> — Cliente: <strong>${p.cliente_nome || ''}</strong><br>
+      Transportadora: <strong>${p.transportadora || '—'}</strong> · NF: <strong>${p.nota_fiscal || '—'}</strong> · Rastreio: <strong>${p.rastreio || '—'}</strong><br>
+      Despacho: <strong>${p.data_despacho ? fmtDate(p.data_despacho) : '—'}</strong> · Volumes: <strong>${p.volumes || '—'}</strong> · Frete pago: <strong>${fmtBRL(p.frete_pago || 0)}</strong>
+      ${(p.entrega_logradouro || p.entrega_cidade) ? `<br>📍 Entrega: <strong>${_escHtml([[p.entrega_logradouro, p.entrega_numero].filter(Boolean).join(', '), p.entrega_complemento, p.entrega_bairro, [p.entrega_cidade, p.entrega_uf].filter(Boolean).join('/'), p.entrega_cep ? 'CEP ' + _fmtCepDesp(p.entrega_cep) : ''].filter(Boolean).join(' — '))}</strong>` : ''}
+    </div>
+    <div style="margin-bottom:14px"><div style="font-size:13px;font-weight:600;margin-bottom:6px">PDF da nota fiscal</div><div id="envio-nf-pdf"></div></div>
+    <div style="font-size:13px;font-weight:600;margin-bottom:8px">Produtos enviados</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Produto</th><th>Quantidade</th></tr></thead>
+        <tbody>
+          ${itens.length ? itens.map(i => `<tr><td>${i.descricao}</td><td>${fmtNum(i.quantidade)} ${i.unidade || ''}</td></tr>`).join('') : '<tr><td colspan="2" style="text-align:center;color:var(--muted)">Nenhum item encontrado</td></tr>'}
+        </tbody>
+      </table>
+    </div>`;
+  _nfPdfWidget('envio-nf-pdf', id, p, null);
+  if (typeof aplicarPermissoesUI === 'function') aplicarPermissoesUI();
+  const btnEd = document.querySelector('#modal-envio-detalhe [onclick="editarEnvioAPartirDoDetalhe()"]');
+  if (btnEd) btnEd.style.display = (p.status === 'enviado' && temPermissao('expedicao', 'despachar')) ? '' : 'none';
+  const btnDf = document.querySelector('#modal-envio-detalhe [onclick="desfazerEnvio()"]');
+  if (btnDf) btnDf.style.display = (['enviado', 'retirado'].includes(p.status) && temPermissao('expedicao', 'desfazer')) ? '' : 'none';
+  openModal('modal-envio-detalhe');
+}
+window.verProdutosEnviados = verProdutosEnviados;
+
+function editarEnvioAPartirDoDetalhe() {
+  const id = document.getElementById('envio-detalhe-pedido-id').value;
+  closeModal('modal-envio-detalhe');
+  abrirDespacho(parseInt(id));
+}
+window.editarEnvioAPartirDoDetalhe = editarEnvioAPartirDoDetalhe;
+
+async function desfazerEnvio() {
+  const id = document.getElementById('envio-detalhe-pedido-id').value;
+  if (!id) return;
+  if (!confirm('Desfazer a conclusão deste pedido? Ele volta para a fila da Expedição (Aguardando NF ou Aguardando retirada) e os dados da NF serão apagados.')) return;
+  try {
+    const r = await api('/pedidos/' + id + '/desfazer-despacho', 'POST');
+    showAlert(r.mensagem || 'Desfeito — pedido voltou para a fila da Expedição');
+    closeModal('modal-envio-detalhe');
+    const filtroSel = document.getElementById('ped-transp-filtro');
+    if (filtroSel) filtroSel.value = r.status === 'aguardando_retirada' ? 'aguardando_retirada' : (r.status === 'produzido' ? (window.usuarioLogado && window.usuarioLogado.role === 'gestor' ? 'aguardando_vendedor' : 'aguardando_nf') : 'aguardando_nf');
+    loadTransportadora();
+  } catch(e) { showAlert(e.message, 'danger'); }
+}
+window.desfazerEnvio = desfazerEnvio;
+
+async function confirmarEntrega(id) {
+  if (!confirm('Confirmar a entrega deste pedido?')) return;
+  try {
+    await api('/pedidos/' + id + '/confirmar-entrega', 'POST', {});
+    showAlert('Entrega confirmada!');
+    loadTransportadora();
+    if (document.getElementById('ped-entregues-tbody')) {
+      loadPedidosEntregues();
+    }
+  } catch(e) { showAlert(e.message, 'danger'); }
+}
+window.confirmarEntrega = confirmarEntrega;
+
+// ─── TRANSPORTADORA / RELATÓRIOS ──────────────────────────────────────────────
+
+function switchTranspTab(tab) {
+  ['fila', 'entregues', 'relatorios', 'cadastro'].forEach(t => {
+    const el = document.getElementById('transp-content-' + t);
+    const btn = document.getElementById('transp-btn-' + t);
+    const flt = document.getElementById('transp-filter-' + t);
+    if (el) el.style.display = t === tab ? '' : 'none';
+    if (flt) flt.style.display = t === tab ? 'flex' : 'none';
+    if (btn) {
+      btn.style.borderColor = t === tab ? 'var(--accent)' : '';
+      btn.style.color = t === tab ? 'var(--accent)' : '';
+    }
+  });
+  if (tab === 'fila') {
+    loadTransportadora();
+  } else if (tab === 'cadastro') {
+    loadCadastroTransp();
+  } else if (tab === 'entregues') {
+    loadPedidosEntregues();
+  } else if (tab === 'relatorios') {
+    populateRelTranspCarriers();
+    const today = new Date().toISOString().slice(0, 10);
+    const past30 = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    document.getElementById('rel-transp-data-ini').value = past30;
+    document.getElementById('rel-transp-data-fim').value = today;
+    gerarRelatorioTransp();
+  }
+}
+window.switchTranspTab = switchTranspTab;
+
+async function loadPedidosEntregues() {
+  const busca = document.getElementById('ped-entregues-busca')?.value.toLowerCase() || '';
+  const dataIni = document.getElementById('ped-entregues-data-ini')?.value || '';
+  const dataFim = document.getElementById('ped-entregues-data-fim')?.value || '';
+
+  let rows = await api('/pedidos/');
+  const st = p => p.status_efetivo || p.status;
+  let lista = rows.filter(p => ['entregue', 'retirado'].includes(st(p)))
+    .map(p => st(p) === 'retirado' ? Object.assign({}, p, { data_entrega: p.data_entrega || p.data_despacho }) : p);
+
+  if (busca) {
+    lista = lista.filter(p => 
+      String(p.numero_pedido || '').toLowerCase().includes(busca) ||
+      String(p.cliente_nome || '').toLowerCase().includes(busca) ||
+      String(p.transportadora || '').toLowerCase().includes(busca) ||
+      String(p.nota_fiscal || '').toLowerCase().includes(busca) ||
+      String(p.rastreio || '').toLowerCase().includes(busca)
+    );
+  }
+
+  if (dataIni) {
+    lista = lista.filter(p => p.data_entrega && p.data_entrega >= dataIni);
+  }
+  if (dataFim) {
+    lista = lista.filter(p => p.data_entrega && p.data_entrega <= dataFim);
+  }
+
+  lista.sort((a, b) => {
+    const dateA = a.data_entrega || '';
+    const dateB = b.data_entrega || '';
+    if (dateA !== dateB) {
+      return dateB.localeCompare(dateA);
+    }
+    return b.id - a.id;
+  });
+
+  const tbody = document.getElementById('ped-entregues-tbody');
+  if (!tbody) return;
+  if (!lista.length) {
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:24px">Nenhum pedido entregue</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = lista.map(p => {
+    return `<tr>
+      <td><strong>${p.numero_pedido}</strong></td>
+      <td>${p.cliente_nome || '—'}</td>
+      <td>${p.transportadora || '—'}</td>
+      <td style="white-space:nowrap">${p.nota_fiscal || '—'}${_nfPdfLink(p)}</td>
+      <td>${p.rastreio || '—'}</td>
+      <td>${p.volumes || '—'}</td>
+      <td>${p.data_despacho ? fmtDate(p.data_despacho) : '—'}</td>
+      <td>${p.data_entrega ? fmtDate(p.data_entrega) : '—'}</td>
+      <td>${fmtBRL(p.frete_pago || 0)}</td>
+      <td><span class="pill ${STATUS_PILL_PED['entregue']}">${STATUS_LABEL_PED['entregue']}</span></td>
+    </tr>`;
+  }).join('');
+}
+window.loadPedidosEntregues = loadPedidosEntregues;
+
+async function populateRelTranspCarriers() {
+  try {
+    const orders = await api('/pedidos/');
+    const select = document.getElementById('rel-transp-name');
+    if (!select) return;
+    const carriers = new Set();
+    orders.forEach(p => {
+      if (p.transportadora && p.transportadora.trim()) {
+        carriers.add(p.transportadora.trim());
+      }
+    });
+    const sortedCarriers = Array.from(carriers).sort();
+    select.innerHTML = '<option value="">Todas as Transportadoras</option>' + 
+      sortedCarriers.map(c => `<option value="${c}">${c}</option>`).join('');
+  } catch (e) {
+    console.error('Erro ao carregar transportadoras', e);
+  }
+}
+window.populateRelTranspCarriers = populateRelTranspCarriers;
+
+async function gerarRelatorioTransp() {
+  const tipo = document.getElementById('rel-transp-tipo').value;
+  const transpNome = document.getElementById('rel-transp-name').value;
+  const dataIni = document.getElementById('rel-transp-data-ini').value;
+  const dataFim = document.getElementById('rel-transp-data-fim').value;
+  
+  const titleMap = {
+    extrato: 'Extrato de Envios',
+    resumo: 'Resumo Financeiro por Transportadora',
+    divergencia: 'Divergência de Frete (Cobrado vs Pago)'
+  };
+  document.getElementById('rel-transp-title').textContent = titleMap[tipo] || 'Relatório de Transportadoras';
+  
+  try {
+    let orders = await api('/pedidos/');
+    const st = p => p.status_efetivo || p.status;
+    let filtered = orders.filter(p => ['enviado', 'entregue'].includes(st(p)));
+    
+    if (transpNome) {
+      filtered = filtered.filter(p => p.transportadora && p.transportadora.trim().toLowerCase() === transpNome.trim().toLowerCase());
+    }
+    if (dataIni) {
+      filtered = filtered.filter(p => p.data_despacho && p.data_despacho >= dataIni);
+    }
+    if (dataFim) {
+      filtered = filtered.filter(p => p.data_despacho && p.data_despacho <= dataFim);
+    }
+    
+    const thead = document.getElementById('rel-transp-thead');
+    const tbody = document.getElementById('rel-transp-tbody');
+    const cards = document.getElementById('rel-transp-cards');
+    
+    if (!tbody || !thead) return;
+    
+    if (tipo === 'extrato') {
+      thead.innerHTML = `<tr>
+        <th>Nº Pedido</th>
+        <th>Cliente</th>
+        <th>Transportadora</th>
+        <th>NF</th>
+        <th>Data Despacho</th>
+        <th>Vol.</th>
+        <th>Frete Cobrado</th>
+        <th>Frete Pago</th>
+        <th>Diferença</th>
+      </tr>`;
+      
+      let totalVols = 0;
+      let totalCobrado = 0;
+      let totalPago = 0;
+      
+      tbody.innerHTML = filtered.map(p => {
+        const vols = p.volumes || 0;
+        const cobrado = p.frete || 0;
+        const pago = p.frete_pago || 0;
+        const dif = cobrado - pago;
+        
+        totalVols += vols;
+        totalCobrado += cobrado;
+        totalPago += pago;
+        
+        const difColor = dif < 0 ? 'var(--danger)' : dif > 0 ? 'var(--success)' : '';
+        const formattedDif = dif < 0 ? `- ${fmtBRL(Math.abs(dif))}` : dif > 0 ? `+ ${fmtBRL(dif)}` : fmtBRL(0);
+        
+        return `<tr>
+          <td><strong>${p.numero_pedido}</strong></td>
+          <td>${p.cliente_nome || '—'}</td>
+          <td>${p.transportadora || '—'}</td>
+          <td>${p.nota_fiscal || '—'}</td>
+          <td>${p.data_despacho ? fmtDate(p.data_despacho) : '—'}</td>
+          <td>${vols}</td>
+          <td>${fmtBRL(cobrado)}</td>
+          <td>${fmtBRL(pago)}</td>
+          <td style="color:${difColor};font-weight:bold">${formattedDif}</td>
+        </tr>`;
+      }).join('');
+      
+      if (!filtered.length) {
+        tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:24px">Nenhum registro encontrado no período</td></tr>';
+      }
+      
+      const netDif = totalCobrado - totalPago;
+      const netColor = netDif < 0 ? 'var(--danger)' : netDif > 0 ? 'var(--success)' : '';
+      cards.innerHTML = `
+        <div class="card" style="padding:12px 16px;background:var(--surface2)">
+          <div style="font-size:11px;color:var(--muted)">TOTAL DE ENVIOS</div>
+          <div style="font-size:18px;font-weight:bold">${filtered.length}</div>
+        </div>
+        <div class="card" style="padding:12px 16px;background:var(--surface2)">
+          <div style="font-size:11px;color:var(--muted)">VOLUMES ENVIADOS</div>
+          <div style="font-size:18px;font-weight:bold">${totalVols}</div>
+        </div>
+        <div class="card" style="padding:12px 16px;background:var(--surface2)">
+          <div style="font-size:11px;color:var(--muted)">FRETE COBRADO</div>
+          <div style="font-size:18px;font-weight:bold">${fmtBRL(totalCobrado)}</div>
+        </div>
+        <div class="card" style="padding:12px 16px;background:var(--surface2)">
+          <div style="font-size:11px;color:var(--muted)">FRETE PAGO</div>
+          <div style="font-size:18px;font-weight:bold">${fmtBRL(totalPago)}</div>
+        </div>
+        <div class="card" style="padding:12px 16px;background:var(--surface2)">
+          <div style="font-size:11px;color:var(--muted)">SALDO LÍQUIDO</div>
+          <div style="font-size:18px;font-weight:bold;color:${netColor}">${netDif < 0 ? '-' : ''}${fmtBRL(Math.abs(netDif))}</div>
+        </div>
+      `;
+      
+    } else if (tipo === 'resumo') {
+      thead.innerHTML = `<tr>
+        <th>Transportadora</th>
+        <th>Qtd. Pedidos</th>
+        <th>Total Volumes</th>
+        <th>Frete Cobrado</th>
+        <th>Frete Pago</th>
+        <th>Saldo Líquido</th>
+      </tr>`;
+      
+      const summary = {};
+      let totalVols = 0;
+      let totalCobrado = 0;
+      let totalPago = 0;
+      
+      filtered.forEach(p => {
+        const key = (p.transportadora || 'NÃO INFORMADA').trim().toUpperCase();
+        if (!summary[key]) {
+          summary[key] = { name: p.transportadora || 'NÃO INFORMADA', orders: 0, volumes: 0, cobrado: 0, pago: 0 };
+        }
+        summary[key].orders += 1;
+        summary[key].volumes += (p.volumes || 0);
+        summary[key].cobrado += (p.frete || 0);
+        summary[key].pago += (p.frete_pago || 0);
+        
+        totalVols += (p.volumes || 0);
+        totalCobrado += (p.frete || 0);
+        totalPago += (p.frete_pago || 0);
+      });
+      
+      const summaryArray = Object.values(summary).sort((a, b) => b.orders - a.orders);
+      
+      tbody.innerHTML = summaryArray.map(s => {
+        const net = s.cobrado - s.pago;
+        const netColor = net < 0 ? 'var(--danger)' : net > 0 ? 'var(--success)' : '';
+        const formattedNet = net < 0 ? `- ${fmtBRL(Math.abs(net))}` : net > 0 ? `+ ${fmtBRL(net)}` : fmtBRL(0);
+        
+        return `<tr>
+          <td><strong>${s.name}</strong></td>
+          <td>${s.orders}</td>
+          <td>${s.volumes}</td>
+          <td>${fmtBRL(s.cobrado)}</td>
+          <td>${fmtBRL(s.pago)}</td>
+          <td style="color:${netColor};font-weight:bold">${formattedNet}</td>
+        </tr>`;
+      }).join('');
+      
+      if (!summaryArray.length) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:24px">Nenhum registro encontrado no período</td></tr>';
+      }
+      
+      const avgCost = filtered.length ? (totalPago / filtered.length) : 0;
+      cards.innerHTML = `
+        <div class="card" style="padding:12px 16px;background:var(--surface2)">
+          <div style="font-size:11px;color:var(--muted)">TOTAL DE ENVIOS</div>
+          <div style="font-size:18px;font-weight:bold">${filtered.length}</div>
+        </div>
+        <div class="card" style="padding:12px 16px;background:var(--surface2)">
+          <div style="font-size:11px;color:var(--muted)">TOTAL FRETE PAGO</div>
+          <div style="font-size:18px;font-weight:bold">${fmtBRL(totalPago)}</div>
+        </div>
+        <div class="card" style="padding:12px 16px;background:var(--surface2)">
+          <div style="font-size:11px;color:var(--muted)">MÉDIA POR PEDIDO</div>
+          <div style="font-size:18px;font-weight:bold">${fmtBRL(avgCost)}</div>
+        </div>
+      `;
+      
+    } else if (tipo === 'divergencia') {
+      thead.innerHTML = `<tr>
+        <th>Nº Pedido</th>
+        <th>Cliente</th>
+        <th>Transportadora</th>
+        <th>NF</th>
+        <th>Data Despacho</th>
+        <th>Frete Cobrado</th>
+        <th>Frete Pago</th>
+        <th>Divergência</th>
+      </tr>`;
+      
+      const discrepant = filtered.filter(p => (p.frete || 0) !== (p.frete_pago || 0));
+      
+      let totalCobrado = 0;
+      let totalPago = 0;
+      
+      tbody.innerHTML = discrepant.map(p => {
+        const cobrado = p.frete || 0;
+        const pago = p.frete_pago || 0;
+        const dif = cobrado - pago;
+        
+        totalCobrado += cobrado;
+        totalPago += pago;
+        
+        const difColor = dif < 0 ? 'var(--danger)' : dif > 0 ? 'var(--success)' : '';
+        const formattedDif = dif < 0 ? `- ${fmtBRL(Math.abs(dif))}` : dif > 0 ? `+ ${fmtBRL(dif)}` : fmtBRL(0);
+        
+        return `<tr>
+          <td><strong>${p.numero_pedido}</strong></td>
+          <td>${p.cliente_nome || '—'}</td>
+          <td>${p.transportadora || '—'}</td>
+          <td>${p.nota_fiscal || '—'}</td>
+          <td>${p.data_despacho ? fmtDate(p.data_despacho) : '—'}</td>
+          <td>${fmtBRL(cobrado)}</td>
+          <td>${fmtBRL(pago)}</td>
+          <td style="color:${difColor};font-weight:bold">${formattedDif}</td>
+        </tr>`;
+      }).join('');
+      
+      if (!discrepant.length) {
+        tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">Nenhuma divergência encontrada no período</td></tr>';
+      }
+      
+      const netDif = totalCobrado - totalPago;
+      const netColor = netDif < 0 ? 'var(--danger)' : netDif > 0 ? 'var(--success)' : '';
+      cards.innerHTML = `
+        <div class="card" style="padding:12px 16px;background:var(--surface2)">
+          <div style="font-size:11px;color:var(--muted)">ENVIOS DIVERGENTES</div>
+          <div style="font-size:18px;font-weight:bold">${discrepant.length}</div>
+        </div>
+        <div class="card" style="padding:12px 16px;background:var(--surface2)">
+          <div style="font-size:11px;color:var(--muted)">TOTAL COBRADO</div>
+          <div style="font-size:18px;font-weight:bold">${fmtBRL(totalCobrado)}</div>
+        </div>
+        <div class="card" style="padding:12px 16px;background:var(--surface2)">
+          <div style="font-size:11px;color:var(--muted)">TOTAL PAGO</div>
+          <div style="font-size:18px;font-weight:bold">${fmtBRL(totalPago)}</div>
+        </div>
+        <div class="card" style="padding:12px 16px;background:var(--surface2)">
+          <div style="font-size:11px;color:var(--muted)">DIFERENÇA ACUMULADA</div>
+          <div style="font-size:18px;font-weight:bold;color:${netColor}">${netDif < 0 ? '-' : ''}${fmtBRL(Math.abs(netDif))}</div>
+        </div>
+      `;
+    }
+  } catch (e) {
+    console.error('Erro ao gerar relatório de transportadoras', e);
+  }
+}
+window.gerarRelatorioTransp = gerarRelatorioTransp;
+
+function onChangeRelTranspTipo() {
+  gerarRelatorioTransp();
+}
+window.onChangeRelTranspTipo = onChangeRelTranspTipo;
+
+function exportarRelatorioTransp(formato) {
+  const el = document.getElementById('rel-transp-tbody');
+  const table = el?.closest('table') || el;
+  const elTit = document.getElementById('rel-transp-title');
+  const tituloReport = elTit ? elTit.textContent : 'Relatório de Transportadoras';
+  
+  if (formato === 'pdf') {
+    const win = window.open('', '_blank');
+    win.document.write(`<html><head><title>${tituloReport}</title><style>@page{margin:0}body{font-family:Arial,sans-serif;margin:15mm 15mm 22mm 15mm;font-size:12px;counter-reset:page}table{width:100%;border-collapse:collapse}th{background:#333;color:#fff;padding:8px;text-align:left}td{padding:7px;border-bottom:1px solid #ddd}.print-footer{position:fixed;bottom:8mm;left:15mm;right:15mm;border-top:1px solid #ddd;padding-top:6px;display:flex;justify-content:space-between;font-size:10px;color:#777;font-family:Arial,sans-serif;counter-increment:page}.page-number::after{content:counter(page)}</style></head><body>${_getEmpresaHeader(tituloReport)}${table?.outerHTML||'<p>Sem dados</p>'}${_getPrintFooter()}</body></html>`);
+    win.document.close();
+    setTimeout(() => win.print(), 500);
+  } else {
+    if (!table) return;
+    const rows = [];
+    table.querySelectorAll('tr').forEach(tr => {
+      const row = [];
+      tr.querySelectorAll('th,td').forEach(td => row.push('"' + td.textContent.trim().replace(/"/g, '""') + '"'));
+      rows.push(row.join(';'));
+    });
+    const csv = '\uFEFF' + rows.join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    const tipoRel = document.getElementById('rel-transp-tipo')?.value || 'extrato';
+    const downloadName = `pratic_relatorio_transportadora_${tipoRel}_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = downloadName;
+    a.click();
+  }
+}
+window.exportarRelatorioTransp = exportarRelatorioTransp;
+
+async function loadPedidos_init() {
+  const btnAcomp = document.getElementById('ptab-acompanhamento');
+  if (btnAcomp) btnAcomp.style.display = (window.usuarioLogado && window.usuarioLogado.role === 'gestor') ? '' : 'none';
+  if (window.usuarioLogado && window.usuarioLogado.role === 'expedicao') {
+    ['fila', 'programacao', 'pedidos', 'clientes'].forEach(t => {
+      const b = document.getElementById('ptab-' + t);
+      if (b) b.style.display = 'none';
+    });
+    const linha = document.getElementById('ped-tabs-row');
+    if (linha) linha.style.display = 'none';
+    switchPedidosTab('transportadora');
+    return;
+  }
+  await loadFila();
+  await checkAlertasPedidos();
+  carregarAvisoSemVendedor();
+  try { const svd = await api('/estoque/saldo-vs-demanda'); checkSVDBadge(svd); } catch(e) {}
+}
+
+async function checkAlertasPedidos() {
+  try {
+    const al=await api('/pedidos/alertas/resumo');
+    const badge=document.getElementById('nav-pedidos-badge');
+    const total=(window.usuarioLogado && window.usuarioLogado.role==='expedicao') ? 0 : (al.vencidos||0)+(al.urgentes||0);
+    if(badge){badge.style.display=total>0?'inline':'none';badge.textContent=total;}
+    const dashEl=document.getElementById('dash-alerta-pedidos');
+    if(dashEl&&total>0){
+      const lista=al.lista_urgentes.map(p=>{const dias=Math.round(p.dias_restantes);const cor=dias<0?'var(--danger)':'var(--accent)';return `<strong>${p.numero_pedido}</strong> — ${p.cliente} <span style="color:${cor}">(${dias<0?'vencido há '+Math.abs(dias)+'d':dias+'d restantes'})</span>`;}).join(' | ');
+      dashEl.innerHTML=`<div style="background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.35);border-radius:10px;padding:14px 18px;margin-bottom:20px;display:flex;align-items:center;gap:14px"><span style="font-size:22px">🧾</span><div style="flex:1"><div style="font-family:var(--font-head);font-weight:700;color:var(--danger);margin-bottom:4px">${al.vencidos} pedido(s) vencido(s) | ${al.urgentes} vencem em até 3 dias</div><div style="font-size:13px;color:var(--muted)">${lista}</div></div><button class="btn btn-sm btn-secondary" onclick="showPage('pedidos')" style="white-space:nowrap">Ver pedidos →</button></div>`;
+    } else if(dashEl) dashEl.innerHTML='';
+  } catch(e){}
+}
+
+let todosProdutosCache = [];
+async function _carregarRevendaProdutos() {
+  try {
+    const all = await api('/estoque/produtos');
+    todosProdutosCache = all || [];
+    revendaProdutos = todosProdutosCache.filter(p => p.categoria_tipo === 'revenda');
+  } catch(e) { /* mantém o cache anterior */ }
+}
+
+// Casamento FORTE por descrição: só vale se o nome normalizado de um produto de
+// revenda contém (ou está contido em) a descrição normalizada. Evita falsos
+// positivos do findBestStockMatch (que casa frouxo, por token/limiar baixo).
+function _descricaoCasaRevendaForte(desc) {
+  if (!desc || !revendaProdutos.length) return false;
+  const normD = desc.toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/ML$/, 'M');
+  if (normD.length < 6) return false; // descrição muito curta não decide nada
+  return revendaProdutos.some(p => {
+    const normP = (p.nome || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/ML$/, 'M');
+    if (normP.length < 6) return false;
+    return normP.includes(normD) || normD.includes(normP);
+  });
+}
+
+// Reconhece item de revenda.
+// - Item VINCULADO a um produto: a categoria do produto manda (não usa descrição).
+// - Item SEM vínculo: acha o MELHOR produto correspondente entre TODOS os
+//   produtos cadastrados; só é revenda se esse melhor match for de revenda.
+//   (Assim um copo de produção casa com o produto de produção dele, não com um
+//   produto de revenda por coincidência.)
+function itemEhRevenda(i) {
+  if (!i) return false;
+  if (i.produto_id) {
+    if (i.categoria_tipo === 'revenda') return true;
+    if (revendaProdutos.some(p => p.id === i.produto_id)) return true;
+    return false; // vinculado a categoria de produção => NÃO é revenda
+  }
+  if (i.categoria_tipo === 'revenda') return true;
+  if (!i.descricao) return false;
+  const bestId = findBestStockMatch(i.descricao, todosProdutosCache);
+  if (bestId != null) return revendaProdutos.some(p => p.id === bestId);
+  // sem nenhum produto cadastrado correspondente: cai no casamento forte só-revenda
+  return _descricaoCasaRevendaForte(i.descricao);
+}
+
+async function loadFila() {
+  const status=document.getElementById('ped-fila-status')?.value||'';
+  let url='/pedidos/fila/producao';if(status) url+='?status='+status;
+  await _carregarRevendaProdutos();
+  const itens=(await api(url)).filter(i => !itemEhRevenda(i));
+  const el=document.getElementById('ped-fila-cards');
+  if(!el) return;
+
+  // Banner de alertas
+  try {
+    const al=await api('/pedidos/alertas/resumo');
+    const banner=document.getElementById('ped-alertas-banner');
+    if(banner&&(al.vencidos+al.urgentes)>0){
+      banner.innerHTML=`<div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:var(--danger)">
+        ⚠️ <strong>${al.vencidos} vencido(s)</strong> | <strong>${al.urgentes} urgente(s) em até 3 dias</strong>
+      </div>`;
+    } else if(banner) banner.innerHTML='';
+  } catch(e){}
+
+  if(!itens.length){
+    const r0=document.getElementById('ped-fila-resumo'); if(r0) r0.innerHTML='';
+    el.innerHTML='<div class="table-wrap"><p style="padding:32px;text-align:center;color:var(--muted)">Nenhum item na fila de produção</p></div>';
+    return;
+  }
+
+  // Agrupar por pedido e ordenar por prazo (mais urgente primeiro)
+  const grupos={};
+  itens.forEach(i=>{const k=i.pedido_id;if(!grupos[k])grupos[k]={pedido:i,itens:[]};grupos[k].itens.push(i);});
+  let pedidosOrdenados = Object.values(grupos).sort((a,b) => {
+    return (a.pedido.dias_restantes||99) - (b.pedido.dias_restantes||99);
+  });
+
+  const busca = document.getElementById('ped-fila-busca')?.value.trim().toLowerCase() || '';
+  if (busca) {
+    pedidosOrdenados = pedidosOrdenados.filter(g => 
+      String(g.pedido.numero_pedido || '').toLowerCase().includes(busca)
+    );
+  }
+
+  // Contar totais para resumo
+  const totalPedidos = pedidosOrdenados.length;
+  const urgentes = pedidosOrdenados.filter(g => Math.round(g.pedido.dias_restantes) <= 3).length;
+
+  const resumoEl = document.getElementById('ped-fila-resumo');
+  if (resumoEl) resumoEl.innerHTML = `
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 14px;font-size:13px">
+        📋 <strong>${totalPedidos}</strong> pedido(s) na fila
+      </div>
+      ${urgentes>0?`<div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:8px 14px;font-size:13px;color:var(--danger)">
+        🔴 <strong>${urgentes}</strong> urgente(s) — prazo ≤ 3 dias
+      </div>`:''}
+      <button class="btn btn-sm btn-secondary" onclick="toggleTodasFilas(true)" style="margin-left:auto">↕ Expandir todos</button>
+      <button class="btn btn-sm btn-secondary" onclick="toggleTodasFilas(false)">↕ Recolher todos</button>
+  `;
+  el.innerHTML = `
+    ${pedidosOrdenados.map(g => {
+      const p=g.pedido;
+      const dias=Math.round(p.dias_restantes);
+      const diasCor=dias<0?'var(--danger)':dias<=3?'var(--danger)':dias<=7?'var(--warn)':'var(--success)';
+      const diasLabel=dias<0?`⚠ Vencido há ${Math.abs(dias)}d`:dias===0?'⚠ Vence hoje!':`${dias}d restantes`;
+      const urgente = dias <= 3;
+      const produzidos = g.itens.filter(_itemProduzido).length;
+      const totalItens = g.itens.length;
+      const pctGeral = Math.round((produzidos/totalItens)*100);
+      const cardId = 'fila-card-' + p.pedido_id;
+
+      const itensList = g.itens.map(i=>{
+        const pct=Math.min(100,Math.round((i.qtd_produzida/i.quantidade)*100));
+        const stEf=_itemStatusEf(i);
+        const prox=STATUS_NEXT_PED[stEf];
+        return `<div style="padding:10px 0;border-bottom:1px solid var(--border)">
+          <div class="flex items-center justify-between" style="margin-bottom:6px">
+            <div style="flex:1;min-width:0">
+              <span style="font-weight:600;font-size:13px">${i.descricao}</span>
+              <span class="pill ${STATUS_PILL_PED[stEf]}" style="margin-left:8px;font-size:10px">${STATUS_LABEL_PED[stEf]}</span>
+            </div>
+            <div class="flex gap-2" style="flex-shrink:0;margin-left:8px">
+              ${prox && temPermissao('producao', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="avancarItemStatus(${i.id},'${prox}',${i.quantidade})">${STATUS_NEXT_LABEL_PED[stEf]}</button>` : ''}
+              ${temPermissao('producao', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="removerItemFila(${i.id})">✕</button>` : ''}
+            </div>
+          </div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:5px">
+            Qtd: <strong style="color:var(--text)">${fmtNum(i.qtd_produzida)} / ${fmtNum(i.quantidade)} ${i.unidade}</strong>
+          </div>
+          <div style="height:5px;background:var(--surface2);border-radius:3px;overflow:hidden">
+            <div style="height:100%;width:${pct}%;background:${pct>=100?'var(--success)':'var(--accent)'};border-radius:3px;transition:width .3s"></div>
+          </div>
+        </div>`;
+      }).join('');
+
+      return `<div class="card fila-card" id="${cardId}" style="margin-bottom:12px;border-left:3px solid ${diasCor};${urgente?'box-shadow:0 0 0 1px rgba(239,68,68,.2)':''}">
+        <!-- Cabeçalho clicável -->
+        <div onclick="toggleFilaCard('${cardId}')" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;user-select:none">
+          <div style="display:flex;align-items:center;gap:12px;flex:1;min-width:0">
+            <div>
+              <div style="font-family:var(--font-head);font-size:15px;font-weight:700">${p.numero_pedido}</div>
+              <div style="font-size:12px;color:var(--muted);margin-top:2px">${p.cliente_nome}</div>
+            </div>
+            <!-- Progresso geral -->
+            <div style="flex:1;max-width:140px">
+              <div style="font-size:11px;color:var(--muted);margin-bottom:3px">${produzidos}/${totalItens} itens produzidos</div>
+              <div style="height:5px;background:var(--surface2);border-radius:3px;overflow:hidden">
+                <div style="height:100%;width:${pctGeral}%;background:${pctGeral>=100?'var(--success)':'var(--accent)'};border-radius:3px"></div>
+              </div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;flex-shrink:0">
+            <div style="text-align:right">
+              <div style="font-family:var(--font-head);font-weight:800;color:${diasCor};font-size:13px">${diasLabel}</div>
+              <div style="font-size:11px;color:var(--muted)">${fmtDate(p.prazo_entrega)}</div>
+            </div>
+            <span class="fila-toggle-icon" style="color:var(--muted);font-size:16px;transition:transform .2s">${urgente?'▼':'▶'}</span>
+          </div>
+        </div>
+        <!-- Itens (visível se urgente, colapsado se não) -->
+        <div class="fila-itens" style="display:${urgente?'block':'none'};margin-top:12px;border-top:1px solid var(--border);padding-top:4px">
+          ${itensList}
+        </div>
+      </div>`;
+    }).join('')}
+  `;
+}
+
+function toggleFilaCard(cardId) {
+  const card = document.getElementById(cardId);
+  if (!card) return;
+  const itens = card.querySelector('.fila-itens');
+  const icon = card.querySelector('.fila-toggle-icon');
+  if (!itens) return;
+  const aberto = itens.style.display !== 'none';
+  itens.style.display = aberto ? 'none' : 'block';
+  if (icon) icon.textContent = aberto ? '▶' : '▼';
+}
+
+function toggleTodasFilas(expandir) {
+  document.querySelectorAll('.fila-card').forEach(card => {
+    const itens = card.querySelector('.fila-itens');
+    const icon = card.querySelector('.fila-toggle-icon');
+    if (itens) itens.style.display = expandir ? 'block' : 'none';
+    if (icon) icon.textContent = expandir ? '▼' : '▶';
+  });
+}
+
+async function avancarItemStatus(id,novoStatus,qtdTotal) {
+  const qtd=novoStatus==='produzido'||novoStatus==='entregue'?qtdTotal:0;
+  try {
+    await api('/pedidos/itens/'+id+'/status','PUT',{status:novoStatus,qtd_produzida:qtd});
+    showAlert('Status atualizado!');
+    loadFila();
+    checkAlertasPedidos();
+  } catch(e){showAlert(e.message,'danger');}
+}
+
+async function removerItemFila(id) {
+  if(!confirm('Remover item?')) return;
+  try {
+    await api('/pedidos/itens/'+id,'DELETE');
+    showAlert('Item removido');
+    loadFila();
+  } catch(e) {
+    showAlert('Erro: ' + e.message, 'danger');
+  }
+}
+
+function _diasAtePrazo(prazoStr) {
+  const s = String(prazoStr || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const [y, m, d] = s.split('-').map(Number);
+  const alvo = new Date(y, m - 1, d); alvo.setHours(0, 0, 0, 0);
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  return Math.round((alvo - hoje) / 86400000);
+}
+
+function _popularFiltroMarcas(pedidos, selecionada) {
+  const sel = document.getElementById('ped-marca-filtro');
+  if (!sel) return;
+  const marcas = new Set();
+  (pedidos || []).forEach(p => {
+    (p.marcas || '').split(',').forEach(m => { const t = m.trim(); if (t) marcas.add(t); });
+  });
+  const ordenadas = Array.from(marcas).sort((a, b) => a.localeCompare(b));
+  sel.innerHTML = '<option value="">Todas as marcas</option>' +
+    ordenadas.map(m => `<option value="${m.replace(/"/g, '&quot;')}" ${m === selecionada ? 'selected' : ''}>${m}</option>`).join('');
+}
+
+function _popularFiltroVendedores(pedidos, selecionado) {
+  const sel = document.getElementById('ped-vendedor-filtro');
+  if (!sel) return;
+  const vends = new Set();
+  (pedidos || []).forEach(p => { const t = (p.vendedor || '').trim(); if (t) vends.add(t); });
+  const ordenados = Array.from(vends).sort((a, b) => a.localeCompare(b));
+  sel.innerHTML = '<option value="">Todos os vendedores</option>' +
+    ordenados.map(v => `<option value="${v.replace(/"/g, '&quot;')}" ${v === selecionado ? 'selected' : ''}>${v}</option>`).join('');
+}
+
+async function loadPedidos() {
+  const sit = document.getElementById('ped-status-filtro')?.value ?? 'ativos';
+  const prazoF = document.getElementById('ped-prazo-filtro')?.value || '';
+  const marcaF = document.getElementById('ped-marca-filtro')?.value || '';
+  const vendF = document.getElementById('ped-vendedor-filtro')?.value || '';
+  const revF = document.getElementById('ped-revenda-filtro')?.value || '';
+  let rows = await api('/pedidos/');
+
+  const buscaNumero = document.getElementById('ped-busca-numero')?.value.trim().toLowerCase() || '';
+  if (buscaNumero) {
+    rows = rows.filter(p => 
+      String(p.numero_pedido || '').toLowerCase().includes(buscaNumero)
+    );
+  }
+  const statusDe = p => p.status_efetivo || p.status;
+
+  // Popula o filtro de marcas a partir de todos os pedidos (antes de filtrar)
+  _popularFiltroMarcas(rows, marcaF);
+  _popularFiltroVendedores(rows, vendF);
+
+  // Filtro de situação (usa o status real derivado da produção)
+  if (sit === 'ativos') rows = rows.filter(p => !['entregue', 'retirado'].includes(statusDe(p)));
+  else if (sit) rows = rows.filter(p => statusDe(p) === sit);
+
+  // Filtro de marca (marca dos produtos vinculados aos itens)
+  if (marcaF) {
+    rows = rows.filter(p => (p.marcas || '').split(',').map(s => s.trim()).filter(Boolean).includes(marcaF));
+  }
+
+  // Filtro de vendedor
+  if (vendF) rows = rows.filter(p => (p.vendedor || '') === vendF);
+
+  // Filtro de revenda pendente (tampas a separar)
+  if (revF === 'pendente') rows = rows.filter(p => (p.revenda_pendentes || 0) > 0);
+
+  // Filtro de prazo
+  if (prazoF) {
+    const hoje = new Date();
+    rows = rows.filter(p => {
+      const dias = _diasAtePrazo(p.prazo_entrega);
+      if (dias === null) return false;
+      if (prazoF === 'hoje') return dias === 0;
+      if (prazoF === 'semana') return dias >= 0 && dias <= 7;
+      if (prazoF === 'atrasados') return dias < 0 && statusDe(p) !== 'entregue';
+      if (prazoF === 'mes') {
+        const s = String(p.prazo_entrega || '').slice(0, 10).split('-').map(Number);
+        return s[0] === hoje.getFullYear() && (s[1] - 1) === hoje.getMonth();
+      }
+      return true;
+    });
+  }
+
+  const tbody = document.getElementById('ped-tbody');
+  if (!tbody) return;
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:24px">Nenhum pedido neste filtro</td></tr>';
+    return;
+  }
+  tbody.innerHTML=rows.map(p=>{
+    const dias=Math.round(p.dias_restantes);
+    const diasCor=dias<0?'var(--danger)':dias<=3?'var(--warn)':'var(--success)';
+    let revBadge='';
+    if((p.itens_revenda||0)>0){
+      const pend=p.revenda_pendentes||0;
+      revBadge = pend>0
+        ? ` <span title="${pend} item(ns) de revenda/tampa pendente(s) de separação" style="display:inline-block;font-size:10px;font-weight:700;background:rgba(245,158,11,.15);color:var(--warn);border:1px solid var(--warn);border-radius:6px;padding:1px 6px;margin-left:4px;white-space:nowrap">📦 ${pend} revenda</span>`
+        : ` <span title="Itens de revenda já separados" style="display:inline-block;font-size:10px;font-weight:600;background:var(--surface2);color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:1px 6px;margin-left:4px;white-space:nowrap">📦 revenda ✓</span>`;
+    }
+    return `<tr>
+      <td><strong>${p.numero_pedido}</strong></td>
+      <td>${p.cliente_nome}${revBadge}</td>
+      <td>${p.vendedor || '—'}</td>
+      <td>${fmtDate(p.prazo_entrega)}</td>
+      <td style="color:${diasCor};font-weight:700">${dias<0?'Vencido':dias+'d'}</td>
+      <td>${p.itens_produzidos}/${p.total_itens}</td>
+      <td><span class="pill ${STATUS_PILL_PED[p.status_efetivo||p.status]}">${STATUS_LABEL_PED[p.status_efetivo||p.status]}</span></td>
+      <td class="flex gap-2">
+        <button class="btn btn-sm btn-secondary" onclick="verDetalhesPedido(${p.id})">Ver</button>
+        <button class="btn btn-sm btn-secondary" title="Imprimir Relatório" onclick="imprimirPedido(${p.id})">🖨️</button>
+        ${temPermissao('pedidos', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="editPedido(${p.id})">✏️</button>` : ''}
+        ${temPermissao('pedidos', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="deletarPedido(${p.id})">✕</button>` : ''}
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+
+async function vincularProdutoItem(itemId, produtoIdAtual) {
+  const prods = await api('/estoque/produtos');
+  const sel = `<select id="sel-prod-${itemId}" style="font-size:12px;padding:4px 8px;min-width:180px" onchange="salvarVinculoProduto(${itemId}, this.value)">
+    <option value="">— Sem vínculo —</option>
+    ${prods.map(p=>`<option value="${p.id}" ${p.id==produtoIdAtual?'selected':''}>${p.nome}${p.marca?' '+p.marca:''}</option>`).join('')}
+  </select>`;
+  const cell = document.getElementById('cell-prod-'+itemId);
+  if (cell) cell.innerHTML = sel;
+}
+
+async function salvarVinculoProduto(itemId, produtoId) {
+  try {
+    await api('/pedidos/itens/'+itemId+'/produto', 'PUT', { produto_id: produtoId ? +produtoId : null });
+    showAlert('Produto vinculado!');
+  } catch(e) { showAlert('Erro: '+e.message, 'danger'); }
+}
+async function marcarRevendaSeparado(pedidoId, itemId, qtd, marcar) {
+  if (marcar && !confirm('Ao separar este item de revenda, será dada BAIXA no estoque da quantidade correspondente.\n\nConfirma a separação?')) return;
+  try {
+    const r = await api('/pedidos/itens/'+itemId+'/separar-revenda','POST',{ marcar: !!marcar });
+    if (marcar && r.sem_vinculo) {
+      showAlert('Marcado, mas SEM baixa de estoque: vincule o item a um produto de revenda primeiro.', 'warn');
+    } else {
+      showAlert(marcar ? 'Separado/Entregue — baixa registrada no estoque' : 'Desfeito — estoque estornado');
+    }
+    await verDetalhesPedido(pedidoId);
+    loadPedidos();
+  } catch(e){ showAlert(e.message,'danger'); }
+}
+window.marcarRevendaSeparado = marcarRevendaSeparado;
+
+// ─── PROGRAMAR SEPARAÇÃO (aba Pedidos, uso da produção) ─────────────────────
+
+async function buscarPedidosProgramacao() {
+  const termo = (document.getElementById('prog-busca').value || '').trim().toLowerCase();
+  const cont = document.getElementById('prog-resultados');
+  if (!termo) { cont.innerHTML = '<p style="color:var(--muted)">Digite um número de pedido ou cliente para buscar.</p>'; return; }
+  cont.innerHTML = '<p style="color:var(--muted)">Buscando...</p>';
+  let pedidos = [];
+  try { pedidos = await api('/pedidos/'); } catch(e) { cont.innerHTML = '<p style="color:var(--danger)">Erro ao buscar pedidos.</p>'; return; }
+  const lista = pedidos.filter(p =>
+    (p.numero_pedido || '').toLowerCase().includes(termo) ||
+    (p.cliente_nome || '').toLowerCase().includes(termo)
+  ).slice(0, 15);
+  if (!lista.length) { cont.innerHTML = '<p style="color:var(--muted)">Nenhum pedido encontrado.</p>'; return; }
+  cont.innerHTML = lista.map(p => `
+    <div class="card" style="margin-bottom:10px;padding:14px 16px" id="prog-card-${p.id}">
+      <div class="flex items-center justify-between" style="cursor:pointer" onclick="toggleProgramacaoPedido(${p.id})">
+        <div>
+          <strong>${p.numero_pedido}</strong> <span style="color:var(--muted)">· ${p.cliente_nome || ''}</span>
+          <div style="font-size:12px;color:var(--muted)">Prazo de entrega: ${p.prazo_entrega || '-'}</div>
+        </div>
+        <span style="font-size:12px;color:var(--accent)">Ver itens ▾</span>
+      </div>
+      <div id="prog-itens-${p.id}" style="display:none;margin-top:12px"></div>
+    </div>
+  `).join('');
+}
+window.buscarPedidosProgramacao = buscarPedidosProgramacao;
+
+function switchProgView(view) {
+  const buscar = document.getElementById('prog-view-buscar-pane');
+  const agenda = document.getElementById('prog-view-agenda-pane');
+  const btnB = document.getElementById('prog-view-buscar');
+  const btnA = document.getElementById('prog-view-agenda');
+  if (buscar) buscar.style.display = view === 'buscar' ? '' : 'none';
+  if (agenda) agenda.style.display = view === 'agenda' ? '' : 'none';
+  if (btnB) { btnB.style.borderColor = view === 'buscar' ? 'var(--accent)' : ''; btnB.style.color = view === 'buscar' ? 'var(--accent)' : ''; }
+  if (btnA) { btnA.style.borderColor = view === 'agenda' ? 'var(--accent)' : ''; btnA.style.color = view === 'agenda' ? 'var(--accent)' : ''; }
+  if (view === 'agenda') loadProgramacaoAgenda();
+}
+window.switchProgView = switchProgView;
+
+async function loadProgramacaoAgenda() {
+  const cont = document.getElementById('prog-agenda-lista');
+  const resumoEl = document.getElementById('prog-agenda-resumo');
+  if (!cont) return;
+  const incluirSeparados = document.getElementById('prog-agenda-incluir-separados')?.checked;
+  cont.innerHTML = '<p style="color:var(--muted)">Carregando...</p>';
+  let lista = [];
+  try { lista = await api('/pedidos/separacao' + (incluirSeparados ? '?incluir_separados=true' : '')); }
+  catch (e) { cont.innerHTML = '<p style="color:var(--danger)">Erro ao carregar programação.</p>'; return; }
+
+  if (resumoEl) {
+    const pendentes = lista.filter(it => it.status_separacao !== 'separado').length;
+    const separados = lista.length - pendentes;
+    resumoEl.innerHTML = `
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 14px;font-size:13px">
+        📅 <strong>${pendentes}</strong> pendente(s) · <strong>${separados}</strong> separado(s)
+      </div>`;
+  }
+
+  if (!lista.length) { cont.innerHTML = '<p style="color:var(--muted)">Nenhum item programado no momento.</p>'; return; }
+
+  const grupos = {};
+  lista.forEach(it => { (grupos[it.data_programada] = grupos[it.data_programada] || []).push(it); });
+  const datas = Object.keys(grupos).sort();
+
+  cont.innerHTML = datas.map(data => `
+    <div style="margin-bottom:18px">
+      <div style="font-size:13px;font-weight:500;margin-bottom:8px">${data}</div>
+      ${grupos[data].map(it => `
+        <div class="card" style="margin-bottom:8px;padding:12px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;${it.status_separacao === 'separado' ? 'opacity:0.65' : ''}">
+          <div style="flex:1;min-width:220px">
+            <div style="font-size:13px;font-weight:500">${it.numero_pedido} <span style="color:var(--muted);font-weight:400">· ${it.cliente_nome || ''}</span></div>
+            <div style="font-size:12px;color:var(--muted);margin-top:2px">${it.descricao} · ${fmtNum(it.quantidade)} un</div>
+          </div>
+          ${_sepBadge(it.status_separacao)}
+          <button class="btn btn-sm btn-secondary" onclick="cancelarProgramacaoAgenda(${it.item_id})" data-perm-deletar="pedidos" title="Cancelar programação">✕</button>
+        </div>
+      `).join('')}
+    </div>
+  `).join('');
+  if (typeof aplicarPermissoesUI === 'function') aplicarPermissoesUI();
+}
+window.loadProgramacaoAgenda = loadProgramacaoAgenda;
+
+async function cancelarProgramacaoAgenda(itemId) {
+  if (!confirm('Cancelar a programação de separação deste item? Isso não afeta o pedido, só remove o agendamento.')) return;
+  try {
+    await api('/pedidos/itens/' + itemId + '/programacao', 'DELETE');
+    showAlert('Programação cancelada');
+    loadProgramacaoAgenda();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+window.cancelarProgramacaoAgenda = cancelarProgramacaoAgenda;
+
+async function toggleProgramacaoPedido(pedidoId) {
+  const div = document.getElementById('prog-itens-' + pedidoId);
+  if (!div) return;
+  if (div.style.display !== 'none') { div.style.display = 'none'; return; }
+  div.style.display = '';
+  await loadProgramacaoItens(pedidoId);
+}
+window.toggleProgramacaoPedido = toggleProgramacaoPedido;
+
+function _sepBadge(status) {
+  if (status === 'separado') return '<span class="pill pill-success">✅ Separado</span>';
+  if (status === 'pendente') return '<span class="pill pill-warn">⏳ Aguardando separação</span>';
+  return '<span class="pill pill-slate">— Não programado</span>';
+}
+
+async function loadProgramacaoItens(pedidoId) {
+  const div = document.getElementById('prog-itens-' + pedidoId);
+  if (!div) return;
+  div.innerHTML = '<p style="color:var(--muted);font-size:13px">Carregando itens...</p>';
+  let ped;
+  try { ped = await api('/pedidos/' + pedidoId); } catch (e) { div.innerHTML = '<p style="color:var(--danger)">Erro ao carregar itens.</p>'; return; }
+  const itens = (ped.itens || []).filter(i => (i.categoria_tipo || '') !== 'revenda');
+  if (!itens.length) { div.innerHTML = '<p style="color:var(--muted);font-size:13px">Este pedido não tem itens de produção.</p>'; return; }
+  div.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
+      ${itens.map(i => {
+        const bloqueado = i.status_separacao === 'pendente' || i.status_separacao === 'separado';
+        const corBorda = i.status_separacao === 'separado' ? 'var(--success)' : (i.status_separacao === 'pendente' ? 'var(--accent)' : 'transparent');
+        return `
+        <label style="display:flex;align-items:center;gap:10px;font-size:13px;padding:6px 10px;border-bottom:1px solid var(--border);border-left:3px solid ${corBorda};${bloqueado ? 'opacity:0.85' : ''}">
+          <input type="checkbox" class="prog-item-check" value="${i.id}" ${bloqueado ? 'disabled' : 'checked'}>
+          <span style="flex:1">${i.descricao}</span>
+          <span style="color:var(--muted)">${fmtNum(i.quantidade)} ${i.unidade || ''}</span>
+          ${_sepBadge(i.status_separacao)}
+          ${bloqueado ? `<button class="btn btn-sm btn-secondary" onclick="cancelarProgramacaoItem(${i.id}, ${pedidoId})" data-perm-deletar="pedidos" title="Cancelar programação">✕</button>` : ''}
+        </label>`;
+      }).join('')}
+    </div>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <label style="font-size:13px;color:var(--muted)">Data programada</label>
+      <input type="date" id="prog-data-${pedidoId}" min="${new Date().toISOString().slice(0,10)}" style="max-width:170px">
+      <button class="btn btn-primary" onclick="enviarProgramacaoSeparacao(${pedidoId})" data-perm-criar="pedidos">Enviar para separação</button>
+    </div>
+  `;
+  if (typeof aplicarPermissoesUI === 'function') aplicarPermissoesUI();
+}
+
+async function cancelarProgramacaoItem(itemId, pedidoId) {
+  if (!confirm('Cancelar a programação de separação deste item? Isso não afeta o pedido, só remove o agendamento.')) return;
+  try {
+    await api('/pedidos/itens/' + itemId + '/programacao', 'DELETE');
+    showAlert('Programação cancelada');
+    await loadProgramacaoItens(pedidoId);
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+window.cancelarProgramacaoItem = cancelarProgramacaoItem;
+
+async function enviarProgramacaoSeparacao(pedidoId) {
+  const dataEl = document.getElementById('prog-data-' + pedidoId);
+  const data = dataEl ? dataEl.value : '';
+  if (!data) { showAlert('Informe a data programada', 'warn'); return; }
+  const checks = document.querySelectorAll('#prog-itens-' + pedidoId + ' .prog-item-check:checked:not(:disabled)');
+  const itensIds = Array.from(checks).map(c => parseInt(c.value));
+  if (!itensIds.length) { showAlert('Selecione ao menos um item', 'warn'); return; }
+  try {
+    const r = await api('/pedidos/programar-separacao', 'POST', { itens_ids: itensIds, data_programada: data });
+    if (r.itens_duplicados && r.itens_duplicados.length) {
+      const nomes = r.itens_duplicados.map(d => d.descricao).join(', ');
+      showAlert(`${r.itens_programados} item(ns) programado(s). Já estavam pendentes (ignorados): ${nomes}`, 'warn');
+    } else {
+      showAlert('Programação enviada para separação');
+    }
+    await loadProgramacaoItens(pedidoId);
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+window.enviarProgramacaoSeparacao = enviarProgramacaoSeparacao;
+
+// ─── SEPARAÇÃO DE PRODUÇÃO (aba Estoque, uso do estoque) ────────────────────
+
+let _sepGruposCache = [];
+
+const _AVATAR_PALETTE = [
+  { bg: 'rgba(168,85,247,.18)', fg: '#a855f7' },   // roxo
+  { bg: 'rgba(20,184,166,.18)', fg: '#14b8a6' },   // teal
+  { bg: 'rgba(236,72,153,.18)', fg: '#ec4899' },   // rosa
+  { bg: 'rgba(59,130,246,.18)', fg: '#3b82f6' },   // azul
+  { bg: 'rgba(240,180,41,.18)', fg: '#f0b429' },   // âmbar
+];
+
+function _avatarProduto(descricao) {
+  const texto = (descricao || '').trim();
+  let hash = 0;
+  for (let i = 0; i < texto.length; i++) hash = (hash * 31 + texto.charCodeAt(i)) >>> 0;
+  const cor = _AVATAR_PALETTE[hash % _AVATAR_PALETTE.length];
+  const palavras = texto.split(/\s+/).filter(Boolean);
+  let iniciais = palavras.slice(0, 2).map(p => p[0]).join('').toUpperCase();
+  if (!iniciais) iniciais = '?';
+  return { bg: cor.bg, fg: cor.fg, iniciais };
+}
+
+async function loadSeparacaoProducao() {
+  const cont = document.getElementById('sep-lista');
+  const resumoEl = document.getElementById('sep-resumo');
+  if (!cont) return;
+  const incluirSeparados = document.getElementById('sep-incluir-separados')?.checked;
+  cont.innerHTML = '<p style="color:var(--muted)">Carregando...</p>';
+  let lista = [];
+  try { lista = await api('/pedidos/separacao' + (incluirSeparados ? '?incluir_separados=true' : '')); }
+  catch (e) { cont.innerHTML = '<p style="color:var(--danger)">Erro ao carregar separação.</p>'; return; }
+
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const diasRestantes = (dataStr) => {
+    if (!dataStr) return null;
+    const d = new Date(dataStr + 'T00:00:00');
+    return Math.round((d - hoje) / 86400000);
+  };
+
+  if (resumoEl) {
+    const pendentes = lista.filter(it => it.status_separacao !== 'separado');
+    const vencidos = pendentes.filter(it => { const d = diasRestantes(it.data_programada); return d !== null && d < 0; }).length;
+    const hojeCount = pendentes.filter(it => diasRestantes(it.data_programada) === 0).length;
+    resumoEl.innerHTML = `
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 14px;font-size:13px">
+        📋 <strong>${pendentes.length}</strong> pendente(s) de separação
+      </div>
+      ${vencidos > 0 ? `<div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:8px 14px;font-size:13px;color:var(--danger)">
+        🔴 <strong>${vencidos}</strong> atrasado(s)
+      </div>` : ''}
+      ${hojeCount > 0 ? `<div style="background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.3);border-radius:8px;padding:8px 14px;font-size:13px;color:var(--warn)">
+        🟡 <strong>${hojeCount}</strong> programado(s) para hoje
+      </div>` : ''}
+    `;
+  }
+
+  if (!lista.length) { cont.innerHTML = '<p style="color:var(--muted)">Nenhum item programado no momento.</p>'; return; }
+
+  // Agrupar por produto, somando a quantidade dos vários pedidos
+  const gruposMap = {};
+  lista.forEach(it => {
+    const key = (it.descricao || '(sem descrição)').trim();
+    if (!gruposMap[key]) gruposMap[key] = { descricao: key, itens: [] };
+    gruposMap[key].itens.push(it);
+  });
+  _sepGruposCache = Object.values(gruposMap).map(g => {
+    const pedidosSet = new Set(g.itens.map(i => i.numero_pedido));
+    const pendentes = g.itens.filter(i => i.status_separacao !== 'separado');
+    const totalQtd = g.itens.reduce((s, i) => s + (i.quantidade || 0), 0);
+    const dataMaisProxima = pendentes.map(i => i.data_programada).filter(Boolean).sort()[0] || null;
+    return { ...g, pedidosCount: pedidosSet.size, pendentesCount: pendentes.length, separadosCount: g.itens.length - pendentes.length, totalQtd, dataMaisProxima };
+  }).sort((a, b) => {
+    if (a.dataMaisProxima && b.dataMaisProxima) return a.dataMaisProxima.localeCompare(b.dataMaisProxima);
+    if (a.dataMaisProxima) return -1;
+    if (b.dataMaisProxima) return 1;
+    return a.descricao.localeCompare(b.descricao);
+  });
+
+  cont.innerHTML = _sepGruposCache.map((g, idx) => {
+    const dias = diasRestantes(g.dataMaisProxima);
+    let urgenciaBadge = '<span class="pill pill-success">✅ Tudo separado</span>';
+    if (g.pendentesCount > 0) {
+      if (dias !== null && dias < 0) urgenciaBadge = `<span class="pill pill-danger">⚠ Atrasado há ${Math.abs(dias)}d</span>`;
+      else if (dias === 0) urgenciaBadge = `<span class="pill pill-warn">⚠ Hoje</span>`;
+      else urgenciaBadge = `<span class="pill pill-slate">📅 ${g.dataMaisProxima || '-'}</span>`;
+    }
+    const avatar = _avatarProduto(g.descricao);
+    const itemRow = (it) => {
+      const separado = it.status_separacao === 'separado';
+      const diasIt = diasRestantes(it.data_programada);
+      let dataCor = 'var(--muted)';
+      let dataLabel = 'Programado ' + it.data_programada;
+      if (!separado && diasIt !== null) {
+        if (diasIt < 0) { dataCor = 'var(--danger)'; dataLabel = `⚠ Atrasado há ${Math.abs(diasIt)}d`; }
+        else if (diasIt === 0) { dataCor = 'var(--warn)'; dataLabel = '⚠ Hoje'; }
+      }
+      return { separado, dataCor, dataLabel };
+    };
+
+    // Grupo com um único pedido: card compacto, sem accordion (nada extra pra revelar)
+    if (g.itens.length === 1) {
+      const it = g.itens[0];
+      const { separado, dataCor, dataLabel } = itemRow(it);
+      return `
+      <div class="card" style="margin-bottom:8px;padding:12px 16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <div style="width:36px;height:36px;border-radius:10px;background:${avatar.bg};color:${avatar.fg};display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex-shrink:0">${avatar.iniciais}</div>
+        <div style="flex:1;min-width:200px">
+          <div style="font-size:14px;font-weight:600;letter-spacing:.2px">${g.descricao}</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:1px">${it.numero_pedido} · ${it.cliente_nome || ''}</div>
+        </div>
+        <div style="text-align:right;min-width:80px">
+          <div style="font-size:17px;font-weight:700;line-height:1">${fmtNum(g.totalQtd)}<span style="font-size:11px;color:var(--muted);font-weight:500"> un</span></div>
+          <div style="font-size:11px;color:${dataCor};margin-top:2px;white-space:nowrap">${dataLabel}</div>
+        </div>
+        ${separado
+          ? `<button class="btn btn-sm btn-secondary" onclick="marcarItemSeparado(${it.item_id}, false)" data-perm-movimentar="estoque">↺ Desfazer</button>`
+          : `<button class="btn btn-sm btn-primary" onclick="marcarItemSeparado(${it.item_id}, true)" data-perm-movimentar="estoque">Marcar separado</button>`}
+        <button class="btn btn-sm btn-secondary" onclick="abrirCotacaoPedido(${it.pedido_id})" title="Embalagens do pedido (caixas, medidas e peso)">📦 Embalagens</button>
+        <button class="btn btn-sm btn-secondary" onclick="cancelarProgramacaoSeparacaoLista(${it.item_id})" data-perm-deletar="pedidos" title="Cancelar programação">✕</button>
+      </div>`;
+    }
+
+    // Grupo com vários pedidos: card em destaque, com detalhamento expansível
+    return `
+    <div class="card" style="margin-bottom:10px;padding:0;overflow:hidden">
+      <div style="padding:16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;cursor:pointer" onclick="toggleSepGrupo(${idx})">
+        <div style="width:44px;height:44px;border-radius:12px;background:${avatar.bg};color:${avatar.fg};display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;flex-shrink:0">${avatar.iniciais}</div>
+        <div style="flex:1;min-width:200px">
+          <div style="font-size:16px;font-weight:700;letter-spacing:.2px">${g.descricao}</div>
+          <div style="font-size:12px;color:var(--muted);margin-top:3px">${g.pedidosCount} pedidos · ${g.pendentesCount} pendente(s)${g.separadosCount ? ' · ' + g.separadosCount + ' já separado(s)' : ''}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:24px;font-weight:800;line-height:1;color:var(--accent)">${fmtNum(g.totalQtd)}<span style="font-size:12px;color:var(--muted);font-weight:600"> un</span></div>
+        </div>
+        ${urgenciaBadge}
+        <span style="font-size:12px;color:var(--accent);white-space:nowrap">Detalhar ▾</span>
+      </div>
+      <div id="sep-grupo-${idx}" style="display:none;border-top:1px solid var(--border);padding:4px 16px 12px;background:var(--surface2)">
+        ${g.itens.map(it => {
+          const { separado, dataCor, dataLabel } = itemRow(it);
+          return `
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:8px 0;border-top:1px solid var(--border)">
+            <div style="flex:1;min-width:180px">
+              <div style="font-size:13px;font-weight:500">${it.numero_pedido} <span style="color:var(--muted);font-weight:400">· ${it.cliente_nome || ''}</span></div>
+              <div style="font-size:12px;color:var(--muted)">${fmtNum(it.quantidade)} un</div>
+            </div>
+            <div style="font-size:12px;color:${dataCor};white-space:nowrap">${dataLabel}</div>
+            ${separado
+              ? `<button class="btn btn-sm btn-secondary" onclick="marcarItemSeparado(${it.item_id}, false)" data-perm-movimentar="estoque">↺ Desfazer</button>`
+              : `<button class="btn btn-sm btn-primary" onclick="marcarItemSeparado(${it.item_id}, true)" data-perm-movimentar="estoque">Marcar separado</button>`}
+            <button class="btn btn-sm btn-secondary" onclick="abrirCotacaoPedido(${it.pedido_id})" title="Embalagens do pedido (caixas, medidas e peso)">📦 Embalagens</button>
+            <button class="btn btn-sm btn-secondary" onclick="cancelarProgramacaoSeparacaoLista(${it.item_id})" data-perm-deletar="pedidos" title="Cancelar programação">✕</button>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>`;
+  }).join('');
+  if (typeof aplicarPermissoesUI === 'function') aplicarPermissoesUI();
+}
+window.loadSeparacaoProducao = loadSeparacaoProducao;
+
+function toggleSepGrupo(idx) {
+  const el = document.getElementById('sep-grupo-' + idx);
+  if (!el) return;
+  el.style.display = el.style.display === 'none' ? '' : 'none';
+}
+window.toggleSepGrupo = toggleSepGrupo;
+
+async function cancelarProgramacaoSeparacaoLista(itemId) {
+  if (!confirm('Cancelar a programação de separação deste item? Isso não afeta o pedido, só remove o agendamento.')) return;
+  try {
+    await api('/pedidos/itens/' + itemId + '/programacao', 'DELETE');
+    showAlert('Programação cancelada');
+    loadSeparacaoProducao();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+window.cancelarProgramacaoSeparacaoLista = cancelarProgramacaoSeparacaoLista;
+
+async function marcarItemSeparado(itemId, marcar) {
+  try {
+    await api('/pedidos/itens/' + itemId + '/marcar-separado', 'POST', { marcar: !!marcar });
+    showAlert(marcar ? 'Item marcado como separado' : 'Marcação desfeita');
+    loadSeparacaoProducao();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+window.marcarItemSeparado = marcarItemSeparado;
+
+async function verDetalhesPedido(id) {
+  const p=await api('/pedidos/'+id);
+  await _carregarRevendaProdutos();
+  const dias=Math.round(p.dias_restantes);
+  const diasCor=dias<0?'var(--danger)':dias<=3?'var(--warn)':'var(--success)';
+  document.getElementById('modal-ped-det-title').textContent='Pedido '+p.numero_pedido;
+  document.getElementById('modal-ped-det-content').innerHTML=`
+    <div class="cards-grid" style="margin-bottom:16px">
+      <div class="card"><div class="card-label">Cliente</div><div style="font-weight:600">${p.cliente_nome}</div></div>
+      <div class="card"><div class="card-label">Prazo</div><div style="font-family:var(--font-head);font-weight:800;color:${diasCor}">${fmtDate(p.prazo_entrega)}</div></div>
+      <div class="card"><div class="card-label">Status</div><span class="pill ${STATUS_PILL_PED[p.status]}">${STATUS_LABEL_PED[p.status]}</span></div>
+      ${p.vendedor ? `<div class="card"><div class="card-label">Vendedor</div><div style="font-weight:600">${p.vendedor}</div></div>` : ''}
+    </div>
+    <div class="table-wrap">
+      <div class="table-head"><span class="table-head-title">Itens</span></div>
+      <table><thead><tr><th>Descrição</th><th>Produto Estoque</th><th>Qtd</th><th>Produzido</th><th>Status</th><th></th></tr></thead>
+      <tbody>${p.itens.map(i=>{
+        if (itemEhRevenda(i)) {
+          const feito = i.status === 'entregue' || i.status === 'produzido';
+          return `<tr style="background:rgba(59,130,246,.05)">
+            <td>${i.descricao} <span style="margin-left:6px;font-size:11px;padding:1px 7px;border-radius:9px;background:rgba(59,130,246,.15);color:#3b82f6">🛒 Revenda</span></td>
+            <td>${fmtNum(i.quantidade)} ${i.unidade||''}</td>
+            <td><span style="color:var(--muted);font-size:12px">Não produzido — separar do estoque</span></td>
+            <td><span class="pill ${feito?STATUS_PILL_PED['entregue']:''}">${feito?'Separado / Entregue':'Pendente'}</span></td>
+            <td>${feito
+              ? `<button class="btn btn-sm btn-secondary" onclick="marcarRevendaSeparado(${p.id},${i.id},${i.quantidade},false)">Desfazer</button>`
+              : `<button class="btn btn-sm btn-secondary" style="background:var(--success);border-color:var(--success);color:#fff" onclick="marcarRevendaSeparado(${p.id},${i.id},${i.quantidade},true)">✓ Separado/Entregue</button>`}</td>
+          </tr>`;
+        }
+        const pct=Math.min(100,Math.round((i.qtd_produzida/i.quantidade)*100));
+        const prox=STATUS_NEXT_PED[i.status];
+        return `<tr><td>${i.descricao}</td><td>${fmtNum(i.quantidade)}</td>
+          <td><div>${fmtNum(i.qtd_produzida)} (${pct}%)</div><div style="height:4px;background:var(--surface2);border-radius:2px;margin-top:4px;width:80px"><div style="height:100%;width:${pct}%;background:${pct>=100?'var(--success)':'var(--accent)'};border-radius:2px"></div></div></td>
+          <td><span class="pill ${STATUS_PILL_PED[i.status]}">${STATUS_LABEL_PED[i.status]}</span></td>
+          <td>${prox?`<button class="btn btn-sm btn-secondary" onclick="avancarItemStatus(${i.id},'${prox}',${i.quantidade});closeModal('modal-ped-detalhe');loadPedidos()">${STATUS_NEXT_LABEL_PED[i.status]}</button>`:''}</td>
+        </tr>`;
+      }).join('')}</tbody></table>
+    </div>
+    <div style="margin-top:12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 14px;font-size:13px">
+      <div style="font-weight:700;margin-bottom:4px">📦 Embalagens do pedido</div>
+      <div id="ped-det-embalagem"></div>
+    </div>`;
+  openModal('modal-ped-detalhe');
+  if (typeof resumoCotacaoHTML === 'function') resumoCotacaoHTML(id, document.getElementById('ped-det-embalagem'));
+  const btnImprimir = document.getElementById('btn-imprimir-pedido-modal');
+  if(btnImprimir) btnImprimir.onclick = () => { imprimirPedido(id); };
+  _carregarHistoricoProducaoPedido(id);
+}
+
+// Quem produziu e quando: lançamentos de produção vinculados a este pedido
+// (um pedido pode ser atendido em vários dias por operadores diferentes).
+async function _carregarHistoricoProducaoPedido(id) {
+  const container = document.getElementById('modal-ped-det-content');
+  if (!container) return;
+  const wrapId = 'ped-hist-producao-wrap';
+  let wrap = document.getElementById(wrapId);
+  if (!wrap) {
+    wrap = document.createElement('div');
+    wrap.id = wrapId;
+    wrap.className = 'table-wrap';
+    wrap.style.marginTop = '16px';
+    container.appendChild(wrap);
+  }
+  wrap.innerHTML = '<div class="table-head"><span class="table-head-title">Histórico de Produção</span></div><div style="padding:12px;color:var(--muted);font-size:13px">Carregando...</div>';
+  try {
+    const hist = await api('/pedidos/' + id + '/historico-producao');
+    const lancamentos = hist.lancamentos || [];
+    if (!lancamentos.length) {
+      wrap.innerHTML = '<div class="table-head"><span class="table-head-title">Histórico de Produção</span></div><div style="padding:12px;color:var(--muted);font-size:13px">Nenhum lançamento de produção vinculado a este pedido ainda.</div>';
+      return;
+    }
+    const resumo = hist.resumo || [];
+    const situacao = r => {
+      if (r.fora_do_pedido) return '<span style="color:var(--danger);font-weight:600">⚠ Fora do pedido</span>';
+      if (r.excedente > 0) return `<span style="color:var(--warn);font-weight:600">Excedeu +${fmtNum(r.excedente)}</span>`;
+      if (r.produzido >= r.pedido && r.pedido > 0) return '<span style="color:var(--success);font-weight:600">✔ Completo</span>';
+      if (r.produzido > 0) return '<span style="color:var(--warn);font-weight:600">Parcial</span>';
+      return '<span style="color:var(--muted)">Não iniciado</span>';
+    };
+    const resumoHtml = resumo.length ? `
+      <div class="table-head"><span class="table-head-title">Conferência por produto</span></div>
+      <table>
+        <thead><tr><th>Produto</th><th>Marca</th><th>Pedido</th><th>Produzido</th><th>Perda</th><th>Falta</th><th>Situação</th></tr></thead>
+        <tbody>${resumo.map(r => `
+          <tr>
+            <td>${r.produto_nome || '—'}</td>
+            <td>${r.produto_marca || '—'}</td>
+            <td>${fmtNum(r.pedido)}</td>
+            <td>${fmtNum(r.produzido)}</td>
+            <td style="color:${r.perda > 0 ? 'var(--danger)' : 'inherit'}">${fmtNum(r.perda)}</td>
+            <td>${fmtNum(r.falta)}</td>
+            <td>${situacao(r)}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>` : '';
+    wrap.innerHTML = `
+      ${resumoHtml}
+      <div class="table-head"><span class="table-head-title">Histórico de Produção</span></div>
+      <table>
+        <thead><tr><th>Data</th><th>Operador</th><th>Máquina</th><th>ML</th><th>Marca</th><th>Qtd Produzida</th><th>Perda</th><th>Sobra</th></tr></thead>
+        <tbody>${lancamentos.map(l => `
+          <tr>
+            <td>${fmtDate(l.data)}</td>
+            <td>${l.colaborador_nome}</td>
+            <td>${l.maquina_nome}</td>
+            <td title="${l.produto_nome || ''}" style="color:var(--accent2);font-weight:600">${l.produto_tamanho || l.produto_nome || '—'}</td>
+            <td style="color:var(--accent);font-weight:600">${l.produto_marca || '—'}</td>
+            <td>${fmtNum(l.producao)}</td>
+            <td style="color:${l.perda_quantidade > 0 ? 'var(--danger)' : 'inherit'}">${fmtNum(l.perda_quantidade)}</td>
+            <td style="color:${l.sobra_quantidade > 0 ? 'var(--success)' : 'inherit'}">${fmtNum(l.sobra_quantidade)}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    `;
+  } catch (e) {
+    wrap.innerHTML = `<div class="table-head"><span class="table-head-title">Histórico de Produção</span></div><div style="padding:12px;color:var(--danger);font-size:13px">${e.message}</div>`;
+  }
+}
+
+async function deletarPedido(id) {
+  if(!confirm('Remover pedido?')) return;
+  try {
+    await api('/pedidos/'+id,'DELETE');
+    showAlert('Pedido removido');
+    loadPedidos();
+  } catch(e) {
+    showAlert('Erro: ' + e.message, 'danger');
+  }
+}
+
+
+let pedidoArquivoSelecionado = null;
+let pedidosArquivosSelecionados = [];
+
+function selecionarPedidosArquivos(fileList, append = true) {
+  const novos = Array.from(fileList || []);
+  if (!novos.length) return;
+  if (!append) pedidosArquivosSelecionados = [];
+  const chave = f => f.name + '|' + f.size;
+  const existentes = new Set(pedidosArquivosSelecionados.map(chave));
+  novos.forEach(f => { if (!existentes.has(chave(f))) { pedidosArquivosSelecionados.push(f); existentes.add(chave(f)); } });
+  pedidoArquivoSelecionado = pedidosArquivosSelecionados[0] || null;
+  renderPedidosArquivosSelecionados();
+}
+
+function limparPedidosArquivos() {
+  pedidosArquivosSelecionados = [];
+  pedidoArquivoSelecionado = null;
+  const input = document.getElementById('pedido-arquivo');
+  if (input) input.value = '';
+  renderPedidosArquivosSelecionados();
+}
+
+function renderPedidosArquivosSelecionados() {
+  const files = pedidosArquivosSelecionados;
+  const nome = document.getElementById('pedido-arquivo-nome');
+  if (nome) {
+    nome.textContent = !files.length ? 'Nenhum arquivo selecionado'
+      : files.length === 1 ? `${files[0].name} — ${(files[0].size/1024/1024).toFixed(2)} MB`
+      : `${files.length} arquivos selecionados`;
+  }
+  const preview = document.getElementById('pedido-import-preview');
+  if (!preview) return;
+  if (!files.length) { preview.style.display = 'none'; preview.innerHTML = ''; return; }
+  preview.style.display = 'block';
+  const lista = files.map(f => `• ${f.name}`).join('<br>');
+  const dica = files.length === 1
+    ? `Arraste mais arquivos para somar ao lote, ou use "Importar em lote" para criar direto.`
+    : `Arraste mais arquivos para somar ao lote.`;
+  preview.innerHTML = `<strong>${files.length} arquivo(s) prontos:</strong><br>${lista}`
+    + `<br><span style="color:var(--muted)">${dica}</span>`
+    + `<br><a href="#" onclick="limparPedidosArquivos();return false;" style="color:var(--accent)">Limpar seleção</a>`;
+}
+
+async function importarPedidosLote() {
+  if (!pedidosArquivosSelecionados.length) { showAlert('Selecione um ou mais arquivos de pedido', 'danger'); return; }
+  const btn = document.getElementById('btn-importar-pedido-lote');
+  const preview = document.getElementById('pedido-import-preview');
+  window._impOcupado = true;
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Importando...'; }
+    const fd = new FormData();
+    pedidosArquivosSelecionados.forEach(f => fd.append('files', f));
+    let r = await fetch(API + '/pedidos/importar-arquivos-lote', { method: 'POST', body: fd });
+    if (r.status === 401) {
+      window.location.href = '/login?redirect=' + encodeURIComponent(window.location.pathname + window.location.search);
+      return;
+    }
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Erro ao importar em lote');
+
+    const rs = data.resumo || { criados: 0, duplicados: 0, erros: 0, total: 0 };
+    const linhas = (data.resultados || []).map(it => {
+      if (it.status === 'criado') {
+        const falta = (it.faltando && it.faltando.length) ? ` <span style="color:#f4b400">(revisar: ${it.faltando.join(', ')})</span>` : '';
+        return `<div style="color:#46d369">✅ Pedido ${it.numero_pedido} — ${it.cliente || 'cliente'} (${it.qtd_itens} item(ns))${falta}</div>`;
+      }
+      if (it.status === 'duplicado') {
+        return `<div style="color:var(--muted)">↪️ Pedido ${it.numero_pedido} já existia — ignorado</div>`;
+      }
+      return `<div style="color:#ff6b6b">⚠️ ${it.arquivo}: ${it.motivo || 'não foi possível ler'}</div>`;
+    }).join('');
+
+    if (preview) {
+      preview.style.display = 'block';
+      const alertas = data.alertas_estoque || [];
+      const blocoAlertas = alertas.length
+        ? `<hr style="border-color:rgba(255,255,255,.1)"><div style="color:#f4b400;font-weight:600;margin:4px 0">⚠️ Estoque insuficiente para a demanda dos pedidos abertos:</div>`
+          + alertas.map(a=>`<div style="color:#f4b400;font-size:13px">• ${a.produto}: saldo ${fmtNum(a.saldo)} ${a.unidade}, demanda ${fmtNum(a.demanda)} — faltam <strong>${fmtNum(a.falta)}</strong></div>`).join('')
+        : '';
+      preview.innerHTML = `<strong>Resumo:</strong> ${rs.criados} criado(s), ${rs.duplicados} duplicado(s), ${rs.erros} com erro — de ${rs.total} arquivo(s).<hr style="border-color:rgba(255,255,255,.1)">${linhas}${blocoAlertas}`;
+    }
+    showAlert(`Importação concluída: ${rs.criados} pedido(s) criado(s).`);
+    if (rs.criados > 0) window._impSalvou = true;
+    const dups = (data.resultados || []).filter(it => it.status === 'duplicado').map(it => it.numero_pedido);
+    const alertasEstoque = data.alertas_estoque || [];
+    let avisoHtml = '';
+    if (dups.length) {
+      avisoHtml += `<div style="color:#f4b400;font-weight:600;margin-bottom:6px">${dups.length} pedido(s) já cadastrado(s) — não foram importados:</div>`
+        + dups.map(n => `<div style="margin-left:4px">• Pedido <strong>${n}</strong></div>`).join('');
+    }
+    if (alertasEstoque.length) {
+      if (avisoHtml) avisoHtml += `<hr style="border-color:rgba(255,255,255,.12);margin:12px 0">`;
+      avisoHtml += `<div style="color:#f4b400;font-weight:600;margin-bottom:6px">Estoque insuficiente para a demanda dos pedidos abertos:</div>`
+        + alertasEstoque.map(a => `<div style="margin-left:4px">• ${a.produto}: saldo ${fmtNum(a.saldo)} ${a.unidade}, demanda ${fmtNum(a.demanda)} — faltam <strong>${fmtNum(a.falta)}</strong></div>`).join('');
+    }
+    if (avisoHtml) showPopup('⚠️ Importação — atenção', avisoHtml);
+    // Importação limpa (sem erros de leitura): fecha o modal sozinho
+    if (rs.erros === 0) closeModal('modal-importar-pedido');
+    if (typeof loadPedidos === 'function') { try { await loadPedidos(); } catch(e){} }
+    pedidosArquivosSelecionados = [];
+    const input = document.getElementById('pedido-arquivo');
+    if (input) input.value = '';
+  } catch (e) {
+    showAlert(e.message || 'Erro ao importar em lote', 'danger');
+  } finally {
+    window._impOcupado = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Importar em lote'; }
+  }
+}
+function openModalImportarClientes() {
+  const f = document.getElementById('imp-clientes-file'); if (f) f.value = '';
+  const n = document.getElementById('imp-clientes-nome'); if (n) n.textContent = 'Nenhum arquivo selecionado';
+  const r = document.getElementById('imp-clientes-result'); if (r) { r.style.display = 'none'; r.innerHTML = ''; }
+  openModal('modal-importar-clientes');
+}
+window.openModalImportarClientes = openModalImportarClientes;
+
+async function importarClientesArquivo() {
+  const input = document.getElementById('imp-clientes-file');
+  if (!input || !input.files || !input.files.length) { showAlert('Selecione o arquivo dos clientes', 'danger'); return; }
+  const btn = document.getElementById('btn-imp-clientes');
+  const res = document.getElementById('imp-clientes-result');
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Importando...'; }
+    const fd = new FormData();
+    fd.append('file', input.files[0]);
+    const r = await fetch(API + '/pedidos/importar-clientes', { method: 'POST', body: fd, credentials: 'same-origin' });
+    if (r.status === 401) { window.location.href = '/login?redirect=' + encodeURIComponent(window.location.pathname + window.location.search); return; }
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Erro ao importar clientes');
+    const amostra = (data.amostra || []).map(c => '<div style="color:#46d369">&#10003; ' + c.razao_social + (c.cnpj ? ' (' + c.cnpj + ')' : '') + ' &mdash; ' + (c.cidade || '') + '/' + (c.uf || '') + '</div>').join('');
+    if (res) {
+      res.style.display = 'block';
+      res.innerHTML = '<strong>Resumo:</strong> ' + data.inseridos + ' novo(s) cliente(s) importado(s) &mdash; ' + data.ja_existentes + ' ja existia(m), ' + data.duplicados_arquivo + ' repetido(s) no arquivo, de ' + data.lidos + ' lido(s).' + (amostra ? '<hr style="border-color:rgba(255,255,255,.1)">' + amostra : '');
+    }
+    showAlert(data.inseridos + ' cliente(s) importado(s)!');
+    if (typeof loadClientes === 'function') { try { await loadClientes(); } catch (e) {} }
+  } catch (e) {
+    if (res) { res.style.display = 'block'; res.innerHTML = '<div style="color:#ff6b6b">' + (e.message || 'Erro ao importar') + '</div>'; }
+    showAlert(e.message || 'Erro ao importar clientes', 'danger');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Importar'; }
+  }
+}
+window.importarClientesArquivo = importarClientesArquivo;
+
+window.selecionarPedidosArquivos = selecionarPedidosArquivos;
+window.importarPedidosLote = importarPedidosLote;
+window.limparPedidosArquivos = limparPedidosArquivos;
+
+function openModalImportarPedido() {
+  pedidoArquivoSelecionado = null;
+  pedidosArquivosSelecionados = [];
+  const input = document.getElementById('pedido-arquivo');
+  if (input) input.value = '';
+  const nome = document.getElementById('pedido-arquivo-nome');
+  if (nome) nome.textContent = 'Nenhum arquivo selecionado';
+  const preview = document.getElementById('pedido-import-preview');
+  if (preview) { preview.style.display = 'none'; preview.innerHTML = ''; }
+  const btn = document.getElementById('btn-importar-pedido');
+  if (btn) { btn.disabled = false; btn.textContent = 'Importar e Cadastrar'; }
+  openModal('modal-importar-pedido');
+}
+
+function selecionarPedidoArquivo(file) {
+  if (!file) return;
+  pedidoArquivoSelecionado = file;
+  const nome = document.getElementById('pedido-arquivo-nome');
+  if (nome) nome.textContent = `${file.name} — ${(file.size/1024/1024).toFixed(2)} MB`;
+  const preview = document.getElementById('pedido-import-preview');
+  if (preview) {
+    preview.style.display = 'block';
+    preview.innerHTML = `<strong>Arquivo pronto para importação:</strong> ${file.name}<br><span>Após confirmar, o sistema criará o cliente caso ele ainda não exista e cadastrará os itens encontrados no pedido.</span>`;
+  }
+}
+
+function handleDropPedidoArquivo(ev) {
+  ev.preventDefault();
+  const area = document.getElementById('pedido-drop-area');
+  if (area) area.style.borderColor = 'rgba(255,255,255,.18)';
+  const files = ev.dataTransfer?.files;
+  if (files && files.length) selecionarPedidosArquivos(files);
+}
+
+async function importarPedidoArquivo() {
+  if (!pedidoArquivoSelecionado) { showAlert('Selecione ou solte um arquivo do pedido', 'danger'); return; }
+  const btn = document.getElementById('btn-importar-pedido');
+  window._impOcupado = true;
+  try {
+    if (btn) { btn.disabled = true; btn.textContent = 'Analisando arquivo...'; }
+    const fd = new FormData();
+    fd.append('file', pedidoArquivoSelecionado);
+    let r = await fetch(API.replace(/\/api$/, '/api/importar-pedido-arquivo'), { method: 'POST', body: fd });
+    if (r.status === 404 || r.status === 405) {
+      r = await fetch(API + '/pedidos/importar-arquivo', { method: 'POST', body: fd });
+    }
+    if (r.status === 401) {
+      window.location.href = '/login?redirect=' + encodeURIComponent(window.location.pathname + window.location.search);
+      return;
+    }
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Erro ao analisar arquivo');
+    
+    // Fechar modal de importação
+    closeModal('modal-importar-pedido');
+    
+    // Preencher campos do modal-pedido
+    document.getElementById('ped-id').value = '';
+    const campoNumero = document.getElementById('ped-numero');
+    campoNumero.value = data.dados_extraidos.numero_pedido || '';
+    if (!campoNumero.value) {
+      campoNumero.style.borderColor = 'var(--danger)';
+      campoNumero.placeholder = 'Não identificado no arquivo — preencha aqui';
+      campoNumero.oninput = () => { campoNumero.style.borderColor = ''; };
+    } else {
+      campoNumero.style.borderColor = '';
+      campoNumero.placeholder = '';
+    }
+    document.getElementById('ped-prazo').value = data.dados_extraidos.prazo_entrega || '';
+    document.getElementById('ped-vendedor').value = data.dados_extraidos.vendedor || '';
+    
+    let obsStr = data.dados_extraidos.observacoes || '';
+    obsStr = (obsStr + `\nArquivo importado: ${pedidoArquivoSelecionado.name}`).trim();
+    document.getElementById('ped-obs').value = obsStr;
+    
+    const clientes = await api('/pedidos/clientes');
+    document.getElementById('ped-cliente').innerHTML = clientes.map(c => `<option value="${c.id}">${c.razao_social}${c.nome_fantasia ? ' — ' + c.nome_fantasia : ''}</option>`).join('');
+    if (data.cliente_id) {
+      document.getElementById('ped-cliente').value = data.cliente_id;
+    }
+    
+    pedidoItens = (data.dados_extraidos.itens || []).map(i => ({
+      descricao: i.descricao,
+      descricao_pdf: i.descricao,
+      quantidade: i.quantidade,
+      unidade: i.unidade || 'unidade',
+      // preço/desconto lidos do PDF (quando houver): o pedido nasce igual ao original
+      valor_unitario: i.valor_unitario || 0,
+      desconto: i.desconto || 0
+    }));
+    
+    await carregarProdutosEstoque();
+    renderItensPedido();
+    document.getElementById('modal-ped-title').textContent = 'Confirmar Pedido Importado';
+    document.getElementById('ped-precisa-pintura').checked = false;
+    document.getElementById('ped-precisa-pintura').dataset.original = '0';
+    openModal('modal-pedido');
+
+    showAlert('Arquivo de pedido analisado com sucesso! Revise os dados e clique em Salvar.');
+  } catch (e) {
+    showAlert(e.message || 'Erro ao importar arquivo', 'danger');
+  } finally {
+    window._impOcupado = false;
+    if (btn) { btn.disabled = false; btn.textContent = 'Importar e Cadastrar'; }
+  }
+}
+// Funções expostas para o modal de importação de pedidos
+window.openModalImportarPedido = openModalImportarPedido;
+window.selecionarPedidoArquivo = selecionarPedidoArquivo;
+window.handleDropPedidoArquivo = handleDropPedidoArquivo;
+window.importarPedidoArquivo = importarPedidoArquivo;
+
+
+let pedidoItens=[];
+let pedidoItensOriginais = [];
+let produtosEstoque=[];
+let unidadesEstoqueCache = ['unidade','und','milheiro','kg','litro','metro','caixa','pacote','par'];
+
+// Busca a lista de unidades cadastradas (Produtos > Cadastrar Produto > + Nova unidade).
+// Mantém a lista padrão acima como fallback caso a API falhe.
+async function carregarUnidadesEstoque() {
+  try {
+    const lista = await api('/estoque/unidades');
+    if (Array.isArray(lista) && lista.length) {
+      unidadesEstoqueCache = lista.map(u => u.nome);
+    }
+  } catch(e) { /* mantém a lista padrão em caso de falha */ }
+  return unidadesEstoqueCache;
+}
+window.carregarUnidadesEstoque = carregarUnidadesEstoque;
+
+// Preenche o select de unidade do modal "Cadastrar/Editar Produto", com a
+// opção "+ Nova unidade..." ao final para cadastrar uma unidade nova na hora.
+function renderSelectUnidadesProduto(valorAtual) {
+  const sel = document.getElementById('est-prod-unidade');
+  if (!sel) return;
+  const atual = valorAtual !== undefined ? valorAtual : sel.value;
+  sel.innerHTML = unidadesEstoqueCache.map(u => `<option value="${u}" ${u===atual?'selected':''}>${u}</option>`).join('')
+    + `<option value="__nova_unidade__">+ Nova unidade...</option>`;
+}
+window.renderSelectUnidadesProduto = renderSelectUnidadesProduto;
+
+async function onChangeUnidadeProduto(sel) {
+  if (sel.value !== '__nova_unidade__') return;
+  const nome = prompt('Nome da nova unidade (ex: par, dz, kit):');
+  if (!nome || !nome.trim()) { renderSelectUnidadesProduto('unidade'); return; }
+  try {
+    const criada = await api('/estoque/unidades', 'POST', { nome: nome.trim() });
+    await carregarUnidadesEstoque();
+    renderSelectUnidadesProduto(criada.nome);
+    showAlert('Unidade criada!');
+  } catch (e) {
+    showAlert(e.message || 'Erro ao criar unidade', 'danger');
+    renderSelectUnidadesProduto('unidade');
+  }
+}
+window.onChangeUnidadeProduto = onChangeUnidadeProduto;
+
+async function carregarProdutosEstoque() {
+  try { produtosEstoque = await api('/estoque/produtos'); }
+  catch(e) { produtosEstoque = []; }
+  await carregarUnidadesEstoque();
+  await loadCategoriasFiltro();
+  let dl = document.getElementById('produtos-datalist');
+  if (!dl) { dl = document.createElement('datalist'); dl.id = 'produtos-datalist'; document.body.appendChild(dl); }
+  const esc = s => String(s||'').replace(/"/g,'&quot;');
+  dl.innerHTML = produtosEstoque.map(p => {
+    const hint = [p.codigo, p.marca, p.categoria_nome].filter(Boolean).join(' · ');
+    return `<option value="${esc(p.nome)}">${esc(hint)}</option>`;
+  }).join('');
+}
+
+function selecionarProdutoPedidoItem(idx, valor) {
+  if (!pedidoItens[idx]) return;
+  pedidoItens[idx].descricao = valor;
+  const alvo = String(valor||'').trim().toLowerCase();
+  const matches = produtosEstoque.filter(p => String(p.nome||'').trim().toLowerCase() === alvo);
+  if (matches.length === 1) {
+    pedidoItens[idx].produto_id = matches[0].id;
+    const u = matches[0].unidade;
+    const opts = unidadesEstoqueCache;
+    if (u && opts.includes(u)) { pedidoItens[idx].unidade = u; renderItensPedido(); }
+  } else {
+    pedidoItens[idx].produto_id = null;
+  }
+}
+window.selecionarProdutoPedidoItem = selecionarProdutoPedidoItem;
+window.carregarProdutosEstoque = carregarProdutosEstoque;
+
+async function openModalPedido() {
+  pedidoItens=[];
+  document.getElementById('ped-id').value='';
+  document.getElementById('ped-numero').value='';
+  document.getElementById('ped-prazo').value='';
+  document.getElementById('ped-vendedor').value='';
+  document.getElementById('ped-obs').value='';
+  document.getElementById('ped-precisa-pintura').checked = false;
+  document.getElementById('ped-precisa-pintura').dataset.original = '0';
+  const clientes=await api('/pedidos/clientes');
+  document.getElementById('ped-cliente').innerHTML=clientes.map(c=>`<option value="${c.id}">${c.razao_social}${c.nome_fantasia?' — '+c.nome_fantasia:''}</option>`).join('');
+  await carregarProdutosEstoque();
+  renderItensPedido();
+  document.getElementById('modal-ped-title').textContent='Novo Pedido';
+  openModal('modal-pedido');
+}
+
+// ── Seletor de produto por item do pedido (combobox com ranking por semelhança) ──
+function _scoreProduto(query, prod) {
+  const desc = (query || '').toUpperCase();
+  const nome = (prod.nome || '').toUpperCase();
+  if (!nome) return 0;
+  const normD = desc.replace(/[^A-Z0-9]/g, '').replace(/ML$/, 'M');
+  const normP = nome.replace(/[^A-Z0-9]/g, '').replace(/ML$/, 'M');
+  let score = 0;
+  if (normD && normP === normD) score += 100;
+  const numbers = desc.match(/\d+/g) || [];
+  let allNums = numbers.length > 0;
+  for (const n of numbers) { if (!nome.includes(n)) { allNums = false; break; } }
+  if (allNums && numbers.length > 0) score += 8;
+  [['CRISTAL', 6], ['CTL', 4], ['COPO', 2], ['PP', 2], ['PS', 2], ['TAMPA', 3], ['BOLHA', 3], ['RETA', 3], ['FURO', 2]].forEach(([k, w]) => {
+    if (desc.includes(k) && nome.includes(k)) score += w;
+  });
+  if (normD && (normP.includes(normD) || normD.includes(normP))) score += 10;
+  const td = desc.split(/[^A-Z0-9]+/).filter(t => t.length >= 2);
+  const tp = new Set(nome.split(/[^A-Z0-9]+/).filter(t => t.length >= 2));
+  td.forEach(t => { if (tp.has(t)) score += 1; });
+  if (prod.codigo && desc.includes(String(prod.codigo).toUpperCase())) score += 5;
+  return score;
+}
+
+function _rankProdutos(query) {
+  const arr = (produtosEstoque || []).map(p => ({ p, s: _scoreProduto(query, p) }));
+  if (query && query.trim()) arr.sort((a, b) => b.s - a.s || (a.p.nome || '').localeCompare(b.p.nome || ''));
+  else arr.sort((a, b) => (a.p.nome || '').localeCompare(b.p.nome || ''));
+  return arr;
+}
+
+function abrirProdCombo(idx) {
+  const drop = document.getElementById('ped-item-drop-' + idx);
+  if (!drop) return;
+  const q = pedidoItens[idx] ? (pedidoItens[idx].descricao || '') : '';
+  const ranked = _rankProdutos(q).slice(0, 60);
+  if (!ranked.length) {
+    drop.innerHTML = '<div style="padding:10px;color:var(--muted);font-size:12px">Nenhum produto cadastrado no estoque</div>';
+    drop.style.display = 'block';
+    return;
+  }
+  const temQuery = !!(q && q.trim());
+  drop.innerHTML = ranked.map(({ p, s }, i) => {
+    const destaque = (temQuery && i === 0 && s > 0) ? 'border-left:3px solid var(--accent);' : 'border-left:3px solid transparent;';
+    const label = _produtoLabel(p).replace(/"/g, '&quot;');
+    return `<div onmousedown="event.preventDefault();selecionarProdComboItem(${idx}, ${p.id})" title="${label}"
+      style="padding:7px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid var(--border);${destaque}white-space:normal;word-break:break-word"
+      onmouseover="this.style.background='var(--surface)'" onmouseout="this.style.background='transparent'">
+      ${_produtoLabel(p)} <span style="color:var(--muted)">· ${fmtNum(p.quantidade_atual || 0)} ${p.unidade || ''}</span>
+    </div>`;
+  }).join('');
+  drop.style.display = 'block';
+}
+
+function toggleProdCombo(idx) {
+  const d = document.getElementById('ped-item-drop-' + idx);
+  if (d && d.style.display === 'block') { d.style.display = 'none'; }
+  else { abrirProdCombo(idx); const inp = document.getElementById('ped-item-input-' + idx); if (inp) inp.focus(); }
+}
+
+function fecharProdCombo(idx) {
+  const d = document.getElementById('ped-item-drop-' + idx);
+  if (d) d.style.display = 'none';
+  
+  // Resolve product_id on blur/close
+  const inp = document.getElementById('ped-item-input-' + idx);
+  if (inp && pedidoItens[idx]) {
+    const valor = inp.value;
+    pedidoItens[idx].descricao = valor;
+    
+    const desc = valor.trim().toLowerCase();
+    const matches = (produtosEstoque || []).filter(p => 
+      (p.nome || '').trim().toLowerCase() === desc ||
+      (p.codigo && String(p.codigo).trim().toLowerCase() === desc)
+    );
+    
+    if (matches.length === 1) {
+      pedidoItens[idx].produto_id = matches[0].id;
+      const u = matches[0].unidade;
+      const opts = unidadesEstoqueCache;
+      if (u && opts.includes(u)) {
+        pedidoItens[idx].unidade = u;
+      }
+    } else {
+      // Busca frouxa por similaridade
+      const bestId = findBestStockMatch(valor, produtosEstoque || []);
+      if (bestId) {
+        pedidoItens[idx].produto_id = bestId;
+        const matchedProd = (produtosEstoque || []).find(p => p.id === bestId);
+        if (matchedProd && matchedProd.unidade) {
+          const opts = unidadesEstoqueCache;
+          if (opts.includes(matchedProd.unidade)) {
+            pedidoItens[idx].unidade = matchedProd.unidade;
+          }
+        }
+      } else {
+        pedidoItens[idx].produto_id = null;
+      }
+    }
+    renderItensPedido();
+  }
+}
+function fecharProdComboDelayed(idx) { setTimeout(() => fecharProdCombo(idx), 150); }
+
+function selecionarProdComboItem(idx, prodId) {
+  const p = (produtosEstoque || []).find(x => x.id === prodId);
+  if (!p || !pedidoItens[idx]) return;
+  pedidoItens[idx].descricao = p.nome;
+  pedidoItens[idx].produto_id = p.id;
+  const opts = unidadesEstoqueCache;
+  if (p.unidade && opts.includes(p.unidade)) pedidoItens[idx].unidade = p.unidade;
+  // sincroniza o texto da caixa com o produto escolhido e fecha o combo
+  // (NAO chamar fecharProdCombo aqui: ele relê o texto antigo e zera o produto_id)
+  const _inp = document.getElementById('ped-item-input-' + idx);
+  if (_inp) _inp.value = p.nome;
+  const _drop = document.getElementById('ped-item-drop-' + idx);
+  if (_drop) _drop.style.display = 'none';
+  renderItensPedido();
+}
+window.abrirProdCombo = abrirProdCombo;
+window.toggleProdCombo = toggleProdCombo;
+window.fecharProdComboDelayed = fecharProdComboDelayed;
+window.selecionarProdComboItem = selecionarProdComboItem;
+
+// Se o produto do item pertence a uma categoria que exige outra (ex.: Chinelos
+// exige Palmilha), retorna a lista de opções (já filtrada pela numeração do
+// produto quando possível) para o seletor "Palmilha desta venda".
+function _opcoesInsumoVinculado(item) {
+  if (!item.produto_id) return null;
+  const produto = (produtosEstoque || []).find(p => p.id === item.produto_id);
+  if (!produto) return null;
+  const vinculo = categoriasVinculoMap[produto.categoria_id];
+  if (!vinculo || !vinculo.vinculada_id) return null;
+  const candidatos = (produtosEstoque || []).filter(p => p.categoria_id === vinculo.vinculada_id);
+  const numMatch = (produto.nome || '').match(/(\d{2}\/\d{2})/);
+  let opcoes = candidatos;
+  if (numMatch) {
+    const filtrados = candidatos.filter(p => (p.nome || '').includes(numMatch[1]));
+    if (filtrados.length) opcoes = filtrados;
+  }
+  return { categoriaNome: vinculo.vinculada_nome, opcoes };
+}
+function onChangeInsumoVinculado(idx, valor) {
+  pedidoItens[idx].insumo_vinculado_id = valor ? +valor : null;
+}
+window.onChangeInsumoVinculado = onChangeInsumoVinculado;
+
+function renderItensPedido() {
+  const el=document.getElementById('ped-itens-list');
+  if(!el) return;
+  
+  if (produtosEstoque && produtosEstoque.length) {
+    pedidoItens.forEach(item => {
+      if (!item.produto_id && item.descricao) {
+        const desc = item.descricao.trim().toLowerCase();
+        const matches = produtosEstoque.filter(p => 
+          (p.nome || '').trim().toLowerCase() === desc ||
+          (p.codigo && String(p.codigo).trim().toLowerCase() === desc)
+        );
+        if (matches.length === 1) {
+          item.produto_id = matches[0].id;
+          const u = matches[0].unidade;
+          const opts = unidadesEstoqueCache;
+          if (u && opts.includes(u)) {
+            item.unidade = u;
+          }
+        } else {
+          // Busca frouxa por similaridade
+          const bestId = findBestStockMatch(item.descricao, produtosEstoque);
+          if (bestId) {
+            item.produto_id = bestId;
+            const matchedProd = produtosEstoque.find(p => p.id === bestId);
+            if (matchedProd && matchedProd.unidade) {
+              const opts = unidadesEstoqueCache;
+              if (opts.includes(matchedProd.unidade)) {
+                item.unidade = matchedProd.unidade;
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+
+  if(!pedidoItens.length){el.innerHTML='<p style="color:var(--muted);font-size:13px;padding:8px 0">Nenhum item</p>';return;}
+  el.innerHTML=pedidoItens.map((item,idx)=>{
+    const isUnregistered = item.descricao && !item.produto_id;
+    const borderStyle = isUnregistered ? 'border:1px solid #ef4444 !important;' : '';
+    const prodVinc = item.produto_id ? (produtosEstoque || []).find(p => p.id === item.produto_id) : null;
+    const confirmMsg = prodVinc
+      ? `<div style="color:var(--success);font-size:11px;margin-top:3px;word-break:break-word">✔ Estoque: ${_produtoLabel(prodVinc).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</div>`
+      : '';
+    const _esc = t => String(t || '').replace(/&/g,'&amp;').replace(/</g,'&lt;');
+    const candidatos = (!item.produto_id && item.descricao) ? findStockCandidates(item.descricao, produtosEstoque || []) : [];
+    const ambiguoMsg = candidatos.length > 1
+      ? `<div style="color:#f59e0b;font-size:11px;margin-top:3px;font-weight:600;word-break:break-word">⚠️ O pedido não diz a marca. ${candidatos.length} produtos no estoque servem: ${candidatos.slice(0,4).map(c => _esc(_produtoLabel(c))).join(' | ')}${candidatos.length>4?' ...':''} — clique na seta ▼ e escolha o correto.</div>`
+      : '';
+    const pdfMsg = (item.descricao_pdf && item.descricao_pdf !== item.descricao)
+      ? `<div style="color:var(--muted);font-size:11px;margin-top:3px;word-break:break-word">Texto no PDF: ${_esc(item.descricao_pdf)}</div>`
+      : '';
+    const warningMsg = (isUnregistered && candidatos.length <= 1) ? '<div style="color:#ef4444;font-size:11px;margin-top:3px;font-weight:600">⚠️ Produto não cadastrado no estoque</div>' : '';
+    const vinculoInfo = _opcoesInsumoVinculado(item);
+    const vinculoRow = vinculoInfo ? `
+    <div style="margin:2px 0 8px;padding:8px 10px;background:var(--surface2);border-radius:6px">
+      <label style="font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px">
+        ${vinculoInfo.categoriaNome} desta venda
+        <span style="background:#f59e0b22;color:#f59e0b;font-size:10px;padding:1px 6px;border-radius:4px">obrigatório</span>
+      </label>
+      <select onchange="onChangeInsumoVinculado(${idx}, this.value)" style="margin-top:4px;font-size:13px;width:100%">
+        <option value="">Selecione</option>
+        ${vinculoInfo.opcoes.map(o=>`<option value="${o.id}" ${item.insumo_vinculado_id===o.id?'selected':''}>${o.codigo?o.codigo+' — ':''}${o.nome}</option>`).join('')}
+      </select>
+    </div>` : '';
+    
+    return `
+    <div style="display:grid;grid-template-columns:1fr auto auto auto auto;gap:8px;align-items:center;margin-bottom:8px">
+      <div style="position:relative;min-width:0">
+        <div style="position:relative">
+          <input type="text" id="ped-item-input-${idx}" value="${(item.descricao||'').replace(/"/g,'&quot;')}" title="${(item.descricao||'').replace(/"/g,'&quot;')}" autocomplete="off"
+            placeholder="Clique na seta ▼ para ver os produtos, ou digite *"
+            oninput="pedidoItens[${idx}].descricao=this.value; abrirProdCombo(${idx})"
+            onfocus="abrirProdCombo(${idx})" onblur="fecharProdComboDelayed(${idx})"
+            style="font-size:13px;width:100%;padding-right:30px;${borderStyle}">
+          <span onmousedown="event.preventDefault();toggleProdCombo(${idx})" title="Ver produtos do estoque"
+            style="position:absolute;right:6px;top:50%;transform:translateY(-50%);cursor:pointer;color:var(--text);font-size:11px;padding:4px;user-select:none">▼</span>
+        </div>
+        <div id="ped-item-drop-${idx}" style="display:none;position:absolute;z-index:60;left:0;min-width:100%;width:max-content;max-width:min(620px,88vw);top:calc(100% + 2px);background:var(--surface2);border:1px solid var(--border);border-radius:6px;max-height:280px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.45)"></div>
+        ${warningMsg}${ambiguoMsg}${confirmMsg}${pdfMsg}
+      </div>
+      <input type="number" value="${item.quantidade}" min="1" placeholder="Qtd" oninput="pedidoItens[${idx}].quantidade=+this.value" style="width:80px;font-size:13px;${isUnregistered ? 'align-self: flex-start; margin-top: 1px;' : ''}">
+      <input type="number" value="${item.valor_unitario || ''}" min="0" step="0.01" placeholder="R$ unit." title="Valor unitário (R$) — pode ser ajustado em negociação" oninput="pedidoItens[${idx}].valor_unitario=+this.value" style="width:80px;font-size:13px;${isUnregistered ? 'align-self: flex-start; margin-top: 1px;' : ''}">
+      <select onchange="pedidoItens[${idx}].unidade=this.value" style="font-size:13px;${isUnregistered ? 'align-self: flex-start; margin-top: 1px;' : ''}">
+        ${unidadesEstoqueCache.map(u=>`<option value="${u}" ${item.unidade===u?'selected':''}>${u}</option>`).join('')}
+      </select>
+      <button class="btn btn-sm btn-danger" onclick="pedidoItens.splice(${idx},1);renderItensPedido()" style="${isUnregistered ? 'align-self: flex-start; margin-top: 1px;' : ''}">✕</button>
+    </div>
+    ${vinculoRow}`;
+  }).join('');
+}
+
+function addItemPedido(){pedidoItens.push({descricao:'',quantidade:1,unidade:'unidade'});renderItensPedido();}
+
+async function editPedido(id) {
+  const p = await api('/pedidos/' + id);
+  document.getElementById('ped-id').value = p.id;
+  document.getElementById('ped-numero').value = p.numero_pedido;
+  document.getElementById('ped-prazo').value = p.prazo_entrega;
+  
+  const clientes = await api('/pedidos/clientes');
+  document.getElementById('ped-cliente').innerHTML = clientes.map(c => `<option value="${c.id}">${c.razao_social}${c.nome_fantasia ? ' — ' + c.nome_fantasia : ''}</option>`).join('');
+  document.getElementById('ped-cliente').value = p.cliente_id;
+  
+  document.getElementById('ped-vendedor').value = p.vendedor || '';
+  document.getElementById('ped-obs').value = p.observacoes || '';
+  document.getElementById('ped-precisa-pintura').checked = !!p.precisa_pintura;
+  document.getElementById('ped-precisa-pintura').dataset.original = p.precisa_pintura ? '1' : '0';
+  
+  // Carrega também id, valor e desconto do item: o backend atualiza o item no lugar
+  // (preservando progresso/separação) em vez de apagar e recriar.
+  pedidoItens = p.itens.map(i => ({
+    id: i.id,
+    descricao: i.descricao,
+    quantidade: i.quantidade,
+    unidade: i.unidade || 'unidade',
+    valor_unitario: i.valor_unitario || 0,
+    desconto: i.desconto || 0,
+    produto_id: i.produto_id,
+    insumo_vinculado_id: i.insumo_vinculado_id || null,
+    qtd_produzida: i.qtd_produzida || 0
+  }));
+  // Fotografia do estado original pra avisar se a edição descarta progresso de produção
+  pedidoItensOriginais = p.itens.map(i => ({ id: i.id, descricao: i.descricao, produto_id: i.produto_id, qtd_produzida: i.qtd_produzida || 0 }));
+  
+  await carregarProdutosEstoque();
+  renderItensPedido();
+  document.getElementById('modal-ped-title').textContent = 'Editar Pedido';
+  openModal('modal-pedido');
+}
+window.editPedido = editPedido;
+
+async function salvarPedido() {
+  const id = document.getElementById('ped-id').value;
+  
+  // Resolve/validate all items before compiling the payload
+  pedidoItens.forEach((item) => {
+    if (item.descricao) {
+      const desc = item.descricao.trim().toLowerCase();
+      const matches = (produtosEstoque || []).filter(p => 
+        (p.nome || '').trim().toLowerCase() === desc ||
+        (p.codigo && String(p.codigo).trim().toLowerCase() === desc)
+      );
+      if (matches.length === 1) {
+        item.produto_id = matches[0].id;
+      } else if (!item.produto_id) {
+        // Busca frouxa por similaridade
+        const bestId = findBestStockMatch(item.descricao, produtosEstoque || []);
+        if (bestId) {
+          item.produto_id = bestId;
+        } else {
+          item.produto_id = null;
+        }
+      }
+    }
+  });
+
+  const precisaPinturaEl = document.getElementById('ped-precisa-pintura');
+  const precisaPinturaAgora = precisaPinturaEl.checked;
+  const precisaPinturaOriginal = precisaPinturaEl.dataset.original === '1';
+
+  const body={numero_pedido:document.getElementById('ped-numero').value,cliente_id:+document.getElementById('ped-cliente').value,prazo_entrega:document.getElementById('ped-prazo').value,vendedor:document.getElementById('ped-vendedor').value,observacoes:document.getElementById('ped-obs').value,itens:pedidoItens.filter(i=>i.descricao.trim()),precisa_pintura:precisaPinturaAgora};
+  if(!body.numero_pedido){showPopup('⚠️ Falta o número do pedido', 'O número do pedido não foi preenchido (comum quando a importação não conseguiu identificar automaticamente). Preencha o campo "Número do Pedido" antes de salvar.');return;}
+  if(!body.prazo_entrega){showPopup('⚠️ Falta o prazo de entrega', 'Preencha o campo "Prazo de Entrega" antes de salvar.');return;}
+  if(!body.itens.length){showPopup('⚠️ Nenhum item no pedido', 'Adicione ao menos um item antes de salvar.');return;}
+  
+  // Check if any product is unregistered
+  const itemNaoCadastrado = body.itens.find(i => !i.produto_id);
+  if (itemNaoCadastrado) {
+    showPopup('⚠️ Produto não cadastrado', `O produto "${itemNaoCadastrado.descricao}" não está cadastrado no estoque. Cadastre-o antes de salvar, ou corrija a descrição pra bater com um produto existente.`);
+    return;
+  }
+  if (id) {
+    const perdas = [];
+    (pedidoItensOriginais || []).forEach(o => {
+      if (!(o.qtd_produzida > 0)) return;
+      const atual = body.itens.find(i => i.id === o.id);
+      if (!atual) perdas.push(`"${o.descricao}" foi removido (já tinha ${fmtNum(o.qtd_produzida)} produzidos)`);
+      else if (atual.produto_id !== o.produto_id) perdas.push(`"${o.descricao}" mudou de produto (já tinha ${fmtNum(o.qtd_produzida)} produzidos do produto anterior)`);
+    });
+    if (perdas.length && !confirm('Atenção: esta edição mexe em itens que já têm produção lançada:\n\n• ' + perdas.join('\n• ') + '\n\nDeseja salvar mesmo assim?')) return;
+  }
+  try {
+    if(id) {
+      await api('/pedidos/' + id, 'PUT', body);
+      showAlert('Pedido atualizado!');
+    } else {
+      const resp = await api('/pedidos/','POST',body);
+      const alertas = (resp && resp.alertas_estoque) || [];
+      if (alertas.length) {
+        showAlert('Pedido salvo! ⚠️ Estoque insuficiente: '
+          + alertas.map(a=>`${a.produto} (faltam ${fmtNum(a.falta)} ${a.unidade})`).join('; '), 'warn');
+      } else {
+        showAlert('Pedido salvo!');
+      }
+    }
+    window._impSalvou = true;
+    closeModal('modal-pedido');
+    if (window._modoImportarVendedor) return;
+    loadFila();
+    loadPedidos();
+    checkAlertasPedidos();
+
+    if (precisaPinturaAgora && !precisaPinturaOriginal) {
+      const produtoIds = [...new Set(body.itens.map(i => i.produto_id).filter(Boolean))];
+      window._pinturaPrefill = {
+        pedido_numero: body.numero_pedido,
+        produto_id: produtoIds.length === 1 ? produtoIds[0] : null,
+        produto_ids: produtoIds
+      };
+      showPage('pintura');
+    }
+  } catch(e){
+    const msg = e.message || '';
+    if (/já existe/i.test(msg)) {
+      showPopup('📋 Esse número de pedido já existe', `<div>${msg}</div><div style="margin-top:10px;color:var(--muted);font-size:13px">Confira o número — se for outro pedido, ele precisa de um número diferente. Se for o mesmo pedido reenviado, procure ele na lista em vez de cadastrar de novo.</div>`);
+    } else {
+      showPopup('⚠️ Não foi possível salvar', `<div style="color:#ff6b6b">${msg}</div>`);
+    }
+  }
+}
+
+async function loadClientes() {
+  const busca=document.getElementById('ped-busca-cliente')?.value||'';
+  let url='/pedidos/clientes';if(busca) url+='?busca='+encodeURIComponent(busca);
+  const rows=await api(url);
+  const tbody=document.getElementById('ped-clientes-tbody');
+  if(!tbody) return;
+  tbody.innerHTML=rows.map(c=>`<tr>
+    <td><strong>${c.razao_social}</strong>${c.estoque_programado ? ' <span class="pill pill-warn" title="Cliente com estoque programado" style="font-size:11px">📦 Estoque</span>' : ''}</td>
+    <td>${nomeFantasiaCurto(c)}</td>
+    <td>${c.cnpj?c.cnpj.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/,'$1.$2.$3/$4-$5'):'—'}</td>
+    <td>${c.cidade?c.cidade+'/'+c.uf:'—'}</td>
+    <td>${c.total_pedidos||0}</td>
+    <td class="flex gap-2">
+      ${temPermissao('pedidos', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="editCliente(${c.id})">Editar</button>` : ''}
+      ${temPermissao('pedidos', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="deletarCliente(${c.id})">✕</button>` : ''}
+    </td>
+  </tr>`).join('');
+}
+
+function openModalCliente(){
+  ['cnpj','razao','fantasia','ie','email','telefone','cep','numero','logradouro','bairro','complemento','cidade','uf','obs'].forEach(f=>{const el=document.getElementById('cli-'+f);if(el)el.value='';});
+  document.getElementById('cli-id').value='';
+  const ckEp=document.getElementById('cli-estoque-programado'); if(ckEp) ckEp.checked=false;
+  document.getElementById('modal-cli-title').textContent='Cadastrar Cliente';
+  openModal('modal-cliente');
+}
+
+async function editCliente(id) {
+  const c=await api('/pedidos/clientes/'+id);
+  const setV=(k,v)=>{const el=document.getElementById('cli-'+k);if(el)el.value=v||'';};
+  setV('id',c.id);setV('cnpj',c.cnpj);setV('razao',c.razao_social);setV('fantasia',c.nome_fantasia);
+  setV('ie',c.ie);setV('email',c.email);setV('telefone',c.telefone);setV('cep',c.cep);
+  setV('numero',c.numero);setV('logradouro',c.logradouro);setV('bairro',c.bairro);
+  setV('complemento',c.complemento);setV('cidade',c.cidade);setV('uf',c.uf);setV('obs',c.observacoes);
+  const ckEp=document.getElementById('cli-estoque-programado'); if(ckEp) ckEp.checked=!!c.estoque_programado;
+  document.getElementById('modal-cli-title').textContent='Editar Cliente';
+  openModal('modal-cliente');
+}
+
+function _abreviarRazao(razao){
+  if(!razao) return '';
+  const suf=new Set(['LTDA','LTDA.','EIRELI','EPP','ME','MEI','SA','S/A','S.A','S.A.','CIA','CIA.','EI','INC','EIRL']);
+  const out=[];
+  razao.trim().split(/\s+/).forEach(t=>{
+    const tu=t.toUpperCase().replace(/^[.,\-/]+|[.,\-/]+$/g,'');
+    if(suf.has(tu)) return;
+    if((t==='-'||t==='&'||t==='/')&&out.length===0) return;
+    out.push(t);
+  });
+  let s=out.join(' ').replace(/^[\s\-,/&]+|[\s\-,/&]+$/g,'');
+  if(!s) s=razao.trim();
+  return s.slice(0,60).replace(/\s+$/,'');
+}
+window._abreviarRazao=_abreviarRazao;
+
+async function buscarCNPJ() {
+  const cnpj=document.getElementById('cli-cnpj')?.value.replace(/\D/g,'');
+  if(cnpj?.length!==14){showAlert('CNPJ deve ter 14 dígitos','danger');return;}
+  try {
+    const d=await api('/pedidos/busca-cnpj/'+cnpj);
+    const setV=(k,v)=>{const el=document.getElementById('cli-'+k);if(el)el.value=v||'';};
+    setV('razao',d.razao_social);
+    setV('fantasia', d.nome_fantasia || _abreviarRazao(d.razao_social));
+    // E-mail e telefone NÃO são preenchidos pela Receita (costumam ser do contador) — preenchimento manual
+    setV('cep',d.cep);setV('logradouro',d.logradouro);
+    setV('numero',d.numero);setV('bairro',d.bairro);setV('cidade',d.cidade);setV('uf',d.uf);
+    showAlert('CNPJ encontrado!');
+  } catch(e){showAlert('CNPJ não encontrado','danger');}
+}
+
+async function buscarCEP() {
+  const cep=document.getElementById('cli-cep')?.value.replace(/\D/g,'');
+  if(cep?.length!==8){showAlert('CEP inválido','danger');return;}
+  try {
+    const d=await api('/pedidos/busca-cep/'+cep);
+    const setV=(k,v)=>{const el=document.getElementById('cli-'+k);if(el)el.value=v||'';};
+    setV('logradouro',d.logradouro);setV('bairro',d.bairro);setV('cidade',d.cidade);setV('uf',d.uf);
+    showAlert('CEP encontrado!');
+  } catch(e){showAlert('CEP não encontrado','danger');}
+}
+
+async function salvarCliente() {
+  const getV=k=>{const el=document.getElementById('cli-'+k);return el?el.value:'';};
+  const fantasia = (getV('fantasia').trim()) || _abreviarRazao(getV('razao'));
+  const body={cnpj:getV('cnpj').replace(/\D/g,''),razao_social:getV('razao'),nome_fantasia:fantasia,ie:getV('ie'),email:getV('email'),telefone:getV('telefone'),cep:getV('cep').replace(/\D/g,''),logradouro:getV('logradouro'),numero:getV('numero'),complemento:getV('complemento'),bairro:getV('bairro'),cidade:getV('cidade'),uf:getV('uf'),observacoes:getV('obs')};
+  const ckEp=document.getElementById('cli-estoque-programado'); if(ckEp) body.estoque_programado = ckEp.checked ? 1 : 0;
+  if(!body.razao_social){showAlert('Informe a razão social','danger');return;}
+  const id=getV('id');
+  try {
+    if(id) await api('/pedidos/clientes/'+id,'PUT',body);
+    else await api('/pedidos/clientes','POST',body);
+    showAlert('Cliente salvo!');
+    closeModal('modal-cliente');
+    loadClientes();
+  } catch(e){showAlert(e.message,'danger');}
+}
+
+async function deletarCliente(id){
+  if(!confirm('Desativar cliente?')) return;
+  await api('/pedidos/clientes/'+id,'DELETE');
+  loadClientes();
+}
+
+// ─── EMPRESA ──────────────────────────────────────────────────────────────────
+
+async function loadEmpresa() {
+  const campos = ['nome','cnpj','telefone','email','cep','numero','logradouro','bairro','complemento','cidade','uf'];
+  try {
+    const r = await fetch(API + '/configuracoes/empresa', { cache: 'no-store' });
+    const dados = await r.json();
+    if (!r.ok) throw new Error(dados.detail || dados.mensagem || 'Erro ao carregar dados da empresa');
+
+    window.empresaDados = dados;
+
+    for (const campo of campos) {
+      const el = document.getElementById('emp-' + campo);
+      if (el) el.value = dados[campo] || '';
+    }
+
+    const prev = document.getElementById('empresa-logo-preview');
+    if (prev) {
+      if (dados.logo) prev.innerHTML = `<img src="${dados.logo}" style="max-width:100%;max-height:100%;object-fit:contain">`;
+      else prev.innerHTML = 'Sem logo';
+    }
+  } catch(e) {
+    console.error('Erro ao carregar dados da empresa:', e);
+    const alertEl = document.getElementById('empresa-alert');
+    if (alertEl) alertEl.innerHTML = `<div class="alert alert-danger">Erro ao carregar dados da empresa: ${e.message}</div>`;
+  }
+}
+
+async function salvarEmpresa() {
+  const campos = ['nome','cnpj','telefone','email','cep','numero','logradouro','bairro','complemento','cidade','uf'];
+  const alertEl = document.getElementById('empresa-alert');
+  const body = {};
+
+  for (const campo of campos) {
+    const el = document.getElementById('emp-' + campo);
+    body[campo] = el ? el.value.trim() : '';
+  }
+
+  try {
+    let r = await fetch(API + '/configuracoes/empresa', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+
+    // Compatibilidade para cache/versões antigas do servidor que possam rejeitar POST.
+    if (r.status === 405) {
+      r = await fetch(API + '/configuracoes/empresa', {
+        method: 'PUT',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(body)
+      });
+    }
+
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      if (r.status === 405) throw new Error('Servidor antigo em execução. Feche o terminal do sistema, abra novamente pelo Iniciar_PRATIC.bat e pressione Ctrl + F5.');
+      throw new Error(d.detail || d.mensagem || 'Não foi possível salvar os dados da empresa');
+    }
+
+    if (alertEl) {
+      alertEl.innerHTML = '<div class="alert alert-success">✅ Dados da empresa salvos no banco!</div>';
+      setTimeout(()=>alertEl.innerHTML='',3000);
+    }
+    await loadEmpresa();
+    await loadTopbarWidgets();
+  } catch(e) {
+    if (alertEl) alertEl.innerHTML = `<div class="alert alert-danger">${e.message}</div>`;
+  }
+}
+
+function formatCEPEmp(el) {
+  let v = el.value.replace(/\D/g,'');
+  if (v.length > 5) v = v.slice(0,5) + '-' + v.slice(5,8);
+  el.value = v;
+}
+
+async function buscarCEPEmp() {
+  const cep = document.getElementById('emp-cep')?.value.replace(/\D/g,'');
+  if (!cep || cep.length !== 8) { showAlert('CEP inválido','danger'); return; }
+  try {
+    const r = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+    const d = await r.json();
+    if (d.erro) { showAlert('CEP não encontrado','danger'); return; }
+    const setV = (k,v) => { const el=document.getElementById('emp-'+k); if(el) el.value=v||''; };
+    setV('logradouro',d.logradouro); setV('bairro',d.bairro); setV('cidade',d.localidade); setV('uf',d.uf);
+    showAlert('CEP encontrado!');
+  } catch(e) { showAlert('Erro ao buscar CEP','danger'); }
+}
+
+async function uploadLogo(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const form = new FormData();
+  form.append('file', file);
+  try {
+    const r = await fetch(API.replace('/api','') + '/api/empresa/logo', { method:'POST', body:form });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail);
+    const reader = new FileReader();
+    reader.onload = e => {
+      const prev = document.getElementById('empresa-logo-preview');
+      if (prev) prev.innerHTML = `<img src="${e.target.result}" style="max-width:100%;max-height:100%;object-fit:contain">`;
+    };
+    reader.readAsDataURL(file);
+    showAlert('Logo salvo!');
+  } catch(e) { showAlert('Erro ao salvar logo: '+e.message,'danger'); }
+}
+
+async function salvarPermissoes() {
+  const btn = document.querySelector('[onclick="salvarPermissoes()"]');
+  const textoOriginal = btn?.innerHTML;
+  if (btn) { btn.disabled = true; btn.innerHTML = '⏳ Salvando...'; }
+
+  const body = {};
+  PERFIS.forEach(perf => {
+    const chave = 'perm_' + perf.key;
+    const paginas = TODAS_PAGINAS.filter(pg => {
+      const el = document.getElementById(`perm_${perf.key}_${pg.key}`);
+      return el && el.checked;
+    }).map(pg => pg.key);
+    body[chave] = paginas.join(',');
+  });
+
+  const perfisExigemPedido = PERFIS.filter(perf => {
+    const el = document.getElementById(`regra_exigir_pedido_${perf.key}`);
+    return el && el.checked;
+  }).map(perf => perf.key);
+
+  try {
+    const r = await fetch(API + '/configuracoes/permissoes/salvar', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)
+    });
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.detail||'Erro');
+    await api('/configuracoes/exigir_pedido_producao_perfis', 'PUT', { valor: perfisExigemPedido.join(',') });
+    if (btn) { btn.innerHTML = '✅ Salvo!'; btn.style.background = 'var(--success)'; }
+    setTimeout(() => {
+      if (btn) { btn.disabled = false; btn.innerHTML = textoOriginal; btn.style.background = ''; }
+    }, 2000);
+    permissoesAtuais = body;
+    showAlert(d.mensagem);
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.innerHTML = textoOriginal; btn.style.background = ''; }
+    showAlert('Erro: '+e.message,'danger');
+  }
+}
+
+// ─── INICIALIZAÇÃO ────────────────────────────────────────────────────────────
+
+async function loadTopbarWidgets() {
+  const dateEl = document.querySelector('#topbar-date span');
+  if (dateEl) {
+    const hoje = new Date();
+    const dia = String(hoje.getDate()).padStart(2, '0');
+    const mes = String(hoje.getMonth() + 1).padStart(2, '0');
+    const ano = hoje.getFullYear();
+    dateEl.textContent = `${dia}/${mes}/${ano}`;
+  }
+
+  let cidade = '';
+  let uf = '';
+  try {
+    const r = await fetch(API + '/configuracoes/empresa', { cache: 'no-store' });
+    if (r.ok) {
+      const dados = await r.json();
+      cidade = dados.cidade || '';
+      uf = dados.uf || '';
+    }
+  } catch (e) {
+    console.error('Erro ao buscar dados da empresa para topbar:', e);
+  }
+
+  const cityEl = document.querySelector('#topbar-city span');
+  if (cityEl) {
+    if (cidade) {
+      cityEl.textContent = uf ? `${cidade} - ${uf.toUpperCase()}` : cidade;
+    } else {
+      cityEl.textContent = 'Sem cidade';
+    }
+  }
+
+  const tempEl = document.querySelector('#topbar-temp span');
+  if (tempEl && cidade) {
+    try {
+      const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cidade)}&count=1&language=pt&format=json`;
+      const geoRes = await fetch(geoUrl);
+      if (geoRes.ok) {
+        const geoData = await geoRes.json();
+        if (geoData.results && geoData.results.length > 0) {
+          const { latitude, longitude } = geoData.results[0];
+          const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current_weather=true`;
+          const weatherRes = await fetch(weatherUrl);
+          if (weatherRes.ok) {
+            const weatherData = await weatherRes.json();
+            if (weatherData.current_weather && typeof weatherData.current_weather.temperature !== 'undefined') {
+              const temp = Math.round(weatherData.current_weather.temperature);
+              tempEl.textContent = `${temp}°C`;
+              return;
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Erro ao obter temperatura:', err);
+    }
+  }
+  
+  if (tempEl) {
+    tempEl.textContent = '—°C';
+  }
+
+  const topbarMesEl = document.getElementById('topbar-mes');
+  if (topbarMesEl && (topbarMesEl.textContent === '—' || !topbarMesEl.textContent)) {
+    const mesAtual = new Date().toISOString().slice(0, 7);
+    topbarMesEl.textContent = mesLabel(mesAtual);
+  }
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+  await carregarAcessoPrincipal();
+  await carregarMetaGlobal();
+  loadTopbarWidgets();
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('importar') === '1' && window.usuarioLogado && window.usuarioLogado.role === 'comercial') {
+    iniciarModoImportarVendedor();
+    return;
+  }
+  const paginaSolicitada = params.get('page') || params.get('pagina');
+  const paginaInicial = (paginaSolicitada && paginasLiberadas.includes(paginaSolicitada)) ? paginaSolicitada : (paginasLiberadas[0] || 'dashboard');
+  showPage(paginaInicial);
+});
+
+// ─── MODO IMPORTAÇÃO DO VENDEDOR ──────────────────────────────────────────────
+// O portal /comercial abre o painel em /?importar=1: o vendedor usa exatamente a
+// mesma importação da tela de Pedidos (Importar e Cadastrar com a tela de
+// confirmação, ou Importar em lote). Ao terminar ou cancelar, volta para /comercial.
+window._impOcupado = false;
+function iniciarModoImportarVendedor() {
+  window._modoImportarVendedor = true;
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  const pg = document.getElementById('page-pedidos');
+  if (pg) {
+    pg.classList.add('active');
+    Array.from(pg.children).forEach(ch => { ch.style.display = 'none'; });
+    const ban = document.createElement('div');
+    ban.innerHTML = `<div class="card" style="max-width:640px;margin:40px auto;text-align:center">
+      <div style="font-family:var(--font-head);font-weight:700;font-size:18px;margin-bottom:8px">📥 Importação de pedido</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:16px">Ao salvar ou cancelar, você volta para Meus Pedidos.</div>
+      <div class="flex gap-2" style="justify-content:center">
+        <button class="btn btn-primary" onclick="openModalImportarPedido()">Abrir importação</button>
+        <button class="btn btn-secondary" onclick="window.location.href='/comercial'">← Voltar para Meus Pedidos</button>
+      </div></div>`;
+    pg.appendChild(ban);
+  }
+  const titulo = document.getElementById('page-title');
+  if (titulo) titulo.textContent = 'Importar Pedido';
+  openModalImportarPedido();
+  let vazios = 0, abriu = false;
+  setInterval(() => {
+    const aberto = document.querySelector('.modal-overlay.open') || document.getElementById('popup-overlay-dyn');
+    if (aberto) { abriu = true; vazios = 0; return; }
+    if (!abriu || window._impOcupado) { vazios = 0; return; }
+    vazios++;
+    if (vazios >= 3) window.location.href = '/comercial' + (window._impSalvou ? '?importado=1' : '');
+  }, 400);
+}
+window.iniciarModoImportarVendedor = iniciarModoImportarVendedor;
+
+// ─── GRÁFICOS ─────────────────────────────────────────────────────────────────
+
+// Caches globais para evitar requisições repetidas ao alternar temas
+let _cacheDashboardData = null;
+let _cacheDashboardMes = null;
+let _cacheDashboardIncluirProdEnv = false;
+
+let _cacheGrafPeriodo = null;
+let _cacheGrafData = null;
+let _cacheAnualData = {};
+let _cacheCompData = {};
+let _cachePedidosData = null;
+let _cacheEstoqueData = null;
+
+const OP_COLORS = ['#3b82f6', '#8b5cf6', '#06b6d4', '#f97316', '#a855f7', '#ec4899', '#6366f1', '#14b8a6', '#f59e0b', '#0284c7'];
+
+function getChartThemeColors() {
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  return {
+    gridColor: isLight ? '#cbd5e1' : '#2a2f3f',
+    textColor: isLight ? '#475569' : '#94a3b8',
+    accentColor: isLight ? '#ca8a04' : '#f0b429',
+    successColor: isLight ? '#10b981' : '#10b981',
+    dangerColor: isLight ? '#ef4444' : '#ef4444',
+    infoColor: isLight ? '#3b82f6' : '#3b82f6',
+    tooltipBg: isLight ? 'rgba(255, 255, 255, 0.96)' : 'rgba(22, 25, 32, 0.96)',
+    tooltipText: isLight ? '#0f172a' : '#e8eaf0',
+    tooltipBorder: isLight ? '#cbd5e1' : '#2a2f3f'
+  };
+}
+
+function hexToRgba(hex, alpha) {
+  if (typeof hex !== 'string') return hex;
+  hex = hex.replace('#', '');
+  if (hex.length === 3) {
+    hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+  }
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function getGradientHelper(colorHex, alphaStart = 0.85, alphaEnd = 0.25) {
+  return (context) => {
+    const chart = context.chart;
+    const { ctx, chartArea } = chart;
+    if (!chartArea) return hexToRgba(colorHex, alphaStart);
+    const gradient = ctx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+    gradient.addColorStop(0, hexToRgba(colorHex, alphaEnd));
+    gradient.addColorStop(1, hexToRgba(colorHex, alphaStart));
+    return gradient;
+  };
+}
+
+function getChartBaseOptions(colors) {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: {
+        labels: {
+          color: colors.textColor,
+          font: { family: 'DM Sans', size: 12, weight: '500' }
+        }
+      },
+      tooltip: {
+        mode: 'index',
+        intersect: false,
+        backgroundColor: colors.tooltipBg,
+        titleColor: colors.tooltipText,
+        bodyColor: colors.tooltipText,
+        borderColor: colors.tooltipBorder,
+        borderWidth: 1,
+        padding: 12,
+        boxPadding: 8,
+        usePointStyle: true,
+        titleFont: { family: 'DM Sans', size: 13, weight: '700' },
+        bodyFont: { family: 'DM Sans', size: 12 }
+      },
+      datalabels: {
+        display: false
+      }
+    },
+    scales: {
+      x: {
+        ticks: {
+          color: colors.textColor,
+          font: { family: 'DM Sans', size: 11 }
+        },
+        grid: {
+          color: colors.gridColor
+        }
+      },
+      y: {
+        ticks: {
+          color: colors.textColor,
+          font: { family: 'DM Sans', size: 11 }
+        },
+        grid: {
+          color: colors.gridColor
+        }
+      }
+    }
+  };
+}
+
+const grafCharts = {};
+function destroyGrafChart(id) { if(grafCharts[id]){grafCharts[id].destroy();delete grafCharts[id];} }
+
+// ── Helpers de melhoria dos Gráficos ─────────────────────────────────────────
+let _grafPluginPronto = false;
+function _hexLum(hex) {
+  if (typeof hex !== 'string') return 0;
+  hex = hex.replace('#','').slice(0,6);
+  if (hex.length < 6) return 0;
+  const r=parseInt(hex.slice(0,2),16), g=parseInt(hex.slice(2,4),16), b=parseInt(hex.slice(4,6),16);
+  return (0.299*r + 0.587*g + 0.114*b) / 255;
+}
+function _dlBg(ctx) {
+  let bg = ctx.dataset.backgroundColor;
+  if (typeof bg === 'function') {
+    bg = bg(ctx);
+  }
+  if (Array.isArray(bg)) bg = bg[ctx.dataIndex];
+  return bg;
+}
+function _dlColor(ctx)  {
+  const bg = _dlBg(ctx);
+  if (typeof bg === 'string' && bg.startsWith('#')) {
+    return _hexLum(bg) > 0.55 ? '#0f172a' : '#ffffff';
+  }
+  return '#ffffff';
+}
+function _dlStroke(ctx) { return _dlColor(ctx) === '#ffffff' ? '#0f172a' : '#ffffff'; }
+
+function _grafInitPlugin() {
+  if (_grafPluginPronto) return;
+  try {
+    if (window.Chart && window.ChartDataLabels) {
+      Chart.register(window.ChartDataLabels);
+      Chart.defaults.set('plugins.datalabels', { display: false });
+    }
+  } catch(e) {}
+  _grafPluginPronto = true;
+}
+
+// Garante que o canvas esteja dentro de uma caixa de altura fixa e posição relativa,
+// para que maintainAspectRatio:false respeite a altura (sem isso, o Chart.js estica).
+function ensureChartBox(canvasId, altura) {
+  const c = document.getElementById(canvasId);
+  if (!c) return;
+  let box = c.parentElement;
+  if (!box || !box.classList || !box.classList.contains('graf-box')) {
+    box = document.createElement('div');
+    box.className = 'graf-box';
+    box.style.position = 'relative';
+    box.style.width = '100%';
+    c.parentNode.insertBefore(box, c);
+    box.appendChild(c);
+  }
+  box.style.height = altura + 'px';
+  // remove eventual mensagem de vazio/erro anterior
+  const msg = box.querySelector('.graf-msg');
+  if (msg) msg.remove();
+  c.style.display = '';
+}
+
+// Mostra mensagem (vazio ou erro) dentro da caixa do gráfico, escondendo o canvas.
+function grafBoxMsg(canvasId, texto, isErro) {
+  destroyGrafChart(canvasId.replace('chart-',''));
+  const c = document.getElementById(canvasId);
+  if (!c) return;
+  const box = c.parentElement;
+  if (!box) return;
+  c.style.display = 'none';
+  let msg = box.querySelector('.graf-msg');
+  if (!msg) {
+    msg = document.createElement('div');
+    msg.className = 'graf-msg';
+    msg.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;font-size:13px;padding:12px';
+    box.appendChild(msg);
+  }
+  msg.style.color = isErro ? 'var(--danger)' : 'var(--muted)';
+  msg.textContent = texto;
+}
+
+// Overlay de carregamento sobre toda a área de gráficos.
+function grafLoading(mostrar) {
+  const cont = document.getElementById('graf-content');
+  if (!cont) return;
+  let ov = document.getElementById('graf-loading-overlay');
+  if (mostrar) {
+    if (!ov) {
+      cont.style.position = cont.style.position || 'relative';
+      ov = document.createElement('div');
+      ov.id = 'graf-loading-overlay';
+      ov.style.cssText = 'position:absolute;inset:0;background:rgba(10,12,18,.55);backdrop-filter:blur(1px);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;z-index:20;border-radius:12px';
+      ov.innerHTML = '<div class="spinner"></div><div style="font-size:13px;color:var(--muted)">Carregando gráficos…</div>';
+      cont.appendChild(ov);
+    }
+    ov.style.display = 'flex';
+  } else if (ov) {
+    ov.style.display = 'none';
+  }
+}
+
+
+async function loadGraficoComparativo(options = {}) {
+  const ano1El = document.getElementById('graf-comp-ano1');
+  const ano2El = document.getElementById('graf-comp-ano2');
+  if(!ano1El || !ano2El) return;
+  const ano1 = ano1El.value;
+  const ano2 = ano2El.value;
+  
+  const colors = getChartThemeColors();
+  const MESES=['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+  const DIAS_UTEIS=[22,20,21,22,21,21,23,22,21,23,21,21];
+  try {
+    const useCache = options.useCache === true;
+    const cacheKey = `${ano1}_${ano2}`;
+    let data;
+    if (useCache && _cacheCompData[cacheKey]) {
+      data = _cacheCompData[cacheKey];
+    } else {
+      const [dados1, dados2] = await Promise.all([
+        api('/relatorios/resumo-anual/'+ano1),
+        ano2!==ano1 ? api('/relatorios/resumo-anual/'+ano2) : Promise.resolve([])
+      ]);
+      data = [dados1, dados2];
+      _cacheCompData[cacheKey] = data;
+    }
+    const [dados1, dados2] = data;
+    const totais1=MESES.map((_,i)=>{const m=`${ano1}-${String(i+1).padStart(2,'0')}`;const r=dados1.find(d=>d.mes_referencia===m);return r?(r.total_producao||0):0;});
+    const totais2=MESES.map((_,i)=>{const m=`${ano2}-${String(i+1).padStart(2,'0')}`;const r=dados2.find(d=>d.mes_referencia===m);return r?(r.total_producao||0):0;});
+    const metas=DIAS_UTEIS.map(d=>8000*d);
+
+    destroyGrafChart('comparativo-anual');
+    const datasets=[{
+      label:`${ano1}`,
+      data:totais1,
+      backgroundColor: getGradientHelper(colors.accentColor, 0.85, 0.25),
+      borderColor: colors.accentColor,
+      borderWidth: 1.5,
+      borderRadius: 5
+    }];
+    if(ano2!==ano1) datasets.push({
+      label:`${ano2}`,
+      data:totais2,
+      backgroundColor: getGradientHelper(colors.infoColor, 0.85, 0.25),
+      borderColor: colors.infoColor,
+      borderWidth: 1.5,
+      borderRadius: 5
+    });
+    datasets.push({label:'Meta mensal',data:metas,type:'line',borderColor:colors.dangerColor,borderDash:[8,4],borderWidth:2.5,pointRadius:0,fill:false});
+
+    const canvas = document.getElementById('chart-comparativo-anual');
+    if(!canvas) return;
+    _grafInitPlugin();
+    ensureChartBox('chart-comparativo-anual', 320);
+    
+    const baseOpts = getChartBaseOptions(colors);
+    grafCharts['comparativo-anual']=new Chart(canvas,{
+      type:'bar',data:{labels:MESES,datasets},
+      options:{
+        ...baseOpts,
+        plugins:{
+          ...baseOpts.plugins,
+          tooltip:{
+            ...baseOpts.plugins.tooltip,
+            callbacks:{label:ctx=>`${ctx.dataset.label}: ${fmtNum(ctx.raw)} peças`}
+          },
+          datalabels:{display:ctx=>ctx.dataset.type!=='line'&&(ctx.dataset.data[ctx.dataIndex]||0)>0,anchor:'center',align:'center',rotation:0,clamp:true,color:_dlColor,textStrokeColor:_dlStroke,textStrokeWidth:3,font:{family:'DM Sans',size:11,weight:'700'},formatter:v=>fmtNum(v)}
+        },
+        scales:{
+          x:{
+            ticks:{color:colors.textColor,font:{family:'DM Sans'}},
+            grid:{color:colors.gridColor}
+          },
+          y:{
+            ticks:{color:colors.textColor,callback:v=>fmtNum(v),font:{family:'DM Sans'}},
+            grid:{color:colors.gridColor},
+            title:{display:true,text:'Total de peças',color:colors.textColor,font:{family:'DM Sans',weight:'700'}}
+          }
+        }
+      }
+    });
+
+    // Insights
+    const total1=totais1.reduce((s,v)=>s+v,0);
+    const total2=totais2.reduce((s,v)=>s+v,0);
+    const cresc=total1>0&&ano2!==ano1?(((total2-total1)/total1)*100).toFixed(1):null;
+    const melhorMes1=totais1.indexOf(Math.max(...totais1));
+    const mesesAbaixo1=totais1.filter((v,i)=>v>0&&v<metas[i]).length;
+    const mesesAbaixo2=ano2!==ano1?totais2.filter((v,i)=>v>0&&v<metas[i]).length:null;
+
+    const insightsEl=document.getElementById('graf-comp-insights');
+    if(insightsEl) insightsEl.innerHTML=`
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">${cresc!==null?`📈 Variação ${ano1} → ${ano2}`:`📦 Total ${ano1}`}</div>
+        ${cresc!==null
+          ?`<div style="font-family:var(--font-head);font-size:22px;font-weight:800;color:${+cresc>=0?'var(--success)':'var(--danger)'}">${+cresc>=0?'+':''}${cresc}%</div><div style="font-size:12px;color:var(--muted);margin-top:4px">${fmtNum(total1)} → ${fmtNum(total2)} peças</div>`
+          :`<div style="font-family:var(--font-head);font-size:22px;font-weight:800;color:var(--accent)">${fmtNum(total1)}</div><div style="font-size:12px;color:var(--muted);margin-top:4px">peças produzidas</div>`
+        }
+      </div>
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">🏆 Melhor mês (${ano1})</div>
+        <div style="font-family:var(--font-head);font-size:22px;font-weight:800;color:var(--accent)">${MESES[melhorMes1]}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px">${fmtNum(totais1[melhorMes1])} peças</div>
+      </div>
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:14px">
+        <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">⚠️ Meses abaixo da meta</div>
+        <div style="font-family:var(--font-head);font-size:22px;font-weight:800;color:${mesesAbaixo1>0?'var(--danger)':'var(--success)'}">${mesesAbaixo1}${mesesAbaixo2!==null?' / '+mesesAbaixo2:''}</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px">${ano1}${mesesAbaixo2!==null?' / '+ano2:''}</div>
+      </div>`;
+  } catch(e){console.error('Erro comparativo anual:',e);}
+}
+
+async function loadGraficoAnual(options = {}) {
+  const anoSel = document.getElementById('graf-ano');
+  if(!anoSel) return;
+  const ano = anoSel.value || new Date().getFullYear().toString();
+
+  const colors = getChartThemeColors();
+  try {
+    const useCache = options.useCache === true;
+    let dados;
+    if (useCache && _cacheAnualData[ano]) {
+      dados = _cacheAnualData[ano];
+    } else {
+      dados = await api('/relatorios/resumo-anual/'+ano);
+      _cacheAnualData[ano] = dados;
+    }
+    const ml = m => { const[,mo]=m.split('-');return['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][+mo-1]; };
+
+    // KPIs anuais
+    const totalProd = dados.reduce((s,r)=>s+(r.total_producao||0),0);
+    const totalPerda = dados.reduce((s,r)=>s+(r.total_perda||0),0);
+    const totalSobra = dados.reduce((s,r)=>s+(r.total_sobra||0),0);
+    const totalExc = dados.reduce((s,r)=>s+(r.total_excedente||0),0);
+    const idxPerda = totalProd>0?((totalPerda/totalProd)*100).toFixed(1):'0.0';
+    const kpiEl = document.getElementById('graf-kpi-anual');
+    if(kpiEl) kpiEl.innerHTML = `
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Total Produzido</div>
+        <div style="font-family:var(--font-head);font-size:20px;font-weight:800;color:var(--accent)">${fmtNum(totalProd)}</div>
+        <div style="font-size:11px;color:var(--muted)">peças em ${ano}</div>
+      </div>
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Total Perdas</div>
+        <div style="font-family:var(--font-head);font-size:20px;font-weight:800;color:var(--danger)">${fmtNum(totalPerda)}</div>
+        <div style="font-size:11px;color:var(--muted)">${idxPerda}% da produção</div>
+      </div>
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Total Sobras</div>
+        <div style="font-family:var(--font-head);font-size:20px;font-weight:800;color:var(--success)">${fmtNum(totalSobra)}</div>
+        <div style="font-size:11px;color:var(--muted)">retornaram ao estoque</div>
+      </div>
+      <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:4px">Excedente Total</div>
+        <div style="font-family:var(--font-head);font-size:20px;font-weight:800;color:${totalExc>=0?'var(--success)':'var(--danger)'}">${totalExc>=0?'+':''}${fmtNum(Math.round(totalExc))}</div>
+        <div style="font-size:11px;color:var(--muted)">vs meta acumulada</div>
+      </div>
+    `;
+
+    destroyGrafChart('anual');
+    _grafInitPlugin();
+    ensureChartBox('chart-anual', 340);
+    const baseOpts = getChartBaseOptions(colors);
+    grafCharts['anual'] = new Chart(document.getElementById('chart-anual'), {
+      type: 'bar',
+      data: {
+        labels: dados.map(r=>ml(r.mes_referencia)),
+        datasets: [
+          {
+            label: 'Produção', data: dados.map(r=>r.total_producao||0),
+            backgroundColor: getGradientHelper(colors.accentColor, 0.8, 0.2), borderColor: colors.accentColor, borderWidth: 1, borderRadius: 4,
+            yAxisID: 'y'
+          },
+          {
+            label: 'Perda', data: dados.map(r=>r.total_perda||0),
+            backgroundColor: getGradientHelper(colors.dangerColor, 0.8, 0.2), borderColor: colors.dangerColor, borderWidth: 1, borderRadius: 4,
+            yAxisID: 'y'
+          },
+          {
+            label: 'Sobra', data: dados.map(r=>r.total_sobra||0),
+            backgroundColor: getGradientHelper(colors.successColor, 0.8, 0.2), borderColor: colors.successColor, borderWidth: 1, borderRadius: 4,
+            yAxisID: 'y'
+          },
+          {
+            label: 'Média/dia', data: dados.map(r=>Math.round(r.media_diaria||0)),
+            type: 'line', borderColor: colors.infoColor, backgroundColor: 'transparent',
+            borderWidth: 2, pointRadius: 5, pointBackgroundColor: colors.infoColor,
+            tension: 0.4, yAxisID: 'y2'
+          }
+        ]
+      },
+      options: {
+        ...baseOpts,
+        plugins: {
+          ...baseOpts.plugins,
+          tooltip: {
+            ...baseOpts.plugins.tooltip,
+            callbacks: { label: ctx => `${ctx.dataset.label}: ${fmtNum(ctx.raw)}` }
+          }
+        },
+        scales: {
+          x: { ticks: { color: colors.textColor, font:{family:'DM Sans'} }, grid: { color: colors.gridColor } },
+          y: { ticks: { color: colors.textColor, callback: v=>fmtNum(v), font:{family:'DM Sans'} }, grid: { color: colors.gridColor }, title: { display: true, text: 'Peças', color: colors.textColor, font:{family:'DM Sans',weight:'700'} } },
+          y2: { position: 'right', ticks: { color: colors.infoColor, callback: v=>fmtNum(v), font:{family:'DM Sans'} }, grid: { display: false }, title: { display: true, text: 'Média/dia', color: colors.infoColor, font:{family:'DM Sans',weight:'700'} } }
+        }
+      }
+    });
+  } catch(e) { console.error('Erro gráfico anual:', e); }
+}
+
+async function loadGraficos(options = {}) {
+  const mes = new Date().toISOString().slice(0,7);
+  const iniEl = document.getElementById('graf-mes-ini');
+  const fimEl = document.getElementById('graf-mes-fim');
+  const anoAtual = new Date().getFullYear();
+  if(iniEl && !iniEl.value) iniEl.value=`${anoAtual}-01`;
+  if(fimEl && !fimEl.value) fimEl.value = mes;
+  const mesIni = iniEl?.value || `${anoAtual}-01`;
+  const mesFim = fimEl?.value || mes;
+  const mesAtual = mesFim;
+  const periodoQS = `?mes_ini=${encodeURIComponent(mesIni)}&mes_fim=${encodeURIComponent(mesFim)}`;
+
+  const anoSel = document.getElementById('graf-ano');
+  const comp1 = document.getElementById('graf-comp-ano1');
+  const comp2 = document.getElementById('graf-comp-ano2');
+  [anoSel, comp1, comp2].forEach((sel, idx) => {
+    if(sel && sel.options.length===0) {
+      for(let y=anoAtual; y>=anoAtual-4; y--) {
+        const o=document.createElement('option');
+        o.value=y; o.textContent=y;
+        if(idx===2 ? y===anoAtual-1 : y===anoAtual) o.selected=true;
+        sel.appendChild(o);
+      }
+    }
+  });
+
+  _grafInitPlugin();
+  grafLoading(true);
+  ensureChartBox('chart-total-mes', 360);
+  ensureChartBox('chart-evol-producao', 280);
+  ensureChartBox('chart-evol-saldo', 280);
+  ensureChartBox('chart-evolucao-graf', 300);
+  ensureChartBox('chart-comparativo', 300);
+  ensureChartBox('chart-perda-idx', 280);
+  ensureChartBox('chart-dias-meta', 280);
+  ensureChartBox('chart-excedente', 280);
+  ensureChartBox('chart-diario-graf', 340);
+  ensureChartBox('chart-ranking-graf', 340);
+  ensureChartBox('chart-pedidos-status', 280);
+  ensureChartBox('chart-prazo', 280);
+  ensureChartBox('chart-estoque-cat', 280);
+  ensureChartBox('chart-perdas-sobras-detalhado', 280);
+  await Promise.all([loadGraficoAnual(options), loadGraficoComparativo(options), loadGraficoPerdasSobras()]);
+
+  const colors = getChartThemeColors();
+  const gc = colors.gridColor;
+  const tc = colors.textColor;
+  const ml = m => { const[y,mo]=m.split('-');return['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][+mo-1]+'/'+y.slice(2); };
+
+  try {
+    const useCache = options.useCache === true;
+    const cacheKey = `${mesIni}_${mesFim}_${mesAtual}`;
+    let data;
+    if (useCache && _cacheGrafPeriodo === cacheKey && _cacheGrafData) {
+      data = _cacheGrafData;
+    } else {
+      data = await Promise.all([
+        api('/relatorios/resumo-periodo'+periodoQS),
+        api('/relatorios/evolucao-mensal'+periodoQS),
+        api('/relatorios/ranking-historico'+periodoQS),
+        api('/relatorios/producao-diaria/'+mesAtual)
+      ]);
+      _cacheGrafPeriodo = cacheKey;
+      _cacheGrafData = data;
+    }
+    const [resumoPeriodo, evolucao, ranking, diario] = data;
+
+    const meses = [...new Set(evolucao.map(r=>r.mes_referencia))].sort();
+    const ops = [...new Set(evolucao.map(r=>r.colaborador))];
+
+    // ── KPI Cards
+    const totalPeriodo = resumoPeriodo.total_producao || evolucao.reduce((s,r)=>s+(r.total_producao||0),0);
+    const diasPeriodo = resumoPeriodo.dias_registrados || 0;
+    const lancamentosPeriodo = resumoPeriodo.total_lancamentos || evolucao.reduce((s,r)=>s+(r.dias_trabalhados||0),0);
+    const mediaGeral = Math.round(resumoPeriodo.media_diaria_geral || (diasPeriodo ? totalPeriodo / diasPeriodo : 0));
+    const melhorOp = resumoPeriodo.melhor_operador?.colaborador || ranking[0]?.colaborador || '—';
+    const melhorTotal = resumoPeriodo.melhor_operador?.total_producao || 0;
+    const melhorDias = resumoPeriodo.melhor_operador?.dias_trabalhados || 0;
+    const totalPerda = resumoPeriodo.total_perdas || evolucao.reduce((s,r)=>s+(r.total_perdas||0),0);
+    const totalSobra = resumoPeriodo.total_sobras || evolucao.reduce((s,r)=>s+(r.total_sobras||0),0);
+    const saldoExcedente = resumoPeriodo.saldo_excedente || evolucao.reduce((s,r)=>s+((r.excedente_total ?? ((r.excedente_positivo||0)+(r.excedente_negativo||0)))||0),0);
+    const idxPerda = totalPeriodo > 0 ? ((totalPerda/totalPeriodo)*100).toFixed(1) : '0.0';
+    const cardsEl = document.getElementById('graf-kpi-cards');
+    if(cardsEl) cardsEl.innerHTML = `
+      <div class="card" style="border-left:3px solid var(--accent)"><div class="card-label">Total Produzido</div><div class="card-value accent">${fmtNum(totalPeriodo)}</div><div style="font-size:11px;color:var(--muted)">${mesLabel(mesIni)} até ${mesLabel(mesFim)}</div></div>
+      <div class="card" style="border-left:3px solid var(--accent2)"><div class="card-label">Média Diária Geral</div><div class="card-value info">${fmtNum(mediaGeral)}</div><div style="font-size:11px;color:var(--muted)">${fmtNum(diasPeriodo)} dias registrados | ${fmtNum(lancamentosPeriodo)} lançamentos</div></div>
+      <div class="card" style="border-left:3px solid var(--success)"><div class="card-label">Melhor Operador</div><div class="card-value success" style="font-size:18px">${melhorOp}</div><div style="font-size:11px;color:var(--muted)">${fmtNum(Math.round(melhorTotal||0))} peças · ${fmtNum(melhorDias)} dias trabalhados</div></div>
+      <div class="card" style="border-left:3px solid var(--danger)"><div class="card-label">Índice de Perda</div><div class="card-value danger">${idxPerda}%</div><div style="font-size:11px;color:var(--muted)">${fmtNum(totalPerda)} perdas | ${fmtNum(totalSobra)} sobras</div></div>
+      <div class="card" style="border-left:3px solid ${saldoExcedente>=0?'var(--success)':'var(--danger)'}"><div class="card-label">Saldo vs Meta</div><div class="card-value ${saldoExcedente>=0?'success':'danger'}">${saldoExcedente>=0?'+':''}${fmtNum(Math.round(saldoExcedente))}</div><div style="font-size:11px;color:var(--muted)">excedente acumulado</div></div>
+    `;
+
+    // 1. Total por mês (barras empilhadas)
+    destroyGrafChart('total-mes');
+    const baseOptsTotalMes = getChartBaseOptions(colors);
+    grafCharts['total-mes'] = new Chart(document.getElementById('chart-total-mes'), {
+      type:'bar',
+      data:{ labels:meses.map(ml), datasets:ops.map((op,i)=>({
+        label:op, data:meses.map(m=>{const r=evolucao.find(r=>r.colaborador===op&&r.mes_referencia===m);return r?r.total_producao:0;}),
+        backgroundColor:hexToRgba(OP_COLORS[i%OP_COLORS.length], 0.85), borderColor:OP_COLORS[i%OP_COLORS.length], borderWidth:1, borderRadius:4
+      }))},
+      options:{
+        ...baseOptsTotalMes,
+        plugins:{
+          ...baseOptsTotalMes.plugins,
+          tooltip:{
+            ...baseOptsTotalMes.plugins.tooltip,
+            callbacks:{label:ctx=>`${ctx.dataset.label}: ${fmtNum(ctx.raw)} pçs`}
+          }
+        },
+        scales:{
+          x:{stacked:true,ticks:{color:tc,font:{family:'DM Sans'}},grid:{color:gc}},
+          y:{stacked:true,ticks:{color:tc,callback:v=>fmtNum(v),font:{family:'DM Sans'}},grid:{color:gc}}
+        }
+      }
+    });
+
+    // 2. Evolução média diária (linha)
+    destroyGrafChart('evolucao-graf');
+    const baseOptsEvol = getChartBaseOptions(colors);
+    grafCharts['evolucao-graf'] = new Chart(document.getElementById('chart-evolucao-graf'), {
+      type:'line',
+      data:{ labels:meses.map(ml), datasets:ops.map((op,i)=>({
+        label:op, borderColor:OP_COLORS[i%OP_COLORS.length], backgroundColor:'transparent',
+        data:meses.map(m=>{const r=evolucao.find(r=>r.colaborador===op&&r.mes_referencia===m);return r?Math.round(r.media_diaria||0):null;}),
+        tension:0.4, fill:false, pointRadius:4, pointHoverRadius:7, spanGaps:true
+      }))},
+      options:{
+        ...baseOptsEvol,
+        scales:{
+          x:{ticks:{color:tc,font:{family:'DM Sans'}},grid:{color:gc}},
+          y:{ticks:{color:tc,callback:v=>fmtNum(v),font:{family:'DM Sans'}},grid:{color:gc}}
+        }
+      }
+    });
+
+    // 3. Comparativo média × meta (barras agrupadas)
+    destroyGrafChart('comparativo');
+    const baseOptsComp = getChartBaseOptions(colors);
+    grafCharts['comparativo'] = new Chart(document.getElementById('chart-comparativo'), {
+      type:'bar',
+      data:{
+        labels:ops,
+        datasets:[
+          {
+            label:'Média Geral',
+            data:ops.map(op=>{const r=ranking.find(r=>r.colaborador===op);return Math.round(r?.media_geral||0);}),
+            backgroundColor:ops.map((_,i)=>hexToRgba(OP_COLORS[i%OP_COLORS.length], 0.85)),
+            borderColor:ops.map((_,i)=>OP_COLORS[i%OP_COLORS.length]),
+            borderWidth:1,
+            borderRadius:6,
+            datalabels:{display:true,anchor:'center',align:'center',rotation:0,clamp:true,color:_dlColor,textStrokeColor:_dlStroke,textStrokeWidth:3,font:{family:'DM Sans',size:11,weight:'700'},formatter:v=>v>0?fmtNum(v):''}
+          },
+          {label:'Meta média', data:ops.map(op=>{const r=ranking.find(r=>r.colaborador===op);return Math.round(r?.media_meta||0);}), type:'line', borderColor:colors.dangerColor, borderDash:[6,3], borderWidth:2, pointRadius:4, fill:false}
+        ]
+      },
+      options:{
+        ...baseOptsComp,
+        scales:{
+          x:{ticks:{color:tc,font:{family:'DM Sans'}},grid:{color:gc}},
+          y:{ticks:{color:tc,callback:v=>fmtNum(v),font:{family:'DM Sans'}},grid:{color:gc}}
+        }
+      }
+    });
+
+    // 4. Índice de perda por mês (linha)
+    destroyGrafChart('perda-idx');
+    const baseOptsPerda = getChartBaseOptions(colors);
+    grafCharts['perda-idx'] = new Chart(document.getElementById('chart-perda-idx'), {
+      type:'line',
+      data:{ labels:meses.map(ml), datasets:ops.map((op,i)=>{
+        const dados = meses.map(m=>{
+          const r=evolucao.find(r=>r.colaborador===op&&r.mes_referencia===m);
+          if(!r||!r.total_producao) return 0;
+          return +((r.total_perdas||0)/r.total_producao*100).toFixed(2);
+        });
+        return {label:op, borderColor:OP_COLORS[i%OP_COLORS.length], backgroundColor:'transparent', data:dados, tension:0.3, pointRadius:4, spanGaps:true};
+      })},
+      options:{
+        ...baseOptsPerda,
+        scales:{
+          x:{ticks:{color:tc,font:{family:'DM Sans'}},grid:{color:gc}},
+          y:{ticks:{color:tc,callback:v=>v+'%',font:{family:'DM Sans'}},grid:{color:gc},title:{display:true,text:'% perda',color:tc,font:{family:'DM Sans',weight:'700'}}}
+        }
+      }
+    });
+
+    // 5. Dias abaixo da meta (barras agrupadas)
+    destroyGrafChart('dias-meta');
+    const baseOptsDiasMeta = getChartBaseOptions(colors);
+    grafCharts['dias-meta'] = new Chart(document.getElementById('chart-dias-meta'), {
+      type:'bar',
+      data:{ labels:meses.map(ml), datasets:ops.map((op,i)=>({
+        label:op,
+        data:meses.map(m=>{const r=evolucao.find(r=>r.colaborador===op&&r.mes_referencia===m);
+          if(!r) return 0;
+          return r.dias_abaixo_meta || Math.max(0,(r.dias_trabalhados||0)-(r.dias_acima_meta||0));
+        }),
+        backgroundColor:hexToRgba(OP_COLORS[i%OP_COLORS.length], 0.8), borderColor:OP_COLORS[i%OP_COLORS.length], borderWidth:1, borderRadius:4
+      }))},
+      options:{
+        ...baseOptsDiasMeta,
+        scales:{
+          x:{ticks:{color:tc,font:{family:'DM Sans'}},grid:{color:gc}},
+          y:{ticks:{color:tc,font:{family:'DM Sans'}},grid:{color:gc},title:{display:true,text:'dias',color:tc,font:{family:'DM Sans',weight:'700'}}}
+        }
+      }
+    });
+
+    // 6. Excedente acumulado (barras + linha zero)
+    destroyGrafChart('excedente');
+    const baseOptsExcedente = getChartBaseOptions(colors);
+    grafCharts['excedente'] = new Chart(document.getElementById('chart-excedente'), {
+      type:'bar',
+      data:{ labels:meses.map(ml), datasets:ops.map((op,i)=>({
+        label:op,
+        data:meses.map(m=>{const r=evolucao.find(r=>r.colaborador===op&&r.mes_referencia===m);return Math.round((r?.excedente_total ?? ((r?.excedente_positivo||0)+(r?.excedente_negativo||0))) || 0);}),
+        backgroundColor:meses.map(m=>{
+          const r=evolucao.find(r=>r.colaborador===op&&r.mes_referencia===m);
+          const val = (r?.excedente_total ?? ((r?.excedente_positivo||0)+(r?.excedente_negativo||0))) || 0;
+          return val >= 0 ? hexToRgba(colors.successColor, 0.75) : hexToRgba(colors.dangerColor, 0.75);
+        }),
+        borderColor:meses.map(m=>{
+          const r=evolucao.find(r=>r.colaborador===op&&r.mes_referencia===m);
+          const val = (r?.excedente_total ?? ((r?.excedente_positivo||0)+(r?.excedente_negativo||0))) || 0;
+          return val >= 0 ? colors.successColor : colors.dangerColor;
+        }),
+        borderWidth:1, borderRadius:3
+      }))},
+      options:{
+        ...baseOptsExcedente,
+        scales:{
+          x:{ticks:{color:tc,font:{family:'DM Sans'}},grid:{color:gc}},
+          y:{ticks:{color:tc,callback:v=>fmtNum(v),font:{family:'DM Sans'}},grid:{color:gc}}
+        }
+      }
+    });
+
+    // 6b. Evolução mensal — barras simples coloridas + rótulo em cima
+    const prodPorMes = meses.map(m => Math.round(evolucao.filter(r=>r.mes_referencia===m).reduce((s,r)=>s+(r.total_producao||0),0)));
+    const varProdPct = prodPorMes.map((v,i)=> (i===0 || !(prodPorMes[i-1]>0)) ? null : ((v-prodPorMes[i-1])/prodPorMes[i-1]*100));
+
+    // Saldo (excedente) vem dos lançamentos — mesma base de meta usada no resto do sistema.
+    // A meta de cada mês é derivada disso (produção − saldo). Os DOIS gráficos usam esta meta, então batem entre ci.
+    const saldoPorMes = meses.map(m => Math.round(evolucao.filter(r=>r.mes_referencia===m).reduce((s,r)=>s+((r.excedente_total ?? ((r.excedente_positivo||0)+(r.excedente_negativo||0)))||0),0)));
+    const metaPorMes = prodPorMes.map((v,i)=> Math.max(0, v - saldoPorMes[i]));
+    const bateuMeta = saldoPorMes.map(s => s >= 0);
+    const devMeta = prodPorMes.map((v,i)=> (metaPorMes[i]>0) ? (saldoPorMes[i]/metaPorMes[i]*100) : null);
+
+    // Gráfico 1: Produção — verde/vermelho pela meta · em cima: % vs meta
+    destroyGrafChart('evol-producao');
+    grafCharts['evol-producao'] = new Chart(document.getElementById('chart-evol-producao'), {
+      type:'bar',
+      data:{ labels:meses.map(ml), datasets:[
+        { label:'Produção', data:prodPorMes,
+          backgroundColor: (context) => {
+            const ok = bateuMeta[context.dataIndex];
+            const colorHex = ok ? colors.successColor : colors.dangerColor;
+            return getGradientHelper(colorHex, 0.85, 0.25)(context);
+          },
+          borderColor: bateuMeta.map(ok=>ok?colors.successColor:colors.dangerColor), borderWidth:1, borderRadius:6,
+          datalabels:{
+            display: true,
+            anchor: 'end',
+            align: 'end',
+            offset: 4,
+            font: { size: 11, weight: '700', family: 'DM Sans' },
+            color: ctx => {
+              const d = devMeta[ctx.dataIndex];
+              return d == null ? colors.textColor : (d >= 0 ? colors.successColor : colors.dangerColor);
+            },
+            textStrokeColor: _dlStroke,
+            textStrokeWidth: 3,
+            formatter: (v, ctx) => {
+              const d = devMeta[ctx.dataIndex];
+              return d == null ? '' : (d >= 0 ? '+' : '') + Math.abs(d).toFixed(0) + '%';
+            }
+          }
+        }
+      ]},
+      options:{responsive:true,maintainAspectRatio:false, layout:{padding:{top:24, bottom:8}},
+        plugins:{
+          legend:{display:false}, 
+          tooltip:{
+            backgroundColor: colors.tooltipBg,
+            titleColor: colors.tooltipText,
+            bodyColor: colors.tooltipText,
+            borderColor: colors.tooltipBorder,
+            borderWidth: 1,
+            padding: 10,
+            callbacks:{
+              label: ctx => {
+                const idx = ctx.dataIndex;
+                const prod = prodPorMes[idx];
+                const meta = metaPorMes[idx];
+                const dev = devMeta[idx];
+                const varMes = varProdPct[idx];
+                
+                const lines = [
+                  `Produção: ${fmtNum(prod)} pçs`
+                ];
+                if (meta > 0) {
+                  lines.push(`Meta: ${fmtNum(meta)} pçs`);
+                  lines.push(`Vs Meta: ${dev >= 0 ? '+' : ''}${dev.toFixed(1)}%`);
+                }
+                if (varMes !== null) {
+                  lines.push(`Vs Mês Ant.: ${varMes >= 0 ? '+' : ''}${varMes.toFixed(1)}%`);
+                }
+                return lines;
+              }
+            }
+          }
+        },
+        scales:{ x:{ticks:{color:colors.textColor, font:{family:'DM Sans'}},grid:{color:colors.gridColor}}, y:{beginAtZero:true,ticks:{color:colors.textColor,callback:v=>fmtNum(v), font:{family:'DM Sans'}},grid:{color:colors.gridColor}} }}
+    });
+
+    // Gráfico 2: Saldo vs meta — verde se positivo, vermelho se negativo · valor do mês em cima
+    destroyGrafChart('evol-saldo');
+    grafCharts['evol-saldo'] = new Chart(document.getElementById('chart-evol-saldo'), {
+      type:'bar',
+      data:{ labels:meses.map(ml), datasets:[
+        { label:'Saldo vs meta', data:saldoPorMes,
+          backgroundColor: (context) => {
+            const val = context.dataset.data[context.dataIndex];
+            const colorHex = val >= 0 ? colors.successColor : colors.dangerColor;
+            return getGradientHelper(colorHex, 0.85, 0.25)(context);
+          },
+          borderColor: saldoPorMes.map(v=>v>=0?colors.successColor:colors.dangerColor), borderWidth:1, borderRadius:6,
+          datalabels:{ display:true, anchor:'end', align:'end', offset:2, font:{size:11,weight:'700', family:'DM Sans'},
+            color:ctx=>{const v=ctx.dataset.data[ctx.dataIndex]; return v>=0?colors.successColor:colors.dangerColor;},
+            textStrokeColor:_dlStroke, textStrokeWidth:3,
+            formatter:v=>(v>=0?'+':'')+fmtNum(Math.round(v)) } }
+      ]},
+      options:{responsive:true,maintainAspectRatio:false, layout:{padding:{top:24,bottom:8}},
+        plugins:{legend:{display:false}, 
+          tooltip:{
+            backgroundColor:colors.tooltipBg,
+            titleColor:colors.tooltipText,
+            bodyColor:colors.tooltipText,
+            borderColor:colors.tooltipBorder,
+            borderWidth: 1,
+            padding: 10,
+            callbacks:{label:ctx=>'Saldo: '+(ctx.raw>=0?'+':'')+fmtNum(ctx.raw)+' pçs'}
+          }
+        },
+        scales:{ x:{ticks:{color:colors.textColor, font:{family:'DM Sans'}},grid:{color:colors.gridColor}}, y:{ticks:{color:colors.textColor,callback:v=>fmtNum(v), font:{family:'DM Sans'}},grid:{color:colors.gridColor}} }}
+    });
+
+    // 7. Produção diária do mês (stacked!)
+    const dias=[...new Set(diario.map(r=>r.data))].sort();
+    const opsD=[...new Set(diario.map(r=>r.colaborador))];
+    const metaDia=diario[0]?.meta||8000;
+    destroyGrafChart('diario-graf');
+    const baseOptsDiario = getChartBaseOptions(colors);
+    const dsets=opsD.map((op,i)=>({
+      label:op,
+      data:dias.map(d=>{const r=diario.find(r=>r.colaborador===op&&r.data===d);return r?r.producao:0;}),
+      backgroundColor:hexToRgba(OP_COLORS[i%OP_COLORS.length], 0.85),
+      borderColor:OP_COLORS[i%OP_COLORS.length],
+      borderWidth:1,
+      borderRadius:3
+    }));
+    dsets.push({
+      label:`Meta (${fmtNum(metaDia)})`,
+      data:dias.map(()=>metaDia),
+      type:'line',
+      borderColor:colors.dangerColor,
+      borderDash:[6,3],
+      borderWidth:2.5,
+      pointRadius:0,
+      fill:false
+    });
+    grafCharts['diario-graf'] = new Chart(document.getElementById('chart-diario-graf'), {
+      type:'bar',
+      data:{labels:dias.map(fmtDate),datasets:dsets},
+      options:{
+        ...baseOptsDiario,
+        plugins:{
+          ...baseOptsDiario.plugins,
+          tooltip:{
+            ...baseOptsDiario.plugins.tooltip,
+            callbacks:{label:ctx=>`${ctx.dataset.label}: ${fmtNum(ctx.raw)} pçs`}
+          }
+        },
+        scales:{
+          x:{stacked:true,ticks:{color:tc,maxRotation:0,font:{family:'DM Sans'}},grid:{color:gc}},
+          y:{stacked:true,ticks:{color:tc,callback:v=>fmtNum(v),font:{family:'DM Sans'}},grid:{color:gc}}
+        }
+      }
+    });
+
+    // 8. Ranking histórico horizontal
+    destroyGrafChart('ranking-graf');
+    const baseOptsRanking = getChartBaseOptions(colors);
+    grafCharts['ranking-graf'] = new Chart(document.getElementById('chart-ranking-graf'), {
+      type:'bar',
+      data:{
+        labels:ranking.map(r=>r.colaborador),
+        datasets:[{
+          label:'Média (pçs/dia)',
+          data:ranking.map(r=>Math.round(r.media_geral||0)),
+          backgroundColor:ranking.map((_,i)=>hexToRgba(OP_COLORS[i%OP_COLORS.length], 0.85)),
+          borderColor:ranking.map((_,i)=>OP_COLORS[i%OP_COLORS.length]),
+          borderWidth:1,
+          borderRadius:6
+        }]
+      },
+      options:{
+        ...baseOptsRanking,
+        indexAxis:'y',
+        plugins:{
+          ...baseOptsRanking.plugins,
+          legend:{display:false},
+          datalabels:{
+            display:true,
+            anchor:'center',
+            align:'center',
+            rotation:0,
+            clamp:true,
+            color:_dlColor,
+            textStrokeColor:_dlStroke,
+            textStrokeWidth:3,
+            font:{family:'DM Sans',size:12,weight:'700'},
+            formatter:v=>v>0?fmtNum(v):''
+          }
+        },
+        scales:{
+          x:{ticks:{color:tc,callback:v=>fmtNum(v),font:{family:'DM Sans'}},grid:{color:gc}},
+          y:{ticks:{color:tc,font:{family:'DM Sans'}},grid:{color:gc}}
+        }
+      }
+    });
+
+    // Estado "sem dados" — substitui gráficos vazios por mensagem
+    if (evolucao.length === 0) ['chart-total-mes','chart-evol-producao','chart-evol-saldo','chart-evolucao-graf','chart-comparativo','chart-perda-idx','chart-dias-meta','chart-excedente'].forEach(id=>grafBoxMsg(id,'Sem dados de produção no período selecionado'));
+    if (diario.length === 0) grafBoxMsg('chart-diario-graf','Sem lançamentos neste mês');
+    if (ranking.length === 0) grafBoxMsg('chart-ranking-graf','Sem dados para o ranking');
+
+    // 9. Pedidos por status (rosca)
+    try {
+      let pedidos;
+      if (useCache && _cachePedidosData) {
+        pedidos = _cachePedidosData;
+      } else {
+        pedidos = await api('/pedidos/');
+        _cachePedidosData = pedidos;
+      }
+      const sc={aberto:0,em_producao:0,produzido:0,entregue:0};
+      pedidos.forEach(p=>{if(sc[p.status]!==undefined)sc[p.status]++;});
+      const dlRosca={display:ctx=>(ctx.dataset.data[ctx.dataIndex]||0)>0,color:_dlColor,textStrokeColor:_dlStroke,textStrokeWidth:3,font:{weight:'700',size:13},formatter:v=>v>0?v:''};
+      if (pedidos.length === 0) {
+        grafBoxMsg('chart-pedidos-status','Nenhum pedido cadastrado');
+        grafBoxMsg('chart-prazo','Nenhum pedido cadastrado');
+      } else {
+        destroyGrafChart('pedidos-status');
+        const baseOptsPedidos = getChartBaseOptions(colors);
+        grafCharts['pedidos-status'] = new Chart(document.getElementById('chart-pedidos-status'), {
+          type:'doughnut',
+          data:{labels:['Aberto','Em produção','Produzido','Entregue'], datasets:[{data:Object.values(sc), backgroundColor:[hexToRgba(colors.infoColor,0.85), hexToRgba(colors.accentColor,0.85), hexToRgba(colors.successColor,0.85), hexToRgba(colors.textColor,0.6)], borderWidth:0}]},
+          options:{
+            ...baseOptsPedidos,
+            cutout: '75%',
+            plugins:{
+              ...baseOptsPedidos.plugins,
+              legend:{labels:{color:tc,font:{family:'DM Sans'}},position:'bottom'},
+              datalabels:dlRosca
+            }
+          }
+        });
+
+        // 10. Prazo: no prazo vs atrasados
+        const noPrazo=pedidos.filter(p=>p.status!=='entregue'&&Math.round(p.dias_restantes)>=0).length;
+        const atrasados=pedidos.filter(p=>p.status!=='entregue'&&Math.round(p.dias_restantes)<0).length;
+        const entregues=pedidos.filter(p=>p.status==='entregue').length;
+        destroyGrafChart('prazo');
+        const baseOptsPrazo = getChartBaseOptions(colors);
+        grafCharts['prazo'] = new Chart(document.getElementById('chart-prazo'), {
+          type:'doughnut',
+          data:{labels:['No prazo','Atrasados','Entregues'], datasets:[{data:[noPrazo,atrasados,entregues], backgroundColor:[hexToRgba(colors.successColor,0.85), hexToRgba(colors.dangerColor,0.85), hexToRgba(colors.textColor,0.6)], borderWidth:0}]},
+          options:{
+            ...baseOptsPrazo,
+            cutout: '75%',
+            plugins:{
+              ...baseOptsPrazo.plugins,
+              legend:{labels:{color:tc,font:{family:'DM Sans'}},position:'bottom'},
+              datalabels:dlRosca
+            }
+          }
+        });
+      }
+    } catch(e){
+      grafBoxMsg('chart-pedidos-status','Erro ao carregar pedidos',true);
+      grafBoxMsg('chart-prazo','Erro ao carregar pedidos',true);
+    }
+
+    // 11. Estoque por categoria
+    try {
+      let prods;
+      if (useCache && _cacheEstoqueData) {
+        prods = _cacheEstoqueData;
+      } else {
+        prods = await api('/estoque/produtos');
+        _cacheEstoqueData = prods;
+      }
+      const cm={};
+      prods.forEach(p=>{const c=p.categoria_nome||'Sem categoria';if(!cm[c])cm[c]=0;cm[c]+=p.quantidade_atual||0;});
+      if (Object.keys(cm).length === 0) {
+        grafBoxMsg('chart-estoque-cat','Nenhum produto em estoque');
+      } else {
+        destroyGrafChart('estoque-cat');
+        const baseOptsEstoque = getChartBaseOptions(colors);
+        grafCharts['estoque-cat'] = new Chart(document.getElementById('chart-estoque-cat'), {
+          type:'bar',
+          data:{labels:Object.keys(cm), datasets:[{label:'Saldo', data:Object.values(cm), backgroundColor:getGradientHelper(colors.infoColor, 0.85, 0.25), borderColor:colors.infoColor, borderWidth:1, borderRadius:4}]},
+           options:{
+             ...baseOptsEstoque,
+             plugins:{
+               ...baseOptsEstoque.plugins,
+               legend:{display:false},
+               datalabels:{display:true,anchor:'center',align:'center',rotation:0,clamp:true,color:_dlColor,textStrokeColor:_dlStroke,textStrokeWidth:3,font:{family:'DM Sans',size:11,weight:'700'},formatter:v=>v>0?fmtNum(v):''}
+             },
+             scales:{
+               x:{ticks:{color:tc,font:{family:'DM Sans'}},grid:{color:gc}},
+               y:{ticks:{color:tc,callback:v=>fmtNum(v),font:{family:'DM Sans'}},grid:{color:gc}}
+             }
+           }
+        });
+      }
+    } catch(e){
+      grafBoxMsg('chart-estoque-cat','Erro ao carregar estoque',true);
+    }
+
+  } catch(e) { showAlert('Erro ao carregar gráficos: '+e.message,'danger'); }
+  finally { grafLoading(false); }
+}
+
+function exportarGraficoPDF() {
+  const win=window.open('','_blank');
+  const canvases=document.getElementById('graf-content')?.querySelectorAll('canvas')||[];
+  let imgs='';
+  canvases.forEach(c=>{try{imgs+=`<img src="${c.toDataURL()}" style="width:48%;margin:1%">`;}catch(e){}});
+  win.document.write(`<html><head><title>Análise PRATIC</title><style>@page{margin:0}body{font-family:Arial;margin:15mm 15mm 22mm 15mm;counter-reset:page}h2{font-size:16px;color:#333}img{display:inline-block;vertical-align:top}.print-footer{position:fixed;bottom:8mm;left:15mm;right:15mm;border-top:1px solid #ddd;padding-top:6px;display:flex;justify-content:space-between;font-size:10px;color:#777;font-family:Arial,sans-serif;counter-increment:page}.page-number::after{content:counter(page)}</style></head><body>${_getEmpresaHeader('Análise Gráfica')}${imgs}${_getPrintFooter()}</body></html>`);
+  win.document.close();
+  setTimeout(()=>win.print(),800);
+}
+
+// ─── CORREÇÃO ESTOQUE — abas, tabelas e modais compatíveis com index.html ───
+let estoqueTabAtual = 'produtos';
+let _movInicializado = false;
+
+function _setVal(id, val) { const el = document.getElementById(id); if (el) el.value = val ?? ''; }
+function _getVal(id) { return document.getElementById(id)?.value || ''; }
+function _numVal(id) { return +(_getVal(id)) || 0; }
+function _produtoLabel(p) {
+  const codigo = p.codigo ? '[' + p.codigo + '] ' : '';
+  const marca = p.marca ? ' — ' + p.marca : '';
+  return codigo + (p.nome || '') + marca;
+}
+
+
+function _prefixoCategoriaProduto(nomeCategoria) {
+  const base = (nomeCategoria || 'GERAL')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9]/g, '')
+    .toUpperCase();
+  return (base.substring(0, 3) || 'GER').padEnd(3, 'X');
+}
+
+async function gerarCodigoProdutoAutomatico(categoriaId, excluirId = '') {
+  const cats = await api('/estoque/categorias').catch(() => []);
+  const categoria = cats.find(c => String(c.id) === String(categoriaId));
+  const prefixo = _prefixoCategoriaProduto(categoria?.nome);
+  const produtos = await api('/estoque/produtos').catch(() => []);
+  const padrao = new RegExp('^' + prefixo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[^0-9]*(\\d+)', 'i');
+  let maior = 0;
+
+  produtos.forEach(p => {
+    if (String(p.id) === String(excluirId || '')) return;
+    const codigoAtual = String(p.codigo || '').trim().toUpperCase();
+    const m = codigoAtual.match(padrao);
+    if (m) maior = Math.max(maior, parseInt(m[1], 10) || 0);
+  });
+
+  let proximo = maior + 1;
+  let codigo = '';
+  do {
+    codigo = prefixo + '-' + String(proximo).padStart(3, '0');
+    proximo++;
+  } while (produtos.some(p => String(p.id) !== String(excluirId || '') && String(p.codigo || '').trim().toLowerCase() === codigo.toLowerCase()));
+
+  return codigo;
+}
+
+function switchEstoqueTab(tab) {
+  estoqueTabAtual = tab || 'produtos';
+  ['produtos', 'separacao', 'movimentacoes', 'perdas', 'estcliente', 'categorias'].forEach(t => {
+    const pane = document.getElementById('est-tab-' + t);
+    const btn = document.getElementById('tab-' + t);
+    if (pane) pane.style.display = (t === estoqueTabAtual) ? '' : 'none';
+    if (btn) {
+      btn.style.borderColor = (t === estoqueTabAtual) ? 'var(--accent)' : 'var(--border)';
+      btn.style.color = (t === estoqueTabAtual) ? 'var(--accent)' : 'var(--text)';
+    }
+  });
+  if (estoqueTabAtual === 'produtos') loadProdutos();
+  if (estoqueTabAtual === 'separacao') loadSeparacaoProducao();
+  if (estoqueTabAtual === 'movimentacoes') {
+    if (!_movInicializado) { _movInicializado = true; setFiltroPeriodoMovimentacoes('mes'); }
+    else loadMovimentacoes();
+  }
+  if (estoqueTabAtual === 'perdas') loadPerdas();
+  if (estoqueTabAtual === 'categorias') loadCategoriasEstoque();
+  if (estoqueTabAtual === 'estcliente' && typeof ecMontar === 'function') ecMontar('ec-painel-adm');
+}
+
+async function loadEstoque() {
+  await loadCategoriasFiltro();
+  await loadProdutos();
+  await loadAlertasEstoque();
+  switchEstoqueTab(estoqueTabAtual || 'produtos');
+}
+
+let categoriasVinculoMap = {}; // categoria_id -> { vinculada_id, vinculada_nome }
+
+async function loadCategoriasFiltro() {
+  try {
+    const cats = await api('/estoque/categorias');
+    categoriasVinculoMap = {};
+    cats.forEach(c => {
+      categoriasVinculoMap[c.id] = { vinculada_id: c.categoria_vinculada_id || null, vinculada_nome: c.categoria_vinculada_nome || null };
+    });
+    const filtro = document.getElementById('est-filtro-cat');
+    const produtoSel = document.getElementById('est-prod-cat');
+    const filtroVal = filtro?.value || '';
+    if (filtro) {
+      filtro.innerHTML = '<option value="">Todas as categorias</option>' +
+        cats.map(c => `<option value="${c.id}" ${String(c.id)===String(filtroVal)?'selected':''}>${c.nome}</option>`).join('');
+    }
+    if (produtoSel) {
+      const prodVal = produtoSel.value || '';
+      produtoSel.innerHTML = '<option value="">— Sem categoria —</option>' +
+        cats.map(c => `<option value="${c.id}" ${String(c.id)===String(prodVal)?'selected':''}>${c.parent_nome ? c.parent_nome+' \u203a ' : ''}${c.nome}</option>`).join('');
+    }
+    return cats;
+  } catch(e) { return []; }
+}
+
+let _produtosBuscaTimer = null;
+
+function loadProdutosDebounced() {
+  clearTimeout(_produtosBuscaTimer);
+  _produtosBuscaTimer = setTimeout(() => loadProdutos(), 180);
+}
+
+function _normBuscaProduto(v) {
+  return String(v || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function limparFiltrosProdutos() {
+  _setVal('est-busca-produto', '');
+  _setVal('est-filtro-cat', '');
+  _setVal('est-filtro-marca', '');
+  _setVal('est-filtro-status', '');
+  loadProdutos();
+}
+
+function _statusProduto(p) {
+  const qtd = Number(p.quantidade_atual || 0);
+  const min = Number(p.estoque_minimo || 0);
+  if (qtd <= 0) return { texto: 'Falta', classe: 'pill-danger' };
+  if (min > 0 && qtd <= min) return { texto: 'Baixo', classe: 'pill-danger' };
+  return { texto: 'OK', classe: 'pill-success' };
+}
+
+function _filtrarProdutosEstoque(prods) {
+  const busca = _normBuscaProduto(_getVal('est-busca-produto'));
+  const status = _getVal('est-filtro-status');
+  const marca = _getVal('est-filtro-marca');
+
+  return prods.filter(p => {
+    const qtd = Number(p.quantidade_atual || 0);
+    const min = Number(p.estoque_minimo || 0);
+
+    if (busca) {
+      const alvo = _normBuscaProduto([p.codigo, p.nome, p.marca, p.categoria_nome, p.unidade].join(' '));
+      if (!alvo.includes(busca)) return false;
+    }
+
+    if (marca && String(p.marca || '').trim() !== marca) return false;
+
+    if (status === 'falta' && qtd > 0) return false;
+    if (status === 'baixo' && !(min > 0 && qtd > 0 && qtd <= min)) return false;
+    if (status === 'ok' && !(qtd > 0 && (min <= 0 || qtd > min))) return false;
+    if (status === 'positivo' && !(qtd > 0)) return false;
+    if (status === 'sem_minimo' && !(min <= 0)) return false;
+
+    return true;
+  });
+}
+
+function _popularFiltroMarcasEstoque(prods, seletorId) {
+  const sel = document.getElementById(seletorId || 'est-filtro-marca');
+  if (!sel) return;
+  const atual = sel.value || '';
+  const marcas = new Set();
+  (prods || []).forEach(p => { const m = String(p.marca || '').trim(); if (m) marcas.add(m); });
+  const ordenadas = Array.from(marcas).sort((a, b) => a.localeCompare(b));
+  sel.innerHTML = '<option value="">Todas as marcas</option>' +
+    ordenadas.map(m => `<option value="${m.replace(/"/g, '&quot;')}" ${m === atual ? 'selected' : ''}>${m}</option>`).join('');
+}
+
+function _atualizarSugestoesProdutos(prods) {
+  const dl = document.getElementById('est-busca-produtos-list');
+  if (!dl) return;
+  const opts = [];
+  const seen = new Set();
+  prods.forEach(p => {
+    [p.codigo, p.nome, p.marca, p.categoria_nome].forEach(v => {
+      v = String(v || '').trim();
+      if (v && !seen.has(v.toLowerCase())) {
+        seen.add(v.toLowerCase());
+        opts.push(`<option value="${v.replace(/"/g, '&quot;')}"></option>`);
+      }
+    });
+  });
+  dl.innerHTML = opts.slice(0, 120).join('');
+}
+
+async function loadProdutos() {
+  const catId = _getVal('est-filtro-cat');
+  const btnRelCat = document.getElementById('est-btn-relatorio-cat');
+  if (btnRelCat) btnRelCat.style.display = catId ? '' : 'none';
+  let url = '/estoque/produtos';
+  if (catId) url += '?categoria_id=' + encodeURIComponent(catId);
+
+  const todos = await api(url);
+  _atualizarSugestoesProdutos(todos);
+  _popularFiltroMarcasEstoque(todos);
+
+  const prods = _filtrarProdutosEstoque(todos);
+  const tbody = document.getElementById('est-produtos-tbody');
+  const resumo = document.getElementById('est-produtos-resumo');
+  if (!tbody) return;
+
+  const total = todos.length;
+  const exibindo = prods.length;
+  const falta = todos.filter(p => Number(p.quantidade_atual || 0) <= 0).length;
+  const baixo = todos.filter(p => {
+    const qtd = Number(p.quantidade_atual || 0);
+    const min = Number(p.estoque_minimo || 0);
+    return min > 0 && qtd > 0 && qtd <= min;
+  }).length;
+  if (resumo) resumo.innerHTML = `Exibindo <strong>${exibindo}</strong> de <strong>${total}</strong> produto(s) • Falta: <strong>${falta}</strong> • Estoque baixo: <strong>${baixo}</strong>`;
+
+  if (!prods.length) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:28px">Nenhum produto encontrado com os filtros selecionados</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = prods.map(p => {
+    const st = _statusProduto(p);
+    return `
+    <tr>
+      <td><strong>${p.codigo || '—'}</strong></td>
+      <td><strong>${p.nome || ''}</strong></td>
+      <td>${p.categoria_nome || '—'}</td>
+      <td>${p.marca || '—'}</td>
+      <td>${p.unidade || 'unidade'}</td>
+      <td style="font-weight:700;color:${st.classe==='pill-danger'?'var(--danger)':'var(--text)'}">${fmtNum(p.quantidade_atual || 0)}</td>
+      <td>${fmtNum(p.estoque_minimo || 0)}</td>
+      <td><span class="pill ${st.classe}">${st.texto}</span></td>
+      <td class="flex gap-2">
+        ${temPermissao('estoque', 'movimentar') ? `<button class="btn btn-sm btn-secondary" onclick="openModalMovimentacao(${p.id})">📦 Mov.</button>` : ''}
+        ${temPermissao('estoque', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="editProduto(${p.id})">✏️</button>` : ''}
+        ${temPermissao('estoque', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="deletarProduto(${p.id})">✕</button>` : ''}
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function openModalProduto() {
+  await loadCategoriasFiltro();
+  await carregarUnidadesEstoque();
+  _setVal('est-prod-id', '');
+  _setVal('est-prod-codigo', '');
+  _setVal('est-prod-nome', '');
+  _setVal('est-prod-cat', '');
+  _setVal('est-prod-marca', '');
+  renderSelectUnidadesProduto('unidade');
+  _setVal('est-prod-minimo', '0');
+  _setVal('est-prod-custo', '0');
+  _setVal('est-prod-preco', '0');
+  _setVal('est-prod-emb-comp', '0');
+  _setVal('est-prod-emb-larg', '0');
+  _setVal('est-prod-emb-alt', '0');
+  _setVal('est-prod-emb-peso', '0');
+  _setVal('est-prod-emb-qtd', '0');
+  const ti = document.getElementById('modal-prod-est-title'); if (ti) ti.textContent = 'Cadastrar Produto';
+  openModal('modal-produto');
+}
+
+async function editProduto(id) {
+  const p = await api('/estoque/produtos/' + id);
+  await loadCategoriasFiltro();
+  await carregarUnidadesEstoque();
+  _setVal('est-prod-id', p.id);
+  _setVal('est-prod-codigo', p.codigo || '');
+  _setVal('est-prod-nome', p.nome);
+  _setVal('est-prod-cat', p.categoria_id || '');
+  _setVal('est-prod-marca', p.marca || '');
+  renderSelectUnidadesProduto(p.unidade || 'unidade');
+  _setVal('est-prod-minimo', p.estoque_minimo || 0);
+  _setVal('est-prod-custo', p.custo || 0);
+  _setVal('est-prod-preco', p.preco || 0);
+  _setVal('est-prod-emb-comp', p.embalagem_comprimento || 0);
+  _setVal('est-prod-emb-larg', p.embalagem_largura || 0);
+  _setVal('est-prod-emb-alt', p.embalagem_altura || 0);
+  _setVal('est-prod-emb-peso', p.embalagem_peso || 0);
+  _setVal('est-prod-emb-qtd', p.embalagem_qtd || 0);
+  const ti = document.getElementById('modal-prod-est-title'); if (ti) ti.textContent = 'Editar Produto';
+  openModal('modal-produto');
+}
+
+async function salvarProduto() {
+  const id = _getVal('est-prod-id');
+  const categoriaId = _getVal('est-prod-cat') ? +_getVal('est-prod-cat') : null;
+  const body = {
+    codigo: _getVal('est-prod-codigo').trim(),
+    categoria_id: categoriaId,
+    nome: _getVal('est-prod-nome').trim(),
+    marca: _getVal('est-prod-marca').trim(),
+    unidade: _getVal('est-prod-unidade') || 'unidade',
+    estoque_minimo: _numVal('est-prod-minimo'),
+    custo: _numVal('est-prod-custo'),
+    preco: _numVal('est-prod-preco'),
+    embalagem_comprimento: _numVal('est-prod-emb-comp'),
+    embalagem_largura: _numVal('est-prod-emb-larg'),
+    embalagem_altura: _numVal('est-prod-emb-alt'),
+    embalagem_peso: _numVal('est-prod-emb-peso'),
+    embalagem_qtd: _numVal('est-prod-emb-qtd')
+  };
+  if (!body.nome) { showAlert('Informe o nome do produto', 'danger'); return; }
+  try {
+    if (!body.codigo) {
+      body.codigo = await gerarCodigoProdutoAutomatico(categoriaId, id);
+      _setVal('est-prod-codigo', body.codigo);
+    }
+    if (id) await api('/estoque/produtos/' + id, 'PUT', body);
+    else await api('/estoque/produtos', 'POST', body);
+    closeModal('modal-produto');
+    showAlert('Produto salvo!');
+    await loadCategoriasFiltro();
+    await loadProdutos();
+    await loadAlertasEstoque();
+  } catch(e) { showAlert(e.message, 'danger'); }
+}
+
+async function salvarProdutoEstoque() { return salvarProduto(); }
+
+async function deletarProduto(id) {
+  if (!confirm('Desativar este produto?')) return;
+  try {
+    await api('/estoque/produtos/' + id, 'DELETE');
+    showAlert('Produto removido da lista ativa.');
+    await loadProdutos();
+    await loadAlertasEstoque();
+  } catch(e) { showAlert(e.message, 'danger'); }
+}
+
+async function _popularProdutosSelect(selectId, selectedId) {
+  const prods = await api('/estoque/produtos');
+  const sel = document.getElementById(selectId);
+  if (!sel) return prods;
+  sel.innerHTML = prods.map(p => `<option value="${p.id}" ${String(p.id)===String(selectedId||'')?'selected':''}>${_produtoLabel(p)} (${fmtNum(p.quantidade_atual || 0)} ${p.unidade || 'unidade'})</option>`).join('');
+  return prods;
+}
+
+async function openModalMovimentacao(prodId) {
+  await _popularProdutosSelect('est-mov-produto', prodId);
+  _setVal('est-mov-tipo', 'entrada');
+  _setVal('est-mov-data', new Date().toISOString().slice(0,10));
+  _setVal('est-mov-quantidade', '');
+  _setVal('est-mov-responsavel', '');
+  _setVal('est-mov-fornecedor', '');
+  _setVal('est-mov-custo', '');
+  _setVal('est-mov-nf', '');
+  _setVal('est-mov-nf-chave', '');
+  const _erroChave = document.getElementById('est-mov-nf-chave-erro');
+  if (_erroChave) _erroChave.style.display = 'none';
+  _setVal('est-mov-motivo', '');
+  toggleMovTipo();
+  openModal('modal-movimentacao');
+}
+
+function toggleMovTipo() {
+  const tipo = _getVal('est-mov-tipo');
+  const fornecedor = document.getElementById('est-mov-fornecedor-group');
+  const custo = document.getElementById('est-mov-custo-group');
+  const nfCaixa = document.getElementById('est-mov-nf-destaque');
+  const show = tipo === 'entrada';
+  if (fornecedor) fornecedor.style.display = show ? '' : 'none';
+  if (custo) custo.style.display = show ? '' : 'none';
+  if (nfCaixa) nfCaixa.style.display = show ? 'grid' : 'none';
+  onDigitaNumeroNF();
+}
+
+// Mostra o campo da chave só depois que o número da NF for preenchido; some e
+// limpa a chave de novo se o número for apagado, pra não deixar lixo salvo.
+function onDigitaNumeroNF() {
+  const tipo = _getVal('est-mov-tipo');
+  const numero = _getVal('est-mov-nf').trim();
+  const grupoChave = document.getElementById('est-mov-nf-chave-group');
+  if (!grupoChave) return;
+  const mostrar = tipo === 'entrada' && numero.length > 0;
+  grupoChave.style.display = mostrar ? '' : 'none';
+  if (!mostrar) {
+    _setVal('est-mov-nf-chave', '');
+    const erro = document.getElementById('est-mov-nf-chave-erro');
+    if (erro) erro.style.display = 'none';
+  }
+}
+window.onDigitaNumeroNF = onDigitaNumeroNF;
+
+// Valida a chave da NF-e (44 dígitos). Retorna true se estiver ok (ou vazia —
+// campo opcional). Mostra o aviso embaixo do campo quando inválida.
+function validarChaveNF() {
+  const el = document.getElementById('est-mov-nf-chave');
+  const erro = document.getElementById('est-mov-nf-chave-erro');
+  if (!el) return true;
+  const valor = el.value.replace(/\D/g, '');
+  const valida = valor.length === 0 || valor.length === 44;
+  if (erro) erro.style.display = valida ? 'none' : '';
+  return valida;
+}
+window.validarChaveNF = validarChaveNF;
+
+async function salvarMovimentacao() {
+  if (!validarChaveNF()) { showAlert('A chave da nota fiscal precisa ter 44 dígitos', 'danger'); return; }
+  const body = {
+    produto_id: +_getVal('est-mov-produto'),
+    tipo: _getVal('est-mov-tipo') || 'entrada',
+    quantidade: _numVal('est-mov-quantidade'),
+    responsavel: _getVal('est-mov-responsavel').trim(),
+    fornecedor: _getVal('est-mov-fornecedor').trim(),
+    custo_unitario: _numVal('est-mov-custo'),
+    nota_fiscal: _getVal('est-mov-nf').trim(),
+    nota_fiscal_chave: _getVal('est-mov-nf-chave').trim(),
+    observacao: _getVal('est-mov-motivo').trim(),
+    motivo: _getVal('est-mov-motivo').trim(),
+    data: _getVal('est-mov-data') || new Date().toISOString().slice(0,10)
+  };
+  if (!body.produto_id) { showAlert('Selecione o produto', 'danger'); return; }
+  if (!body.quantidade || body.quantidade <= 0) { showAlert('Informe a quantidade', 'danger'); return; }
+  try {
+    await api('/estoque/movimentacoes', 'POST', body);
+    closeModal('modal-movimentacao');
+    showAlert('Movimentação registrada!');
+    await loadProdutos();
+    await loadMovimentacoes();
+    await loadAlertasEstoque();
+  } catch(e) { showAlert(e.message, 'danger'); }
+}
+
+async function onMudaCategoriaMov() {
+  const categoriaId = _getVal('est-filtro-mov-categoria');
+  const selProd = document.getElementById('est-filtro-mov-produto');
+  _setVal('est-filtro-mov-produto', '');
+  selProd.innerHTML = '<option value="">Todos os produtos</option>';
+  if (categoriaId) {
+    try {
+      const produtos = await api('/estoque/produtos?categoria_id=' + encodeURIComponent(categoriaId));
+      produtos
+        .slice()
+        .sort((a, b) => a.nome.localeCompare(b.nome))
+        .forEach(p => {
+          const o = document.createElement('option');
+          o.value = p.id; o.textContent = `${p.codigo ? p.codigo + ' — ' : ''}${p.nome}`;
+          selProd.appendChild(o);
+        });
+    } catch (e) {}
+  }
+  loadMovimentacoes();
+}
+
+async function loadMovimentacoes() {
+  const tipo = _getVal('est-filtro-tipo');
+  const categoriaId = _getVal('est-filtro-mov-categoria');
+  const produtoId = _getVal('est-filtro-mov-produto');
+  const marca = _getVal('est-filtro-mov-marca');
+  const notaFiscal = _getVal('est-filtro-mov-nf').trim();
+  const dataInicio = _getVal('est-filtro-data-ini');
+  const dataFim = _getVal('est-filtro-data-fim');
+
+  const selCat = document.getElementById('est-filtro-mov-categoria');
+  if (selCat && selCat.options.length <= 1) {
+    try {
+      const cats = await api('/estoque/categorias');
+      cats.forEach(c => {
+        const o = document.createElement('option');
+        o.value = c.id; o.textContent = c.nome;
+        selCat.appendChild(o);
+      });
+      selCat.value = categoriaId || '';
+    } catch (e) {}
+  }
+
+  const selMarca = document.getElementById('est-filtro-mov-marca');
+  if (selMarca && selMarca.options.length <= 1) {
+    try {
+      const todosProdutos = (produtosEstoque && produtosEstoque.length) ? produtosEstoque : await api('/estoque/produtos');
+      _popularFiltroMarcasEstoque(todosProdutos, 'est-filtro-mov-marca');
+      selMarca.value = marca || '';
+    } catch (e) {}
+  }
+
+  let url = '/estoque/movimentacoes';
+  const params = [];
+  if (tipo) params.push('tipo=' + encodeURIComponent(tipo));
+  if (categoriaId) params.push('categoria_id=' + encodeURIComponent(categoriaId));
+  if (produtoId) params.push('produto_id=' + encodeURIComponent(produtoId));
+  if (marca) params.push('marca=' + encodeURIComponent(marca));
+  if (notaFiscal) params.push('nota_fiscal=' + encodeURIComponent(notaFiscal));
+  if (dataInicio) params.push('data_inicio=' + encodeURIComponent(dataInicio));
+  if (dataFim) params.push('data_fim=' + encodeURIComponent(dataFim));
+  
+  if (params.length) {
+    url += '?' + params.join('&');
+  }
+  
+  const movs = await api(url);
+  const tbody = document.getElementById('est-movs-tbody');
+  if (!tbody) return;
+  if (!movs.length) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:28px">Nenhuma movimentação registrada</td></tr>';
+    return;
+  }
+  const labels = {entrada:'Entrada', saida:'Saída', perda:'Perda', ajuste:'Ajuste', sobra:'Sobra'};
+  tbody.innerHTML = movs.map(m => `
+    <tr>
+      <td>${fmtDate(m.data)}</td>
+      <td>${m.produto_codigo || '—'}</td>
+      <td>${m.produto_nome || '—'}</td>
+      <td>
+        <span class="pill">${labels[m.tipo] || m.tipo}</span>
+        ${m.nota_fiscal ? `<small style="display:block;color:var(--muted);margin-top:2px">NF: ${m.nota_fiscal}</small>` : ''}
+        ${m.nota_fiscal_chave ? `<small style="display:block;color:var(--muted);margin-top:2px" title="${m.nota_fiscal_chave}">Chave: ${m.nota_fiscal_chave.slice(0,8)}...${m.nota_fiscal_chave.slice(-6)}</small>` : ''}
+      </td>
+      <td>${fmtNum(m.quantidade || 0)} ${m.unidade || ''}</td>
+      <td>${fmtNum(m.saldo_anterior || 0)}</td>
+      <td>${fmtNum(m.saldo_posterior || 0)}</td>
+      <td>${m.responsavel || '—'}</td>
+      <td>${temPermissao('estoque', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="deletarMovimentacao(${m.id})">✕</button>` : ''}</td>
+    </tr>`).join('');
+}
+
+let _movNfBuscaTimer = null;
+function onBuscaMovNF() {
+  clearTimeout(_movNfBuscaTimer);
+  _movNfBuscaTimer = setTimeout(loadMovimentacoes, 350);
+}
+window.onBuscaMovNF = onBuscaMovNF;
+
+function onMudaPeriodoMov() {
+  const periodo = _getVal('est-filtro-mov-periodo');
+  const wrap = document.getElementById('est-filtro-mov-datas-wrap');
+  if (wrap) wrap.style.display = (periodo === 'personalizado') ? 'flex' : 'none';
+  setFiltroPeriodoMovimentacoes(periodo);
+}
+
+function setFiltroPeriodoMovimentacoes(periodo) {
+  const hoje = new Date();
+  const formatLocal = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  let ini = '';
+  let fim = '';
+  
+  if (periodo === 'hoje') {
+    const formatted = formatLocal(hoje);
+    ini = formatted;
+    fim = formatted;
+  } else if (periodo === 'ontem') {
+    const ontem = new Date();
+    ontem.setDate(hoje.getDate() - 1);
+    const formatted = formatLocal(ontem);
+    ini = formatted;
+    fim = formatted;
+  } else if (periodo === 'mes') {
+    const y = hoje.getFullYear();
+    const m = hoje.getMonth();
+    ini = formatLocal(new Date(y, m, 1));
+    fim = formatLocal(hoje);
+  } else if (periodo === 'personalizado') {
+    // Mantém as datas já preenchidas nos campos De/Até, se houver
+    ini = _getVal('est-filtro-data-ini');
+    fim = _getVal('est-filtro-data-fim');
+  }
+  
+  if (periodo === 'limpar') {
+    _setVal('est-filtro-tipo', '');
+    _setVal('est-filtro-mov-categoria', '');
+    _setVal('est-filtro-mov-produto', '');
+    _setVal('est-filtro-mov-periodo', 'mes');
+    const wrap = document.getElementById('est-filtro-mov-datas-wrap');
+    if (wrap) wrap.style.display = 'none';
+    const selProd = document.getElementById('est-filtro-mov-produto');
+    if (selProd) selProd.innerHTML = '<option value="">Todos os produtos</option>';
+    const y = hoje.getFullYear();
+    const m = hoje.getMonth();
+    ini = formatLocal(new Date(y, m, 1));
+    fim = formatLocal(hoje);
+  }
+
+  _setVal('est-filtro-data-ini', ini);
+  _setVal('est-filtro-data-fim', fim);
+  loadMovimentacoes();
+}
+
+function gerarRelatorioMovimentacoes() {
+  const tipo = _getVal('est-filtro-tipo');
+  const dataInicio = _getVal('est-filtro-data-ini');
+  const dataFim = _getVal('est-filtro-data-fim');
+  
+  const tipoLabel = {
+    '': 'Todos os tipos',
+    'entrada': 'Entradas',
+    'saida': 'Saídas',
+    'perda': 'Perdas',
+    'ajuste': 'Ajustes',
+    'sobra': 'Sobras'
+  }[tipo || ''] || 'Todos os tipos';
+  
+  let periodoStr = 'Todo o período';
+  if (dataInicio && dataFim) {
+    periodoStr = `Período: ${fmtDate(dataInicio)} até ${fmtDate(dataFim)}`;
+  } else if (dataInicio) {
+    periodoStr = `A partir de: ${fmtDate(dataInicio)}`;
+  } else if (dataFim) {
+    periodoStr = `Até: ${fmtDate(dataFim)}`;
+  }
+  
+  const tituloReport = `Relatório de Movimentações (${tipoLabel})`;
+  const tbody = document.getElementById('est-movs-tbody');
+  if (!tbody || tbody.rows.length === 0 || tbody.rows[0].cells[0].textContent.includes('Nenhuma movimentação')) {
+    showAlert('Não há dados para gerar o relatório com os filtros atuais.', 'warning');
+    return;
+  }
+  
+  let rowsHtml = '';
+  Array.from(tbody.rows).forEach(row => {
+    let cellsHtml = '';
+    const cells = Array.from(row.cells);
+    for (let i = 0; i < cells.length - 1; i++) {
+      cellsHtml += `<td style="padding:7px;border-bottom:1px solid #ddd;font-family:Arial,sans-serif;">${cells[i].innerHTML}</td>`;
+    }
+    rowsHtml += `<tr>${cellsHtml}</tr>`;
+  });
+
+  const tableHtml = `
+    <div style="font-family:Arial,sans-serif;margin-bottom:12px;font-size:13px;color:#333;"><strong>${periodoStr}</strong></div>
+    <table style="width:100%;border-collapse:collapse;margin-top:10px;">
+      <thead>
+        <tr style="background:#333;color:#fff;">
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Data</th>
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Código/ID</th>
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Produto</th>
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Tipo</th>
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Quantidade</th>
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Saldo Anterior</th>
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Saldo Atual</th>
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Responsável</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rowsHtml}
+      </tbody>
+    </table>
+  `;
+
+  const win = window.open('', '_blank');
+  win.document.write(`<html><head><title>${tituloReport}</title><style>@page{margin:0}body{font-family:Arial,sans-serif;margin:15mm 15mm 22mm 15mm;font-size:12px;counter-reset:page}.print-footer{position:fixed;bottom:8mm;left:15mm;right:15mm;border-top:1px solid #ddd;padding-top:6px;display:flex;justify-content:space-between;font-size:10px;color:#777;font-family:Arial,sans-serif;counter-increment:page}.page-number::after{content:counter(page)}span.pill{background:#e2e8f0;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:bold;color:#475569;text-transform:uppercase;}</style></head><body>${_getEmpresaHeader(tituloReport)}${tableHtml}${_getPrintFooter()}</body></html>`);
+  win.document.close();
+  setTimeout(() => win.print(), 500);
+}
+
+async function deletarMovimentacao(id) {
+  if (!confirm('Remover esta movimentação? O saldo atual não será recalculado automaticamente.')) return;
+  try {
+    await api('/estoque/movimentacoes/' + id, 'DELETE');
+    showAlert('Movimentação removida.');
+    await loadMovimentacoes();
+  } catch(e) { showAlert(e.message, 'danger'); }
+}
+
+async function openModalPerda() {
+  await _popularProdutosSelect('est-perda-produto');
+  _setVal('est-perda-tipo', 'quebra');
+  _setVal('est-perda-data', new Date().toISOString().slice(0,10));
+  _setVal('est-perda-quantidade', '');
+  _setVal('est-perda-responsavel', '');
+  _setVal('est-perda-obs', '');
+  openModal('modal-perda');
+}
+
+async function salvarPerda() {
+  const body = {
+    produto_id: +_getVal('est-perda-produto'),
+    tipo: 'perda',
+    tipo_perda: _getVal('est-perda-tipo'),
+    quantidade: _numVal('est-perda-quantidade'),
+    responsavel: _getVal('est-perda-responsavel').trim(),
+    observacao: _getVal('est-perda-obs').trim(),
+    data: _getVal('est-perda-data') || new Date().toISOString().slice(0,10)
+  };
+  if (!body.produto_id) { showAlert('Selecione o produto', 'danger'); return; }
+  if (!body.quantidade || body.quantidade <= 0) { showAlert('Informe a quantidade', 'danger'); return; }
+  try {
+    await api('/estoque/movimentacoes', 'POST', body);
+    closeModal('modal-perda');
+    showAlert('Perda registrada!');
+    await loadPerdas();
+    await loadProdutos();
+    await loadAlertasEstoque();
+  } catch(e) { showAlert(e.message, 'danger'); }
+}
+
+async function loadPerdas() {
+  const mes = _getVal('est-perdas-mes');
+  let url = '/estoque/relatorio-perdas';
+  if (mes) url += '?mes=' + encodeURIComponent(mes);
+  const perdas = await api(url);
+  const tbody = document.getElementById('est-perdas-tbody');
+  if (!tbody) return;
+  if (!perdas.length) {
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:28px">Nenhuma perda registrada</td></tr>';
+    return;
+  }
+  tbody.innerHTML = perdas.map(p => `
+    <tr>
+      <td>${fmtDate(p.data)}</td>
+      <td>${p.produto_codigo || '—'}</td>
+      <td>${p.produto || '—'} ${p.unidade ? '('+p.unidade+')' : ''}</td>
+      <td>${p.categoria || '—'}</td>
+      <td>${p.tipo_perda || '—'}</td>
+      <td>${fmtNum(p.quantidade || 0)}</td>
+      <td>${p.responsavel || '—'}</td>
+      <td>${p.observacao || '—'}</td>
+    </tr>`).join('');
+}
+
+async function loadCategoriasEstoque() {
+  const cats = await api('/estoque/categorias');
+  const tbody = document.getElementById('est-cat-tbody');
+  if (!tbody) return;
+  if (!cats.length) {
+    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:var(--muted);padding:28px">Nenhuma categoria cadastrada</td></tr>';
+    return;
+  }
+  tbody.innerHTML = cats.map(c => `
+    <tr>
+      <td>${c.parent_nome ? '<span style="color:var(--muted);font-weight:600">'+c.parent_nome+' \u203a </span>':''}<strong>${c.nome || ''}</strong> ${c.tipo === 'revenda' ? '<span style="margin-left:8px;font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(59,130,246,.15);color:#3b82f6">🛒 Revenda</span>' : '<span style="margin-left:8px;font-size:11px;padding:2px 8px;border-radius:10px;background:var(--surface2);color:var(--muted)">Produção</span>'} ${c.categoria_vinculada_nome ? '<span style="margin-left:8px;font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(234,179,8,.15);color:#eab308">🔗 Exige '+c.categoria_vinculada_nome+'</span>' : ''}</td>
+      <td>${c.descricao || '—'}</td>
+      <td class="flex gap-2">
+        ${temPermissao('estoque', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="editCategoria(${c.id})">✏️</button>` : ''}
+        ${temPermissao('estoque', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="deletarCategoria(${c.id})">✕</button>` : ''}
+      </td>
+    </tr>`).join('');
+}
+
+function _ensureCatTipoField() {
+  if (document.getElementById('est-cat-tipo')) return;
+  const grid = document.querySelector('#modal-categoria .form-grid');
+  if (!grid) return;
+  const g = document.createElement('div');
+  g.className = 'form-group';
+  g.style.gridColumn = '1/-1';
+  g.innerHTML = '<label>Tipo da categoria</label>'
+    + '<select id="est-cat-tipo">'
+    + '<option value="producao">Produção (fabricado pela empresa)</option>'
+    + '<option value="revenda">Revenda (não produzido — comprado pronto)</option>'
+    + '</select>';
+  grid.appendChild(g);
+}
+
+function _ensureCatPaiField() {
+  if (document.getElementById('est-cat-pai')) return;
+  const grid = document.querySelector('#modal-categoria .form-grid');
+  if (!grid) return;
+  const g = document.createElement('div');
+  g.className = 'form-group';
+  g.style.gridColumn = '1/-1';
+  g.innerHTML = '<label>Categoria pai (opcional)</label>'
+    + '<select id="est-cat-pai"><option value="">\u2014 Nenhuma (categoria principal) \u2014</option></select>'
+    + '<div style="font-size:11px;color:var(--muted);margin-top:4px">Em branco = categoria principal. Escolha um pai para criar uma subcategoria.</div>';
+  grid.appendChild(g);
+}
+function _popularCatPai(cats, excluirId) {
+  const sel = document.getElementById('est-cat-pai');
+  if (!sel) return;
+  const opts = (cats||[]).filter(c => Number(c.id) !== Number(excluirId))
+    .map(c => '<option value="'+c.id+'">'+(c.parent_nome ? c.parent_nome+' \u203a ' : '')+c.nome+'</option>').join('');
+  sel.innerHTML = '<option value="">\u2014 Nenhuma (categoria principal) \u2014</option>' + opts;
+}
+function _ensureCatVinculoField() {
+  if (document.getElementById('est-cat-vinculo-chk')) return;
+  const grid = document.querySelector('#modal-categoria .form-grid');
+  if (!grid) return;
+  const g = document.createElement('div');
+  g.className = 'form-group';
+  g.style.gridColumn = '1/-1';
+  g.innerHTML = '<label style="display:flex;align-items:center;gap:8px;font-weight:400">'
+    + '<input type="checkbox" id="est-cat-vinculo-chk" onchange="toggleCatVinculoSelect()" style="width:16px;height:16px">'
+    + 'Produtos desta categoria exigem outro item na venda</label>'
+    + '<div id="est-cat-vinculo-wrap" style="display:none;margin-top:8px">'
+    + '<label>Categoria exigida</label>'
+    + '<select id="est-cat-vinculo-id"></select>'
+    + '</div>';
+  grid.appendChild(g);
+}
+function toggleCatVinculoSelect() {
+  const chk = document.getElementById('est-cat-vinculo-chk');
+  const wrap = document.getElementById('est-cat-vinculo-wrap');
+  if (wrap) wrap.style.display = (chk && chk.checked) ? '' : 'none';
+}
+function _popularCatVinculo(cats, excluirId) {
+  const sel = document.getElementById('est-cat-vinculo-id');
+  if (!sel) return;
+  const opts = (cats || []).filter(c => Number(c.id) !== Number(excluirId))
+    .map(c => '<option value="' + c.id + '">' + (c.parent_nome ? c.parent_nome + ' \u203a ' : '') + c.nome + '</option>').join('');
+  sel.innerHTML = opts;
+}
+
+async function openModalCategoria() {
+  _setVal('est-cat-id', '');
+  _setVal('est-cat-nome', '');
+  _setVal('est-cat-desc', '');
+  _ensureCatTipoField();
+  _ensureCatPaiField();
+  _ensureCatVinculoField();
+  _setVal('est-cat-tipo', 'producao');
+  const _catsNova = await api('/estoque/categorias').catch(()=>[]);
+  _popularCatPai(_catsNova, '');
+  _setVal('est-cat-pai', '');
+  _popularCatVinculo(_catsNova, '');
+  const _chkNovo = document.getElementById('est-cat-vinculo-chk');
+  if (_chkNovo) _chkNovo.checked = false;
+  toggleCatVinculoSelect();
+  const ti = document.getElementById('modal-cat-title'); if (ti) ti.textContent = 'Nova Categoria';
+  openModal('modal-categoria');
+}
+
+async function editCategoria(id) {
+  const cats = await api('/estoque/categorias');
+  const c = cats.find(x => Number(x.id) === Number(id));
+  if (!c) return;
+  _setVal('est-cat-id', c.id);
+  _setVal('est-cat-nome', c.nome || '');
+  _setVal('est-cat-desc', c.descricao || '');
+  _ensureCatTipoField();
+  _ensureCatPaiField();
+  _ensureCatVinculoField();
+  _setVal('est-cat-tipo', c.tipo || 'producao');
+  _popularCatPai(cats, c.id);
+  _setVal('est-cat-pai', c.parent_id || '');
+  _popularCatVinculo(cats, c.id);
+  const _chkEdit = document.getElementById('est-cat-vinculo-chk');
+  if (_chkEdit) _chkEdit.checked = !!c.categoria_vinculada_id;
+  if (c.categoria_vinculada_id) _setVal('est-cat-vinculo-id', c.categoria_vinculada_id);
+  toggleCatVinculoSelect();
+  const ti = document.getElementById('modal-cat-title'); if (ti) ti.textContent = 'Editar Categoria';
+  openModal('modal-categoria');
+}
+
+async function salvarCategoria() {
+  const id = _getVal('est-cat-id');
+  const _pai = _getVal('est-cat-pai');
+  const _vinculoAtivo = document.getElementById('est-cat-vinculo-chk')?.checked;
+  const _vinculoId = _vinculoAtivo ? _getVal('est-cat-vinculo-id') : '';
+  const body = {
+    nome: _getVal('est-cat-nome').trim(),
+    descricao: _getVal('est-cat-desc').trim(),
+    tipo: _getVal('est-cat-tipo') || 'producao',
+    parent_id: _pai ? Number(_pai) : null,
+    categoria_vinculada_id: _vinculoId ? Number(_vinculoId) : null
+  };
+  if (!body.nome) { showAlert('Informe o nome da categoria', 'danger'); return; }
+  try {
+    if (id) await api('/estoque/categorias/' + id, 'PUT', body);
+    else await api('/estoque/categorias', 'POST', body);
+    closeModal('modal-categoria');
+    showAlert('Categoria salva!');
+    await loadCategoriasFiltro();
+    await loadCategoriasEstoque();
+  } catch(e) { showAlert(e.message, 'danger'); }
+}
+
+async function deletarCategoria(id) {
+  if (!confirm('Remover esta categoria? Produtos sem categoria continuarão cadastrados.')) return;
+  try {
+    await api('/estoque/categorias/' + id, 'DELETE');
+    showAlert('Categoria removida.');
+    await loadCategoriasFiltro();
+    await loadCategoriasEstoque();
+    await loadProdutos();
+  } catch(e) { showAlert(e.message, 'danger'); }
+}
+
+// ─── CORREÇÃO GERAL DE BOTÕES — backup, restauração, CSV e máscaras ───
+// Estas funções estavam sendo chamadas pelo index.html, mas não existiam no app.js.
+
+function _showLocalAlert(id, msg, type = 'success') {
+  const el = document.getElementById(id);
+  const cls = type === 'danger' ? 'alert-danger' : 'alert-success';
+  if (el) el.innerHTML = `<div class="alert ${cls}">${msg}</div>`;
+  else showAlert(msg, type);
+}
+
+function formatCEP(el) {
+  if (!el) return;
+  let v = String(el.value || '').replace(/\D/g, '').slice(0, 8);
+  if (v.length > 5) v = v.slice(0, 5) + '-' + v.slice(5);
+  el.value = v;
+}
+
+function formatDocCli(el) {
+  if (!el) return;
+  const raw = String(el.value || '').replace(/\D/g, '');
+  let v = raw.slice(0, 14);
+  const tipo = document.getElementById('doc-tipo-cli');
+  if (v.length <= 11) {
+    if (v.length > 9) v = v.replace(/(\d{3})(\d{3})(\d{3})(\d{0,2})/, '$1.$2.$3-$4');
+    else if (v.length > 6) v = v.replace(/(\d{3})(\d{3})(\d{0,3})/, '$1.$2.$3');
+    else if (v.length > 3) v = v.replace(/(\d{3})(\d{0,3})/, '$1.$2');
+    if (tipo) tipo.textContent = 'CPF';
+  } else {
+    v = v.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{0,2})/, '$1.$2.$3/$4-$5');
+    if (tipo) tipo.textContent = 'CNPJ';
+  }
+  el.value = v;
+
+  // Busca automática de CNPJ ao atingir 14 dígitos
+  if (raw.length === 14) {
+    if (el.dataset.lastSearched !== raw) {
+      el.dataset.lastSearched = raw;
+      buscarCNPJ();
+    }
+  } else {
+    delete el.dataset.lastSearched;
+  }
+}
+
+async function buscarCEPEmpresa() {
+  return buscarCEPEmp();
+}
+
+async function fazerBackup() {
+  try {
+    const r = await fetch(API + '/backup');
+    if (!r.ok) throw new Error('Não foi possível gerar o backup');
+    const blob = await r.blob();
+    let filename = 'pratic_backup.db';
+    const disp = r.headers.get('content-disposition') || '';
+    const match = disp.match(/filename="?([^";]+)"?/i);
+    if (match) filename = match[1];
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    _showLocalAlert('backup-alert', 'Backup gerado com sucesso.');
+  } catch (e) {
+    _showLocalAlert('backup-alert', e.message || 'Erro ao fazer backup', 'danger');
+  }
+}
+
+function handleRestoreDrop(event) {
+  event.preventDefault();
+  event.currentTarget.style.borderColor = 'var(--border)';
+  const file = event.dataTransfer?.files?.[0];
+  confirmarRestore(file);
+}
+
+async function confirmarRestore(file) {
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith('.db')) {
+    _showLocalAlert('backup-alert', 'Selecione um arquivo .db válido.', 'danger');
+    return;
+  }
+  if (!confirm('Restaurar este backup? Os dados atuais serão substituídos.')) return;
+  const form = new FormData();
+  form.append('file', file);
+  try {
+    const r = await fetch(API + '/restore', { method: 'POST', body: form });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || 'Erro ao restaurar backup');
+    _showLocalAlert('backup-alert', (d.mensagem || 'Backup restaurado.') + ' Reinicie o servidor.');
+  } catch (e) {
+    _showLocalAlert('backup-alert', e.message || 'Erro ao restaurar backup', 'danger');
+  }
+}
+
+let csvProdutosPreview = [];
+
+function openModalImportCSV() {
+  cancelarCSV(false);
+  openModal('modal-import-csv');
+}
+
+function cancelarCSV(fechar = false) {
+  csvProdutosPreview = [];
+  const input = document.getElementById('csv-file-input');
+  if (input) input.value = '';
+  const prev = document.getElementById('csv-preview');
+  if (prev) prev.style.display = 'none';
+  const info = document.getElementById('csv-info');
+  if (info) info.textContent = '';
+  const thead = document.getElementById('csv-thead');
+  const tbody = document.getElementById('csv-tbody');
+  if (thead) thead.innerHTML = '';
+  if (tbody) tbody.innerHTML = '';
+  const alert = document.getElementById('csv-alert');
+  if (alert) alert.innerHTML = '';
+  const btn = document.getElementById('csv-import-btn');
+  if (btn) btn.style.display = 'none';
+  if (fechar) closeModal('modal-import-csv');
+}
+
+function handleCSVDrop(event) {
+  event.preventDefault();
+  event.currentTarget.style.borderColor = 'var(--border)';
+  const file = event.dataTransfer?.files?.[0];
+  handleCSVFile(file);
+}
+
+function _parseCSVLine(line) {
+  const out = [];
+  let cur = '', quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (quoted && line[i + 1] === '"') { cur += '"'; i++; }
+      else quoted = !quoted;
+    } else if ((ch === ',' || ch === ';') && !quoted) {
+      out.push(cur.trim()); cur = '';
+    } else cur += ch;
+  }
+  out.push(cur.trim());
+  return out;
+}
+
+function handleCSVFile(file) {
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith('.csv')) {
+    _showLocalAlert('csv-alert', 'Selecione um arquivo CSV.', 'danger');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const text = String(reader.result || '').replace(/^\uFEFF/, '');
+      const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      if (lines.length < 2) throw new Error('CSV sem produtos para importar.');
+      const headers = _parseCSVLine(lines[0]).map(h => h.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim());
+      const idx = name => headers.indexOf(name);
+      const col = {
+        codigo: Math.max(idx('codigo'), idx('codigo/id'), idx('id')),
+        nome: idx('nome'),
+        marca: idx('marca'),
+        unidade: idx('unidade'),
+        estoque_minimo: Math.max(idx('estoque_minimo'), idx('minimo'), idx('estoque minimo')),
+        categoria: idx('categoria')
+      };
+      if (col.nome < 0) throw new Error('A coluna "nome" é obrigatória.');
+      csvProdutosPreview = lines.slice(1).map(line => {
+        const p = _parseCSVLine(line);
+        return {
+          codigo: col.codigo >= 0 ? (p[col.codigo] || '') : '',
+          nome: p[col.nome] || '',
+          marca: col.marca >= 0 ? (p[col.marca] || '') : '',
+          unidade: col.unidade >= 0 ? (p[col.unidade] || 'unidade') : 'unidade',
+          estoque_minimo: col.estoque_minimo >= 0 ? Number(String(p[col.estoque_minimo] || '0').replace(',', '.')) || 0 : 0,
+          categoria_nome: col.categoria >= 0 ? (p[col.categoria] || '') : ''
+        };
+      }).filter(p => p.nome);
+      if (!csvProdutosPreview.length) throw new Error('Nenhum produto válido encontrado.');
+      renderCSVPreview();
+    } catch (e) {
+      _showLocalAlert('csv-alert', e.message, 'danger');
+    }
+  };
+  reader.readAsText(file, 'utf-8');
+}
+
+function renderCSVPreview() {
+  const prev = document.getElementById('csv-preview');
+  const info = document.getElementById('csv-info');
+  const thead = document.getElementById('csv-thead');
+  const tbody = document.getElementById('csv-tbody');
+  const btn = document.getElementById('csv-import-btn');
+  if (prev) prev.style.display = '';
+  if (info) info.textContent = `${csvProdutosPreview.length} produto(s) prontos para importar.`;
+  if (thead) thead.innerHTML = '<tr><th>Código/ID</th><th>Nome</th><th>Categoria</th><th>Marca</th><th>Unidade</th><th>Mínimo</th></tr>';
+  if (tbody) tbody.innerHTML = csvProdutosPreview.slice(0, 30).map(p => `<tr><td>${p.codigo || '—'}</td><td>${p.nome}</td><td>${p.categoria_nome || '—'}</td><td>${p.marca || '—'}</td><td>${p.unidade || 'unidade'}</td><td>${fmtNum(p.estoque_minimo || 0)}</td></tr>`).join('');
+  if (btn) btn.style.display = '';
+}
+
+async function confirmarImportCSV() {
+  if (!csvProdutosPreview.length) {
+    _showLocalAlert('csv-alert', 'Nenhum produto carregado para importar.', 'danger');
+    return;
+  }
+  try {
+    const cats = await api('/estoque/categorias');
+    const catMap = new Map(cats.map(c => [String(c.nome || '').trim().toLowerCase(), c.id]));
+    let ok = 0, erros = 0;
+    for (const p of csvProdutosPreview) {
+      let categoria_id = null;
+      const catNome = String(p.categoria_nome || '').trim();
+      if (catNome) {
+        const key = catNome.toLowerCase();
+        if (catMap.has(key)) categoria_id = catMap.get(key);
+        else {
+          const nova = await api('/estoque/categorias', 'POST', { nome: catNome, descricao: '' });
+          categoria_id = nova.id;
+          catMap.set(key, categoria_id);
+        }
+      }
+      try {
+        await api('/estoque/produtos', 'POST', {
+          codigo: p.codigo || null,
+          nome: p.nome,
+          marca: p.marca || '',
+          unidade: p.unidade || 'unidade',
+          estoque_minimo: p.estoque_minimo || 0,
+          categoria_id
+        });
+        ok++;
+      } catch (e) { erros++; }
+    }
+    _showLocalAlert('csv-alert', `Importação concluída: ${ok} produto(s) importado(s), ${erros} erro(s).`, erros ? 'danger' : 'success');
+    await loadCategoriasFiltro();
+    await loadProdutos();
+    await loadAlertasEstoque();
+    const btn = document.getElementById('csv-import-btn'); if (btn) btn.style.display = 'none';
+  } catch (e) {
+    _showLocalAlert('csv-alert', e.message || 'Erro ao importar CSV', 'danger');
+  }
+}
+
+function baixarModeloCSV() {
+  const rows = [
+    ['codigo','nome','marca','unidade','estoque_minimo','categoria'],
+    ['COPO-300','Copo 300ml','','unidade','5000','Copos Descartável'],
+    ['COPO-180','Copo 180ml','','unidade','1000','Copos Descartável']
+  ];
+  const csv = '\uFEFF' + rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(';')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'modelo_produtos_pratic.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+
+/* =========================================================
+   Proteção contra duplo clique em botões de salvar/confirmar
+   ========================================================= */
+(function () {
+  if (window.PRATIC_SAVE_GUARD_INSTALLED) return;
+  window.PRATIC_SAVE_GUARD_INSTALLED = true;
+
+  const actionWords = ['salvar', 'registrar', 'confirmar', 'importar', 'baixar backup'];
+  let currentActionButton = null;
+
+  function normalizeText(value) {
+    return String(value || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function isProtectedButton(btn) {
+    if (!btn || btn.tagName !== 'BUTTON') return false;
+    if (btn.dataset.noGuard === 'true') return false;
+    const onclick = normalizeText(btn.getAttribute('onclick') || '');
+    const label = normalizeText(btn.textContent || btn.innerText || '');
+    return actionWords.some(w => label.includes(w)) ||
+      /salvar|confirmar|registrar|importar|restore|backup/i.test(onclick);
+  }
+
+  function getButton() {
+    if (currentActionButton && document.contains(currentActionButton)) return currentActionButton;
+    const active = document.activeElement;
+    if (active && active.tagName === 'BUTTON') return active;
+    return null;
+  }
+
+  function setLoadingText(btn) {
+    if (!btn || btn.dataset.originalHtml) return;
+    btn.dataset.originalHtml = btn.innerHTML;
+    const text = normalizeText(btn.textContent || btn.innerText || '');
+    if (text.includes('importar')) btn.innerHTML = 'Importando...';
+    else if (text.includes('confirmar')) btn.innerHTML = 'Confirmando...';
+    else if (text.includes('registrar')) btn.innerHTML = 'Registrando...';
+    else if (text.includes('backup') || text.includes('baixar')) btn.innerHTML = 'Processando...';
+    else btn.innerHTML = 'Salvando...';
+  }
+
+  function lock(btn) {
+    if (!btn || !isProtectedButton(btn)) return true;
+    if (btn.dataset.guardBusy === '1') return false;
+    btn.dataset.guardBusy = '1';
+    btn.disabled = true;
+    btn.classList.add('btn-loading');
+    setLoadingText(btn);
+    return true;
+  }
+
+  function unlock(btn) {
+    if (!btn || !document.contains(btn)) return;
+    delete btn.dataset.guardBusy;
+    btn.disabled = false;
+    btn.classList.remove('btn-loading');
+    if (btn.dataset.originalHtml) {
+      btn.innerHTML = btn.dataset.originalHtml;
+      delete btn.dataset.originalHtml;
+    }
+  }
+
+  document.addEventListener('click', function (event) {
+    const btn = event.target.closest && event.target.closest('button');
+    if (!btn || !isProtectedButton(btn)) return;
+    if (btn.dataset.guardBusy === '1') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      return false;
+    }
+    currentActionButton = btn;
+    setTimeout(() => {
+      if (currentActionButton === btn) currentActionButton = null;
+    }, 1000);
+  }, true);
+
+  function guardFunction(name) {
+    const original = window[name];
+    if (typeof original !== 'function' || original.__praticGuarded) return;
+    const guarded = async function (...args) {
+      const btn = getButton();
+      if (btn && !lock(btn)) return;
+      try {
+        return await original.apply(this, args);
+      } finally {
+        if (btn) unlock(btn);
+      }
+    };
+    guarded.__praticGuarded = true;
+    window[name] = guarded;
+  }
+
+  function installFunctionGuards() {
+    [
+      'salvarProducao', 'salvarColaborador', 'salvarTipoColaborador', 'salvarMaquina', 'salvarAuxiliar',
+      'salvarConfig', 'salvarProduto', 'salvarProdutoEstoque', 'salvarMovimentacao',
+      'salvarPerda', 'salvarCategoria', 'salvarPedido', 'salvarCliente',
+      'salvarEmpresa', 'salvarPermissoes', 'salvarEPI', 'salvarEntrega',
+      'salvarFuncaoEPI', 'salvarNovoPedido', 'salvarNovoCliente', 'salvarMobile',
+      'salvarColabProd', 'salvarMaqProd', 'confirmarImportCSV', 'confirmarImportacao',
+      'confirmarRestore', 'confirmarMovimentacao', 'confirmarMovRapida', 'fazerBackup',
+      'salvarUsuario', 'salvarNovaSenha'
+    ].forEach(guardFunction);
+  }
+
+  installFunctionGuards();
+  document.addEventListener('DOMContentLoaded', installFunctionGuards);
+  setTimeout(installFunctionGuards, 300);
+})();
+
+/* =========================================================
+   Gerenciamento de Usuários (Aba no Controle de Acesso)
+   ========================================================= */
+
+function switchPermissoesTab(tab) {
+  ['config','usuarios','permissoes-usr'].forEach(t => {
+    const el = document.getElementById('perm-content-' + t);
+    const btn = document.getElementById('perm-tab-' + t);
+    if (el) el.style.display = t === tab ? '' : 'none';
+    if (btn) {
+      btn.style.borderColor = t === tab ? 'var(--accent)' : '';
+      btn.style.color = t === tab ? 'var(--accent)' : '';
+    }
+  });
+  if (tab === 'usuarios') loadUsuarios();
+  if (tab === 'permissoes-usr') loadPermUsuarios();
+  if (tab === 'config') { loadPermissoes(); carregarVendedorDesde(); }
+}
+
+async function carregarVendedorDesde() {
+  const el = document.getElementById('cfg-vendedor-desde');
+  if (!el) return;
+  try {
+    const r = await api('/configuracoes/vendedor_mostrar_desde');
+    el.value = (r && r.valor) ? String(r.valor).slice(0, 10) : '';
+  } catch (e) { el.value = ''; }
+  const info = document.getElementById('cfg-vendedor-desde-info');
+  if (info) info.textContent = el.value ? 'Atual: a partir de ' + fmtDate(el.value) : 'Atual: todos os pedidos';
+  const pz = await _carregarPrazosParados();
+  const a = document.getElementById('cfg-prazo-amarelo'), v = document.getElementById('cfg-prazo-vermelho');
+  if (a) a.value = pz.amarelo;
+  if (v) v.value = pz.vermelho;
+}
+
+async function salvarPrazosParados() {
+  const a = parseInt(document.getElementById('cfg-prazo-amarelo').value, 10);
+  const v = parseInt(document.getElementById('cfg-prazo-vermelho').value, 10);
+  if (isNaN(a) || isNaN(v) || a < 0 || v < 0) { showAlert('Informe os dias (números inteiros)', 'danger'); return; }
+  if (v < a) { showAlert('O vermelho precisa ser maior ou igual ao amarelo', 'danger'); return; }
+  try {
+    await api('/configuracoes/prazo_amarelo_dias', 'PUT', { valor: String(a) });
+    await api('/configuracoes/prazo_vermelho_dias', 'PUT', { valor: String(v) });
+    showAlert(`Prazos salvos: amarelo a partir de ${a} dia(s), vermelho a partir de ${v} dia(s)`);
+  } catch (e) { showAlert('Erro: ' + e.message, 'danger'); }
+}
+window.salvarPrazosParados = salvarPrazosParados;
+
+// ─── ACOMPANHAMENTO (Gestor) ──────────────────────────────────────────────────
+async function loadAcompanhamento() {
+  const el = document.getElementById('acomp-conteudo');
+  if (!el) return;
+  let d;
+  try { d = await api('/pedidos/acompanhamento'); } catch (e) { el.innerHTML = `<div class="alert alert-danger">${_escHtml(e.message)}</div>`; return; }
+  _prazosParados = d.prazos || _prazosParados;
+  const E = d.etapas || {};
+  const card = (titulo, e, cor, sub) => `<div class="card" style="border-top:3px solid ${cor}">
+      <div class="card-label">${titulo}</div>
+      <div class="card-value" style="color:${cor}">${e.qtd}</div>
+      <div style="font-size:12px;color:var(--muted)">${sub} · ${fmtBRL(e.valor)}</div>
+      <div style="font-size:12px;margin-top:4px">${e.qtd ? `mais antigo: <strong>${e.mais_antigo_dias} dia(s)</strong>` : '—'}${e.atrasados ? ` · <span style="color:var(--danger);font-weight:700">${e.atrasados} no vermelho</span>` : ''}</div>
+    </div>`;
+  const nomeEtapa = { aguardando_separacao: '📦 Separação / embalagem', produzido: '⏳ Aguardando vendedor', aguardando_nf: '🧾 Aguardando NF', aguardando_retirada: '🙋 Aguardando retirada' };
+  const parados = (d.parados || []).map(p => `<tr>
+      <td><strong>${_escHtml(p.numero_pedido)}</strong></td>
+      <td>${_escHtml(p.cliente_nome)}</td>
+      <td>${nomeEtapa[p.status] || p.status}</td>
+      <td>${_escHtml(p.responsavel)}${p.status === 'produzido' ? ' · ' + _escHtml(p.vendedor_nome || p.vendedor || 'sem vendedor') : ''}${p.status === 'aguardando_nf' && p.transportadora ? ' · ' + _escHtml(p.transportadora) : ''}</td>
+      <td>${fmtBRL(p.valor_total)}</td>
+      <td>${_seloDiasEtapa(p.dias_na_etapa)}</td>
+    </tr>`).join('');
+  const maxT = Math.max(1, ...(d.vendedores || []).map(v => v.tempo_medio_dias || 0));
+  const vend = (d.vendedores || []).map(v => {
+    const t = v.tempo_medio_dias;
+    const cor = t == null ? 'var(--muted)' : (t >= _prazosParados.vermelho ? 'var(--danger)' : (t >= _prazosParados.amarelo ? 'var(--accent)' : 'var(--success)'));
+    return `<div style="display:flex;flex-direction:column;gap:4px">
+      <div style="display:flex;justify-content:space-between;font-size:13px;gap:8px"><span>${_escHtml(v.vendedor_nome || '—')}</span><strong style="color:${cor}">${t == null ? 'sem dados' : String(t).replace('.', ',') + ' dia(s)'}</strong></div>
+      <div style="height:8px;background:var(--surface2);border-radius:4px"><div style="height:8px;width:${t == null ? 0 : Math.max(4, Math.round(t / maxT * 100))}%;background:${cor};border-radius:4px"></div></div>
+      <div style="font-size:11px;color:var(--muted)">${v.liberados_30d} liberado(s) em 30 dias · ${v.aguardando_agora} aguardando agora</div>
+    </div>`;
+  }).join('');
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+      <div style="font-size:13px;color:var(--muted)">Pedidos produzidos que ainda não saíram${d.mostrar_desde ? ' · lançados a partir de ' + fmtDate(d.mostrar_desde) : ''} · cores: amarelo a partir de ${_prazosParados.amarelo} dia(s), vermelho a partir de ${_prazosParados.vermelho}</div>
+      <button class="btn btn-sm btn-secondary" onclick="loadAcompanhamento()">↻ Atualizar</button>
+    </div>
+    <div class="cards-grid" style="margin-bottom:18px">
+      ${card('📦 Separação / embalagem', E.aguardando_separacao || {qtd:0,valor:0}, 'var(--warn)', 'com o Estoque')}
+      ${card('⏳ Aguardando vendedor', E.produzido || {qtd:0,valor:0}, 'var(--danger)', 'com o vendedor')}
+      ${card('🧾 Aguardando NF', E.aguardando_nf || {qtd:0,valor:0}, 'var(--accent)', 'com a Expedição')}
+      ${card('🙋 Aguardando retirada', E.aguardando_retirada || {qtd:0,valor:0}, 'var(--accent2)', 'com o cliente')}
+      <div class="card" style="border:1px solid var(--accent)"><div class="card-label">Pronto e não faturado</div><div class="card-value accent" style="font-size:22px">${fmtBRL(d.valor_nao_faturado)}</div><div style="font-size:12px;color:var(--muted)">soma das etapas</div></div>
+    </div>
+    ${d.sem_vendedor ? `<div style="background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.4);border-radius:10px;padding:10px 14px;margin-bottom:16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap"><strong style="color:var(--warn)">🧾 ${d.sem_vendedor} pedido(s) sem vendedor vinculado</strong><span style="font-size:12px;color:var(--muted)">não aparecem para nenhum vendedor</span><button class="btn btn-sm btn-secondary" style="margin-left:auto" onclick="abrirModalSemVendedor()">Resolver →</button></div>` : ''}
+    <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start">
+      <div class="table-wrap" style="flex:2 1 560px;min-width:0">
+        <div class="table-head"><span class="table-head-title">Parados há mais tempo</span></div>
+        <table>
+          <thead><tr><th>Pedido</th><th>Cliente</th><th>Etapa</th><th>Com quem</th><th>Valor</th><th>Parado</th></tr></thead>
+          <tbody>${parados || '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:24px">✅ Nenhum pedido parado</td></tr>'}</tbody>
+        </table>
+      </div>
+      <div class="card" style="flex:1 1 300px;min-width:0;display:flex;flex-direction:column;gap:14px">
+        <div style="font-family:var(--font-head);font-weight:700">Tempo médio do vendedor</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:-8px">Do pedido ficar produzido até ele informar frete ou retirada · últimos 30 dias</div>
+        ${vend || '<div style="font-size:13px;color:var(--muted)">Ainda sem dados — aparece conforme os vendedores liberam pedidos.</div>'}
+        <div style="border-top:1px solid var(--border);padding-top:10px;font-size:13px">🚚 Expedição (liberado → NF): <strong>${d.expedicao_tempo_medio_dias == null ? 'sem dados' : String(d.expedicao_tempo_medio_dias).replace('.', ',') + ' dia(s)'}</strong> <span style="color:var(--muted);font-size:11px">· ${d.expedicao_concluidos_30d} concluído(s) em 30 dias</span></div>
+      </div>
+    </div>`;
+}
+window.loadAcompanhamento = loadAcompanhamento;
+
+async function salvarVendedorDesde() {
+  const el = document.getElementById('cfg-vendedor-desde');
+  if (!el) return;
+  try {
+    await api('/configuracoes/vendedor_mostrar_desde', 'PUT', { valor: el.value || '' });
+    showAlert(el.value ? 'O vendedor passa a ver pedidos a partir de ' + fmtDate(el.value) : 'O vendedor passa a ver todos os pedidos');
+    carregarVendedorDesde();
+  } catch (e) { showAlert('Erro: ' + e.message, 'danger'); }
+}
+window.carregarVendedorDesde = carregarVendedorDesde;
+window.salvarVendedorDesde = salvarVendedorDesde;
+
+let _usuariosCache = [];
+
+function _escHtml(v) {
+  return String(v == null ? '' : v).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+
+async function loadUsuarios() {
+  const tbody = document.getElementById('usuarios-tbody');
+  if (!tbody) return;
+  
+  tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px"><div class="spinner" style="margin:0 auto"></div></td></tr>';
+  
+  try {
+    const users = await api('/auth/usuarios');
+    if (!users.length) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px">Nenhum usuário cadastrado</td></tr>';
+      return;
+    }
+    
+    const roleLabels = {
+      gestor: '🖥️ Gestor',
+      producao: '🏭 Produção',
+      comercial: '🏢 Comercial',
+      estoque: '📦 Estoque',
+      expedicao: '🚚 Expedição'
+    };
+    _usuariosCache = users;
+    
+    tbody.innerHTML = users.map(u => `
+      <tr>
+        <td><strong>${u.nome}</strong>${u.vendedor_nomes ? `<div style="font-size:11px;color:var(--muted);margin-top:2px" title="Nomes reconhecidos na importação de pedidos">🧾 ${_escHtml(u.vendedor_nomes)}</div>` : ''}</td>
+        <td><code>${u.username}</code></td>
+        <td>${roleLabels[u.role] || u.role}</td>
+        <td>
+          <span class="pill ${u.ativo ? 'pill-success' : 'pill-danger'}">
+            ${u.ativo ? 'Ativo' : 'Inativo'}
+          </span>
+        </td>
+        <td class="flex gap-2">
+          <button class="btn btn-sm btn-secondary" onclick="editarUsuario(${u.id}, '${u.username}', '${u.nome}', '${u.role}', ${u.ativo})">✏️ Editar</button>
+          <button class="btn btn-sm btn-secondary" onclick="abrirAlterarSenha(${u.id}, '${u.nome}')">🔑 Senha</button>
+          <button class="btn btn-sm btn-danger" onclick="excluirUsuario(${u.id}, '${u.nome}')">✕ Excluir</button>
+        </td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--danger);padding:24px">Erro ao carregar usuários: ${e.message}</td></tr>`;
+  }
+}
+
+function openModalUsuario() {
+  document.getElementById('user-id').value = '';
+  document.getElementById('user-nome').value = '';
+  document.getElementById('user-username').value = '';
+  document.getElementById('user-username').disabled = false;
+  document.getElementById('user-role').value = 'producao';
+  document.getElementById('user-password').value = '';
+  document.getElementById('user-password-container').style.display = '';
+  document.getElementById('user-ativo-container').style.display = 'none';
+  document.getElementById('user-ativo').value = '1';
+  const vnNovo = document.getElementById('user-vendedor-nomes');
+  if (vnNovo) vnNovo.value = '';
+  
+  document.getElementById('modal-user-title').textContent = 'Novo Usuário';
+  openModal('modal-usuario');
+}
+
+function editarUsuario(id, username, nome, role, ativo) {
+  document.getElementById('user-id').value = id;
+  document.getElementById('user-nome').value = nome;
+  document.getElementById('user-username').value = username;
+  document.getElementById('user-username').disabled = true;
+  document.getElementById('user-role').value = role;
+  document.getElementById('user-password').value = '';
+  document.getElementById('user-password-container').style.display = 'none';
+  document.getElementById('user-ativo-container').style.display = '';
+  document.getElementById('user-ativo').value = ativo;
+  const vnEd = document.getElementById('user-vendedor-nomes');
+  if (vnEd) {
+    const u = (_usuariosCache || []).find(x => x.id == id);
+    vnEd.value = u && u.vendedor_nomes ? u.vendedor_nomes.split(';').map(x => x.trim()).filter(Boolean).join('\n') : '';
+  }
+  
+  document.getElementById('modal-user-title').textContent = 'Editar Usuário';
+  openModal('modal-usuario');
+}
+
+async function salvarUsuario() {
+  const id = document.getElementById('user-id').value;
+  const nome = document.getElementById('user-nome').value.trim();
+  const username = document.getElementById('user-username').value.trim();
+  const role = document.getElementById('user-role').value;
+  const password = document.getElementById('user-password').value;
+  const ativo = +document.getElementById('user-ativo').value;
+  const vnEl = document.getElementById('user-vendedor-nomes');
+  const vendedor_nomes = vnEl ? vnEl.value.split(/[\n;]+/).map(x => x.trim()).filter(Boolean).join('; ') : undefined;
+  
+  if (!nome || !username) {
+    showAlert('Preencha o nome e o usuário.', 'danger');
+    return;
+  }
+  
+  try {
+    if (id) {
+      const r = await api('/auth/usuarios/' + id, 'PUT', { role, nome, ativo, vendedor_nomes });
+      showAlert('Usuário atualizado com sucesso!' + (r && r.pedidos_vinculados ? ` ${r.pedidos_vinculados} pedido(s) vinculado(s) a este vendedor.` : ''));
+    } else {
+      if (!password || password.length < 3) {
+        showAlert('A senha inicial deve conter pelo menos 3 caracteres.', 'danger');
+        return;
+      }
+      const r = await api('/auth/usuarios', 'POST', { username, password, role, nome, vendedor_nomes: vendedor_nomes || '' });
+      showAlert('Usuário cadastrado com sucesso!' + (r && r.pedidos_vinculados ? ` ${r.pedidos_vinculados} pedido(s) vinculado(s) a este vendedor.` : ''));
+    }
+    closeModal('modal-usuario');
+    loadUsuarios();
+  } catch (e) {
+    showAlert(e.message, 'danger');
+  }
+}
+
+function abrirAlterarSenha(id, nome) {
+  document.getElementById('pass-user-id').value = id;
+  document.getElementById('new-password').value = '';
+  openModal('modal-alterar-senha');
+}
+
+async function salvarNovaSenha() {
+  const id = document.getElementById('pass-user-id').value;
+  const password = document.getElementById('new-password').value;
+  
+  if (!password || password.length < 3) {
+    showAlert('A nova senha deve ter no mínimo 3 caracteres.', 'danger');
+    return;
+  }
+  
+  try {
+    await api(`/auth/usuarios/${id}/password`, 'PUT', { password });
+    showAlert('Senha alterada com sucesso!');
+    closeModal('modal-alterar-senha');
+  } catch (e) {
+    showAlert(e.message, 'danger');
+  }
+}
+
+async function excluirUsuario(id, nome) {
+  if (!confirm(`Deseja realmente excluir o usuário "${nome}"? Esta ação não pode ser desfeita.`)) return;
+  
+  try {
+    await api('/auth/usuarios/' + id, 'DELETE');
+    showAlert('Usuário excluído com sucesso!');
+    loadUsuarios();
+  } catch (e) {
+    showAlert(e.message, 'danger');
+  }
+}
+// Funções expostas para os botões inline do HTML
+window.openModalTipoColaborador = openModalTipoColaborador;
+window.salvarTipoColaborador = salvarTipoColaborador;
+window.deletarTipoColaborador = deletarTipoColaborador;
+window.openModalColaborador = openModalColaborador;
+window.editColaborador = editColaborador;
+window.salvarColaborador = salvarColaborador;
+window.deletarColaborador = deletarColaborador;
+
+// ─── SALDO VS DEMANDA ────────────────────────────────────────────────────────
+
+let svdDados = [];
+
+const SVD_CONFIG = {
+  critico:     { label: '🔴 Crítico',     pill: 'pill-danger',  cor: 'var(--danger)'  },
+  atencao:     { label: '🟡 Atenção',     pill: 'pill-warn',    cor: 'var(--warn)'    },
+  ok:          { label: '🟢 OK',          pill: 'pill-success', cor: 'var(--success)' },
+  sem_demanda: { label: '⚫ Sem demanda', pill: 'pill-info',    cor: 'var(--muted)'   },
+};
+
+async function loadSaldoDemanda(isFilterOnly = false) {
+  // Popular filtro de categorias se ainda não estiver preenchido
+  const catContainer = document.getElementById('svd-multi-cat-options');
+  if (catContainer && catContainer.children.length === 0) {
+    try {
+      const cats = await api('/estoque/categorias');
+      // Sort categories alphabetically
+      cats.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' }));
+      cats.forEach(c => {
+        const div = document.createElement('div');
+        div.className = 'multiselect-option';
+        div.innerHTML = `
+          <label style="display:flex;align-items:center;gap:8px;width:100%;cursor:pointer">
+            <input type="checkbox" value="${c.id}" data-label="${c.nome}" onchange="onMultiselectChange('svd-multi-cat-dropdown')">
+            <span>${c.nome}</span>
+          </label>
+        `;
+        catContainer.appendChild(div);
+      });
+    } catch(e) {}
+  }
+
+  if (!isFilterOnly) {
+    let url = '/estoque/saldo-vs-demanda';
+    try {
+      svdDados = await api(url);
+      
+      // Filtrar pelas categorias ocultadas (persistidas no backend)
+      const ocultas = await _getSvdCategoriasOcultas();
+      svdDados = svdDados.filter(r => {
+        const catIdStr = r.categoria_id === null || r.categoria_id === undefined ? "null" : String(r.categoria_id);
+        return !ocultas.includes(catIdStr);
+      });
+
+      // Popular filtro de marcas dinamicamente
+      const marcaSel = document.getElementById('svd-filtro-marca');
+      if (marcaSel && marcaSel.options.length <= 1) {
+        const marcas = [...new Set(svdDados.map(r => r.marca).filter(Boolean))].sort();
+        marcas.forEach(m => {
+          const o = document.createElement('option');
+          o.value = m; o.textContent = m;
+          marcaSel.appendChild(o);
+        });
+      }
+    } catch(e) { 
+      showAlert('Erro ao carregar Saldo vs Demanda: ' + e.message, 'danger'); 
+      return;
+    }
+  }
+
+  const selectedCats = getSelectedMultiselectValues('svd-multi-cat-dropdown');
+  const sit = document.getElementById('svd-filtro-sit')?.value || '';
+  const marca = document.getElementById('svd-filtro-marca')?.value || '';
+  
+  let filtrado = svdDados;
+  
+  // Filter by category
+  if (selectedCats.length > 0) {
+    filtrado = filtrado.filter(r => {
+      const catIdStr = r.categoria_id === null || r.categoria_id === undefined ? "null" : String(r.categoria_id);
+      return selectedCats.includes(catIdStr);
+    });
+  }
+
+  if (sit === 'monitorados') filtrado = filtrado.filter(r => r.situacao !== 'sem_demanda');
+  else if (sit) filtrado = filtrado.filter(r => r.situacao === sit);
+  if (marca) filtrado = filtrado.filter(r => r.marca === marca);
+
+  // Sorting: alphabetical by product name if category filter is active
+  if (selectedCats.length > 0) {
+    filtrado.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' }));
+  } else {
+    filtrado.sort((a, b) => {
+      const catComp = (a.categoria || '').localeCompare(b.categoria || '', 'pt-BR', { sensitivity: 'base' });
+      if (catComp !== 0) return catComp;
+      return a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' });
+    });
+  }
+
+  renderSVDKPIs(svdDados);
+  renderSVDTabela(filtrado);
+  renderSVDAlerta(svdDados);
+  checkSVDBadge(svdDados);
+
+  const el = document.getElementById('svd-ultima-atualizacao');
+  if (el) el.textContent = '🕐 Atualizado em: ' + new Date().toLocaleString('pt-BR');
+}
+
+// MULTISELECT DROPDOWN HELPERS
+function toggleMultiselect(event, dropdownId) {
+  event.stopPropagation();
+  const dropdown = document.getElementById(dropdownId);
+  if (!dropdown) return;
+  
+  document.querySelectorAll('.multiselect-dropdown').forEach(el => {
+    if (el.id !== dropdownId) el.style.display = 'none';
+  });
+  
+  dropdown.style.display = dropdown.style.display === 'none' ? 'flex' : 'none';
+}
+
+function selectAllMultiselect(dropdownId, selectAll, triggerChange) {
+  const checkboxes = document.querySelectorAll(`#${dropdownId} .multiselect-options .multiselect-option:not([style*="display: none"]) input[type="checkbox"]`);
+  checkboxes.forEach(cb => cb.checked = selectAll);
+  
+  if (triggerChange) {
+    onMultiselectChange(dropdownId);
+  }
+}
+
+function filterMultiselectOptions(dropdownId) {
+  const dropdown = document.getElementById(dropdownId);
+  if (!dropdown) return;
+  const searchInput = dropdown.querySelector('.multiselect-search');
+  const filterText = searchInput ? searchInput.value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") : '';
+  
+  const options = dropdown.querySelectorAll('.multiselect-option');
+  options.forEach(opt => {
+    const label = opt.querySelector('span').textContent.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    if (label.includes(filterText)) {
+      opt.style.display = 'flex';
+    } else {
+      opt.style.display = 'none';
+    }
+  });
+}
+
+function onMultiselectChange(dropdownId) {
+  if (dropdownId === 'svd-multi-cat-dropdown') {
+    updateMultiselectButtonText('svd-multi-cat-dropdown', 'Todas as categorias');
+    loadSaldoDemanda(true);
+  }
+}
+
+function getSelectedMultiselectValues(dropdownId) {
+  const checkboxes = document.querySelectorAll(`#${dropdownId} .multiselect-options input[type="checkbox"]:checked`);
+  return Array.from(checkboxes).map(cb => cb.value);
+}
+
+function updateMultiselectButtonText(dropdownId, defaultText) {
+  const checkboxes = document.querySelectorAll(`#${dropdownId} .multiselect-options input[type="checkbox"]:checked`);
+  const btnText = document.querySelector(`#${dropdownId}`).previousElementSibling.querySelector('.btn-text');
+  if (!btnText) return;
+  
+  if (checkboxes.length === 0) {
+    btnText.textContent = defaultText;
+  } else if (checkboxes.length === 1) {
+    btnText.textContent = checkboxes[0].getAttribute('data-label');
+  } else {
+    btnText.textContent = `${checkboxes.length} selecionadas`;
+  }
+}
+
+// Bind to window for HTML event handlers
+window.toggleMultiselect = toggleMultiselect;
+window.selectAllMultiselect = selectAllMultiselect;
+window.filterMultiselectOptions = filterMultiselectOptions;
+window.onMultiselectChange = onMultiselectChange;
+window.getSelectedMultiselectValues = getSelectedMultiselectValues;
+window.updateMultiselectButtonText = updateMultiselectButtonText;
+
+// Global listener to close dropdowns when clicking outside
+window.addEventListener('click', function(e) {
+  if (!e.target.closest('.custom-multiselect')) {
+    document.querySelectorAll('.multiselect-dropdown').forEach(el => el.style.display = 'none');
+  }
+});
+
+function renderSVDKPIs(dados) {
+  const criticos = dados.filter(r => r.situacao === 'critico').length;
+  const atencao  = dados.filter(r => r.situacao === 'atencao').length;
+  const ok       = dados.filter(r => r.situacao === 'ok').length;
+  const total    = dados.filter(r => r.situacao !== 'sem_demanda').length;
+
+  const el = document.getElementById('svd-kpi-cards');
+  if (!el) return;
+  el.innerHTML = `
+    <div class="card" style="border-left:3px solid var(--muted)">
+      <div class="card-label">Produtos Monitorados</div>
+      <div class="card-value" style="color:var(--text)">${total}</div>
+      <div style="font-size:11px;color:var(--muted)">com demanda ativa</div>
+    </div>
+    <div class="card" style="border-left:3px solid var(--danger)">
+      <div class="card-label">🔴 Crítico</div>
+      <div class="card-value danger">${criticos}</div>
+      <div style="font-size:11px;color:var(--muted)">cobertura &lt; 20% ou negativo</div>
+    </div>
+    <div class="card" style="border-left:3px solid var(--warn)">
+      <div class="card-label">🟡 Atenção</div>
+      <div class="card-value" style="color:var(--warn)">${atencao}</div>
+      <div style="font-size:11px;color:var(--muted)">cobertura entre 20% e 50%</div>
+    </div>
+    <div class="card" style="border-left:3px solid var(--success)">
+      <div class="card-label">🟢 OK</div>
+      <div class="card-value success">${ok}</div>
+      <div style="font-size:11px;color:var(--muted)">cobertura acima de 50%</div>
+    </div>`;
+}
+
+function renderSVDAlerta(dados) {
+  const criticos = dados.filter(r => r.situacao === 'critico');
+  const banner = document.getElementById('svd-alerta-banner');
+  if (!banner) return;
+  if (!criticos.length) { banner.innerHTML = ''; return; }
+  const lista = criticos.slice(0,5).map(r =>
+    `<strong>${r.nome}</strong>: ${fmtNum(r.saldo_projetado)} ${r.unidade}`
+  ).join(' &nbsp;|&nbsp; ');
+  banner.innerHTML = `
+    <div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:12px 16px;margin-bottom:16px;font-size:13px">
+      ⚠️ <strong style="color:var(--danger)">${criticos.length} produto(s) em situação crítica:</strong>
+      <span style="color:var(--muted);margin-left:8px">${lista}</span>
+    </div>`;
+}
+
+function checkSVDBadge(dados) {
+  const badge = document.getElementById('nav-svd-badge');
+  const criticos = dados.filter(r => r.situacao === 'critico').length;
+  if (badge) {
+    badge.style.display = criticos > 0 ? 'inline' : 'none';
+    badge.textContent = criticos;
+  }
+  // Badge no dashboard
+  const dashEl = document.getElementById('dash-alerta-svd');
+  if (dashEl && criticos > 0) {
+    const nomes = dados.filter(r=>r.situacao==='critico').slice(0,3).map(r=>r.nome).join(', ');
+    dashEl.innerHTML = `
+      <div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:10px;padding:14px 18px;margin-bottom:20px;display:flex;align-items:center;gap:14px">
+        <span style="font-size:22px">📊</span>
+        <div style="flex:1">
+          <div style="font-family:var(--font-head);font-weight:700;color:var(--danger);margin-bottom:4px">${criticos} produto(s) com estoque crítico</div>
+          <div style="font-size:13px;color:var(--muted)">${nomes}${criticos>3?' e mais...':''}</div>
+        </div>
+        <button class="btn btn-sm btn-secondary" onclick="showPage('saldo-demanda')">Ver →</button>
+      </div>`;
+  } else if (dashEl) dashEl.innerHTML = '';
+}
+
+function renderSVDTabela(dados) {
+  const tbody = document.getElementById('svd-tbody');
+  if (!tbody) return;
+  if (!dados.length) {
+    tbody.innerHTML = '<tr><td colspan="12" style="text-align:center;color:var(--muted);padding:32px">Nenhum produto encontrado</td></tr>';
+    return;
+  }
+  tbody.innerHTML = dados.map(r => {
+    const cfg = SVD_CONFIG[r.situacao] || SVD_CONFIG.ok;
+    const pct = Math.min(100, Math.max(0, r.cobertura));
+    const barCor = r.situacao === 'critico' ? 'var(--danger)' : r.situacao === 'atencao' ? 'var(--warn)' : 'var(--success)';
+    const projCor = r.saldo_projetado < 0 ? 'var(--danger)' : r.saldo_projetado === 0 ? 'var(--warn)' : 'var(--text)';
+
+    return `<tr>
+      <td>
+        <div style="font-weight:600">${r.nome}${r.marca ? ' <span style="color:var(--muted);font-weight:400">'+r.marca+'</span>' : ''}${r.categoria_tipo === 'revenda' ? ' <span style="font-size:11px;padding:1px 7px;border-radius:9px;background:rgba(59,130,246,.15);color:#3b82f6">🛒 Revenda</span>' : ''}</div>
+        ${r.codigo ? `<div style="font-size:11px;color:var(--muted)">${r.codigo}</div>` : ''}
+      </td>
+      <td style="color:var(--muted)">${r.categoria}</td>
+      <td style="font-weight:700">${fmtNum(r.saldo_atual)} <span style="color:var(--muted);font-weight:400;font-size:11px">${r.unidade}</span></td>
+      <td style="color:var(--accent2)">${r.qtd_aberto > 0 ? fmtNum(r.qtd_aberto) : '—'}</td>
+      <td style="color:var(--warn)">${r.qtd_em_producao > 0 ? fmtNum(r.qtd_em_producao) : '—'}</td>
+      <td style="color:#3b82f6" title="Pedido já produzido, mas item ainda não separado/entregue">${r.qtd_aguardando_separacao > 0 ? fmtNum(r.qtd_aguardando_separacao) : '—'}</td>
+      <td style="font-weight:600">${r.total_demanda > 0 ? fmtNum(r.total_demanda) : '—'}</td>
+      <td style="font-weight:700;color:${projCor}">${r.saldo_projetado < 0 ? '−' : ''}${fmtNum(Math.abs(r.saldo_projetado))}</td>
+      <td style="min-width:100px">
+        <div style="display:flex;align-items:center;gap:6px">
+          <div style="flex:1;height:8px;background:var(--surface2);border-radius:4px;overflow:hidden">
+            <div style="height:100%;width:${pct}%;background:${barCor};border-radius:4px;transition:width .3s"></div>
+          </div>
+          <span style="font-size:12px;font-weight:600;color:${barCor};min-width:36px">${r.situacao==='sem_demanda'?'—':pct.toFixed(0)+'%'}</span>
+        </div>
+      </td>
+      <td>
+        ${r.dias_urgente === null || r.dias_urgente === undefined
+          ? '<span style="color:var(--muted)">—</span>'
+          : r.dias_urgente < 0
+            ? `<span style="color:var(--danger);font-weight:700">🔴 Vencido há ${Math.abs(r.dias_urgente)}d</span>`
+            : r.dias_urgente === 0
+              ? `<span style="color:var(--danger);font-weight:700">🔴 Vence hoje!</span>`
+              : r.dias_urgente <= 3
+                ? `<span style="color:var(--danger);font-weight:700">🔴 Vence em ${r.dias_urgente}d</span>`
+                : r.dias_urgente <= 7
+                  ? `<span style="color:var(--warn);font-weight:700">🟡 Vence em ${r.dias_urgente}d</span>`
+                  : r.dias_urgente <= 15
+                    ? `<span style="color:var(--warn)">🟡 Vence em ${r.dias_urgente}d</span>`
+                    : `<span style="color:var(--success)">🟢 Vence em ${r.dias_urgente}d</span>`
+        }
+      </td>
+      <td><span class="pill ${cfg.pill}">${cfg.label}</span></td>
+      <td>
+        ${r.categoria_tipo === 'revenda' && r.saldo_projetado < 0
+          ? `<div style="font-size:11px;font-weight:700;color:#3b82f6;margin-bottom:4px">🛒 Comprar ${fmtNum(Math.abs(r.saldo_projetado))} ${r.unidade}</div>`
+          : ''}
+        ${r.total_demanda > 0 ? `<button class="btn btn-sm btn-secondary" onclick="verDetalhesSVD(${r.id},'${r.nome.replace(/'/g,"\\'")}')">🔍 Pedidos</button>` : ''}
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+async function verDetalhesSVD(prodId, nome) {
+  document.getElementById('modal-svd-title').textContent = `📦 ${nome} — Pedidos em Aberto`;
+  document.getElementById('modal-svd-content').innerHTML = '<div style="padding:20px;text-align:center;color:var(--muted)">Carregando...</div>';
+  openModal('modal-svd-detalhe');
+
+  try {
+    const rows = await api(`/estoque/saldo-vs-demanda/${prodId}/pedidos`);
+    const STATUS_PILL = { aberto:'pill-info', em_producao:'pill-warn', produzido:'pill-warn', enviado:'pill-warn' };
+    const STATUS_LABEL = { aberto:'📋 Aberto', em_producao:'🏭 Em produção', produzido:'📦 Aguardando separação', enviado:'🚚 Enviado' };
+
+    document.getElementById('modal-svd-content').innerHTML = rows.length ? `
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Nº Pedido</th><th>Cliente</th><th>Item</th><th>Qtd Pedida</th><th>Produzido</th><th>Saldo</th><th>Prazo</th><th>Dias</th><th>Status</th></tr></thead>
+          <tbody>${rows.map(r => {
+            const cor = r.dias_restantes < 0 ? 'var(--danger)' : r.dias_restantes <= 3 ? 'var(--warn)' : 'var(--success)';
+            return `<tr>
+              <td><strong>${r.numero_pedido}</strong></td>
+              <td>${r.cliente || '—'}</td>
+              <td style="color:var(--muted)">${r.descricao}</td>
+              <td>${fmtNum(r.quantidade)} ${r.unidade}</td>
+              <td>${fmtNum(r.qtd_produzida)}</td>
+              <td style="font-weight:700;color:var(--danger)">${fmtNum(r.saldo_item)}</td>
+              <td>${fmtDate(r.prazo_entrega)}</td>
+              <td style="color:${cor};font-weight:700">${r.dias_restantes < 0 ? 'Vencido' : r.dias_restantes + 'd'}</td>
+              <td><span class="pill ${STATUS_PILL[r.status]||'pill-info'}">${STATUS_LABEL[r.status]||r.status}</span></td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table>
+      </div>` : '<p style="padding:20px;color:var(--muted);text-align:center">Nenhum pedido em aberto para este produto.</p>';
+  } catch(e) {
+    document.getElementById('modal-svd-content').innerHTML = `<p style="color:var(--danger);padding:20px">Erro: ${e.message}</p>`;
+  }
+}
+
+// ─── LISTA DE COMPRAS (agrupada por marca → tipo → furo → tamanho) ────────
+// Reaproveita os mesmos dados do Saldo vs Demanda (saldo já descontando a
+// demanda de pedidos em aberto); aqui só filtramos pro que precisa de ação
+// (crítico/atenção) e reorganizamos numa visão de leitura rápida, sem tabela.
+
+// Divide o nome do produto nos pedaços "tipo / furo / tamanho", removendo a
+// marca (já mostrada no cabeçalho do grupo) e códigos internos soltos.
+// Ex: "TAMPA RETA S/FURO - 451 - 440/550ML - ALTACOPO" com marca "ALTACOPO"
+//  -> { subtipo: "TAMPA RETA", furo: "Sem Furo", tamanho: "440/550ML" }
+function _parseNomeProdutoCompras(nome, marca) {
+  const norm = s => String(s || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  let work = norm(nome);
+  const marcaU = norm(marca).trim();
+
+  // 1. tamanho: primeiro trecho numérico com ML/MM em qualquer lugar da string
+  // (não só em segmentos separados por hífen — furo/tamanho às vezes vêm colados
+  // sem separador próprio, ex: "TAMPA BOLHA C/FURO 330ML"). Se não achar unidade,
+  // cai pra uma sequência de números separados por barra (ex: "350/400/500/700").
+  let tamanho = '—';
+  let m = work.match(/\d+(?:\s*\/\s*\d+)*\s*(ML|MM)\b/);
+  if (m) {
+    tamanho = m[0].replace(/\s+/g, '');
+    work = work.slice(0, m.index) + ' ' + work.slice(m.index + m[0].length);
+  } else {
+    m = work.match(/\d+(?:\s*\/\s*\d+){1,}/);
+    if (m) {
+      tamanho = m[0].replace(/\s+/g, '');
+      work = work.slice(0, m.index) + ' ' + work.slice(m.index + m[0].length);
+    }
+  }
+
+  // 2. furo (com ou sem) — mesma lógica de busca solta na string
+  let furo = '';
+  m = work.match(/\bC\s*\/?\s*FURO\b/);
+  if (m) { furo = 'Com Furo'; work = work.slice(0, m.index) + ' ' + work.slice(m.index + m[0].length); }
+  else {
+    m = work.match(/\bS\s*\/?\s*FURO\b/);
+    if (m) { furo = 'Sem Furo'; work = work.slice(0, m.index) + ' ' + work.slice(m.index + m[0].length); }
+  }
+
+  // 3. marca — remove como palavra inteira (aceita plural com S no final, ex:
+  // "CRISTALCOPOS" no nome vs "CRISTALCOPO" cadastrado como marca)
+  if (marcaU) {
+    work = work.replace(new RegExp('\\b' + marcaU + 'S?\\b', 'g'), ' ');
+  }
+
+  // 4. o que sobrar: limpa separadores e descarta código numérico solto (ex: "451")
+  const subtipo = work
+    .split(/[-\/]/)
+    .map(s => s.trim())
+    .filter(s => s && !/^\d+$/.test(s))
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim() || 'OUTROS';
+
+  return { subtipo, furo, tamanho };
+}
+
+let lcDados = [];
+
+async function loadListaCompras() {
+  lcTrocarModo('padrao');
+  const el = document.getElementById('lc-content');
+  if (el) el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:30px 0">Carregando...</p>';
+  try {
+    lcDados = await api('/estoque/saldo-vs-demanda');
+  } catch (e) {
+    if (el) el.innerHTML = '<p style="color:var(--danger);text-align:center;padding:30px 0">Erro ao carregar: ' + e.message + '</p>';
+    return;
+  }
+  renderListaCompras();
+  const dt = document.getElementById('lc-ultima-atualizacao');
+  if (dt) dt.textContent = '🕐 Atualizado em: ' + new Date().toLocaleString('pt-BR');
+}
+
+// ─── LISTA AVULSA (outros produtos, fora das 4 categorias da Lista Padrão) ──
+let lcAvulsaCarregado = false;
+let lcAvulsaTodosProdutos = [];
+let lcAvulsaSeq = 0;
+
+function lcTrocarModo(modo) {
+  const tabPadrao = document.getElementById('lc-tab-padrao');
+  const tabAvulsa = document.getElementById('lc-tab-avulsa');
+  const contPadrao = document.getElementById('lc-padrao-container');
+  const contAvulsa = document.getElementById('lc-avulsa-container');
+  if (tabPadrao) { tabPadrao.classList.toggle('btn-primary', modo === 'padrao'); tabPadrao.classList.toggle('btn-secondary', modo !== 'padrao'); }
+  if (tabAvulsa) { tabAvulsa.classList.toggle('btn-primary', modo === 'avulsa'); tabAvulsa.classList.toggle('btn-secondary', modo !== 'avulsa'); }
+  if (contPadrao) contPadrao.style.display = modo === 'padrao' ? '' : 'none';
+  if (contAvulsa) contAvulsa.style.display = modo === 'avulsa' ? '' : 'none';
+  if (modo === 'avulsa' && !lcAvulsaCarregado) lcCarregarAvulsa();
+}
+
+async function lcCarregarAvulsa() {
+  lcAvulsaCarregado = true;
+  const sel = document.getElementById('lc-avulsa-categoria');
+  if (sel) sel.innerHTML = '<option value="">Carregando...</option>';
+  try {
+    lcAvulsaTodosProdutos = await api('/estoque/produtos');
+  } catch (e) {
+    lcAvulsaTodosProdutos = [];
+  }
+  // exclui as 4 categorias que já são cobertas pela Lista Padrão
+  const nucleo = CATEGORIAS_LISTA_COMPRAS.map(_normMarcaLC);
+  const categorias = [...new Set(
+    lcAvulsaTodosProdutos.map(p => p.categoria_nome).filter(c => c && !nucleo.includes(_normMarcaLC(c)))
+  )].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  if (sel) {
+    sel.innerHTML = '<option value="">Selecione uma categoria...</option>' +
+      categorias.map(c => `<option value="${c}">${c}</option>`).join('');
+  }
+}
+
+function lcAvulsaTrocarCategoria() {
+  const categoria = document.getElementById('lc-avulsa-categoria')?.value || '';
+  const selMarca = document.getElementById('lc-avulsa-marca');
+  if (selMarca) {
+    const marcas = [...new Set(
+      lcAvulsaTodosProdutos.filter(p => p.categoria_nome === categoria).map(p => p.marca).filter(Boolean)
+    )].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    selMarca.innerHTML = '<option value="">Todas as marcas</option>' + marcas.map(m => `<option value="${m}">${m}</option>`).join('');
+  }
+  renderListaAvulsa();
+}
+
+function renderListaAvulsa() {
+  const el = document.getElementById('lc-avulsa-content');
+  if (!el) return;
+  const categoria = document.getElementById('lc-avulsa-categoria')?.value || '';
+  const marca = document.getElementById('lc-avulsa-marca')?.value || '';
+  if (!categoria) {
+    el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:30px 0">Selecione uma categoria pra ver os produtos.</p>';
+    return;
+  }
+  let produtos = lcAvulsaTodosProdutos.filter(p => p.categoria_nome === categoria);
+  if (marca) produtos = produtos.filter(p => p.marca === marca);
+  if (!produtos.length) {
+    el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:30px 0">Nenhum produto encontrado nessa categoria/marca.</p>';
+    return;
+  }
+
+  const porMarca = {};
+  produtos.forEach(p => {
+    const m = p.marca || 'Sem marca';
+    if (!porMarca[m]) porMarca[m] = [];
+    porMarca[m].push(p);
+  });
+  const marcasOrdenadas = Object.keys(porMarca).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+
+  lcAvulsaSeq = 0;
+  el.innerHTML = marcasOrdenadas.map(m => {
+    const itens = porMarca[m].sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
+    return `
+    <div style="padding-bottom:14px;border-bottom:1px solid var(--border)">
+      <div style="font-family:var(--font-head);font-weight:700;font-size:17px;margin-bottom:12px">${m}</div>
+      ${itens.map(p => {
+        const id = 'lcavqtd' + (lcAvulsaSeq++);
+        return `
+        <div class="lc-row" style="padding:5px 0;max-width:360px">
+          <label style="display:flex;align-items:center;gap:10px;font-size:15px;cursor:pointer">
+            <input type="checkbox" class="lc-avulsa-chk" data-marca="${m}" data-produto="${(p.nome || '').replace(/"/g, '&quot;')}" data-unidade="${p.unidade || ''}" onchange="toggleQtdLC(this, '${id}')" style="margin:0;flex-shrink:0;width:20px;height:20px;cursor:pointer">
+            <span style="flex:1">${p.nome}</span>
+            <span style="color:var(--muted);font-size:13px">Saldo: ${fmtNum(p.quantidade_atual)} ${p.unidade || ''}</span>
+          </label>
+          <div id="qtdbox-${id}" style="display:none;padding:5px 0 0 30px">
+            <input type="number" min="1" id="${id}" class="lc-qtd-input" placeholder="Quantidade a comprar" style="width:200px;font-size:15px;height:36px">
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+  }).join('');
+}
+
+function gerarSolicitacaoAvulsa() {
+  const marcados = Array.from(document.querySelectorAll('#lc-avulsa-content .lc-avulsa-chk:checked'));
+  if (!marcados.length) { showAlert('Selecione pelo menos um item pra gerar a solicitação.', 'danger'); return; }
+
+  const itens = [];
+  let faltaQtd = false;
+  marcados.forEach(chk => {
+    const qtdInput = chk.closest('.lc-row').querySelector('.lc-qtd-input');
+    const qtd = qtdInput.value;
+    if (!qtd || Number(qtd) <= 0) {
+      qtdInput.style.outline = '1px solid var(--danger)';
+      faltaQtd = true;
+      return;
+    }
+    qtdInput.style.outline = '';
+    itens.push({ marca: chk.dataset.marca, produto: chk.dataset.produto, unidade: chk.dataset.unidade, qtd: Number(qtd) });
+  });
+  if (faltaQtd) { showAlert('Informe a quantidade para todos os itens marcados.', 'danger'); return; }
+
+  const porMarca = {};
+  itens.forEach(i => { (porMarca[i.marca] = porMarca[i.marca] || []).push(i); });
+
+  const corpo = Object.keys(porMarca).sort((a, b) => a.localeCompare(b, 'pt-BR')).map(marca => `
+    <div style="margin-bottom:18px;break-inside:avoid">
+      <div style="font-weight:700;font-size:15px;margin-bottom:6px">${marca}</div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="border-bottom:1px solid #ccc">
+          <th style="text-align:left;padding:4px 6px 4px 0">Produto</th>
+          <th style="text-align:right;padding:4px 0 4px 6px">Qtd. solicitada</th>
+        </tr></thead>
+        <tbody>
+          ${porMarca[marca].map(i => `<tr style="border-bottom:1px solid #eee">
+            <td style="padding:4px 6px 4px 0">${i.produto}</td>
+            <td style="padding:4px 0 4px 6px;text-align:right;font-weight:700">${fmtNum(i.qtd)} ${i.unidade || ''}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  `).join('');
+
+  const dataHoje = new Date().toLocaleDateString('pt-BR');
+  const tituloRelatorio = `Lista Avulsa de Compra - ${dataHoje}`;
+
+  const win = window.open('', '_blank');
+  win.document.write(`<html><head><title>${tituloRelatorio} PRATIC</title>
+    <style>@page{size:A4;margin:15mm 15mm 15mm 15mm}
+    body{font-family:Arial,sans-serif;margin:0;font-size:13px;color:#111}
+    @media screen{body{padding:20mm 15mm;max-width:210mm;margin:0 auto;box-sizing:border-box}}
+    @media print{body{padding:0}}</style></head><body>
+    ${_getEmpresaHeader(tituloRelatorio)}
+    <div style="font-size:10px;color:#777;margin-bottom:16px">Emitido em: ${new Date().toLocaleString('pt-BR')}</div>
+    ${corpo}
+    </body></html>`);
+  win.document.close();
+  setTimeout(() => win.print(), 500);
+}
+
+// Classifica cada item quanto à urgência de compra:
+// (a) crítico/atenção porque tem pedido em aberto pressionando o estoque, ou
+// (b) saldo no ou abaixo do mínimo cadastrado, mesmo SEM nenhum pedido puxando.
+// Itens que não se encaixam em nenhum dos dois ficam "não urgentes" — ainda
+// aparecem na lista (se a marca deles for qualificada), só sem alarme visual.
+function _classificarItemCompras(r) {
+  if (r.situacao === 'critico' || r.situacao === 'atencao') {
+    return { urgente: true, situacao: r.situacao, semPedido: false };
+  }
+  const minimo = r.estoque_minimo || 0;
+  if (minimo > 0 && r.saldo_atual <= minimo) {
+    return { urgente: true, situacao: r.saldo_atual <= 0 ? 'critico' : 'atencao', semPedido: (r.total_demanda || 0) === 0 };
+  }
+  return { urgente: false, situacao: 'ok', semPedido: false };
+}
+
+// Só essas 4 categorias entram na Lista de Compras — o restante do catálogo
+// (EPI, insumos de escritório, squeeze, chaveiros etc.) fica de fora, mesmo
+// que também seja "revenda". Nomes batendo exatamente com o cadastro.
+const CATEGORIAS_LISTA_COMPRAS = ['COPOS DESCARTÁVEL', 'COPOS DE PAPEL', 'COPOS DE ISOPOR', 'TAMPAS DESCARTÁVEL'];
+
+// Marcas que sempre aparecem na tela, mesmo sem nenhum item crítico/atenção —
+// são os fornecedores principais, que fazem sentido revisar toda vez mesmo
+// tranquilos. Comparação ignora espaço/acento/caixa (ex: "Total Plast" bate
+// com "TOTALPLAST").
+const MARCAS_PRINCIPAIS_LC = ['ALTACOPO', 'CRISTALCOPO', 'TOTALPLAST', 'RIOPLASTIC', 'BIAMAR', 'FNS'];
+const _normMarcaLC = s => String(s || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, '');
+
+// Constrói a estrutura marca -> subtipo -> furo -> tamanhos a partir de uma
+// lista já classificada de {r, cl}. Usada tanto para a lista padrão (só
+// marcas com pendência) quanto para o catálogo completo (usado pela busca).
+function _montarGruposPorMarca(classificados) {
+  const porMarca = {};
+  classificados.forEach(({ r, cl }) => {
+    const marca = (r.marca || 'SEM MARCA').trim() || 'SEM MARCA';
+    if (!porMarca[marca]) porMarca[marca] = { itens: [], criticos: 0, atencao: 0 };
+    porMarca[marca].itens.push({ r, cl });
+    if (cl.urgente) { if (cl.situacao === 'critico') porMarca[marca].criticos++; else porMarca[marca].atencao++; }
+  });
+
+  const marcas = Object.keys(porMarca).map(marca => {
+    const grupo = porMarca[marca];
+    const porSubtipo = {};
+    grupo.itens.forEach(({ r, cl }) => {
+      const { subtipo, furo, tamanho } = _parseNomeProdutoCompras(r.nome, marca);
+      if (!porSubtipo[subtipo]) porSubtipo[subtipo] = {};
+      if (!porSubtipo[subtipo][furo]) porSubtipo[subtipo][furo] = [];
+      const saldo = (r.total_demanda || 0) > 0 ? r.saldo_projetado : r.saldo_atual;
+      porSubtipo[subtipo][furo].push({ tamanho, saldo, situacao: cl.situacao, semPedido: cl.semPedido, urgente: cl.urgente, unidade: r.unidade });
+    });
+
+    const ordemFuro = { '': 0, 'Com Furo': 1, 'Sem Furo': 2 };
+    const numeroInicial = s => { const m = String(s).match(/\d+/); return m ? parseInt(m[0], 10) : 999999; };
+
+    const subtipos = Object.keys(porSubtipo).sort().map(subtipo => ({
+      subtipo,
+      furos: Object.keys(porSubtipo[subtipo])
+        .sort((a, b) => (ordemFuro[a] ?? 9) - (ordemFuro[b] ?? 9))
+        .map(furo => ({
+          furo,
+          tamanhos: porSubtipo[subtipo][furo].sort((a, b) => numeroInicial(a.tamanho) - numeroInicial(b.tamanho))
+        }))
+    }));
+
+    return { marca, criticos: grupo.criticos, atencao: grupo.atencao, total: grupo.itens.length, subtipos };
+  });
+
+  marcas.sort((a, b) => b.criticos - a.criticos || b.atencao - a.atencao || a.marca.localeCompare(b.marca, 'pt-BR'));
+  return marcas;
+}
+
+function _classificarDadosLC(dados) {
+  const norm = s => String(s || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  const categoriasAlvo = CATEGORIAS_LISTA_COMPRAS.map(norm);
+  const relevantes = dados.filter(r => categoriasAlvo.includes(norm(r.categoria)));
+  return relevantes.map(r => ({ r, cl: _classificarItemCompras(r) }));
+}
+
+// Lista padrão: marca com pelo menos 1 item urgente (crítico/atenção), OU uma
+// das marcas principais (sempre visível, mesmo tranquila) — é o que aparece
+// na tela sem nenhum filtro digitado.
+function _agruparListaCompras(dados) {
+  const classificados = _classificarDadosLC(dados);
+  const marcasQualificadas = new Set();
+  classificados.forEach(({ r, cl }) => {
+    const marca = (r.marca || 'SEM MARCA').trim() || 'SEM MARCA';
+    if (cl.urgente || MARCAS_PRINCIPAIS_LC.includes(_normMarcaLC(marca))) marcasQualificadas.add(marca);
+  });
+  if (!marcasQualificadas.size) return [];
+  const filtrados = classificados.filter(({ r }) => marcasQualificadas.has((r.marca || 'SEM MARCA').trim() || 'SEM MARCA'));
+  return _montarGruposPorMarca(filtrados);
+}
+
+// Catálogo completo: TODA marca dessas 4 categorias, mesmo sem nenhuma
+// pendência — usado só pela busca, pra deixar achar qualquer marca e incluir
+// no pedido por outro motivo (reposição preventiva, por exemplo).
+function _agruparListaComprasCompleto(dados) {
+  const classificados = _classificarDadosLC(dados);
+  return _montarGruposPorMarca(classificados);
+}
+
+let lcSeq = 0;
+
+function _cardMarcaLC(g, ocultoPadrao) {
+  const bola = g.criticos > 0 ? '🔴' : (g.atencao > 0 ? '🟡' : '🟢');
+  return `
+    <div data-marca-card data-marca="${g.marca.toLowerCase()}" data-oculto-padrao="${ocultoPadrao ? '1' : '0'}" style="padding-bottom:14px;border-bottom:1px solid var(--border);${ocultoPadrao ? 'display:none' : ''}">
+      <div style="display:flex;align-items:center;gap:8px;font-family:var(--font-head);font-weight:700;font-size:17px;margin-bottom:12px">
+        <span>${bola}</span><span>${g.marca}</span>
+        <span style="color:var(--muted);font-weight:400;font-size:13px">${g.total} ${g.total === 1 ? 'item' : 'itens'}</span>
+      </div>
+      ${g.subtipos.map(st => `
+        <div style="margin-bottom:10px">
+          <div style="font-size:13px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:.03em;margin-bottom:4px">${st.subtipo}</div>
+          ${st.furos.map(f => `
+            ${f.furo ? `<div style="font-size:12px;font-weight:600;color:var(--success);margin:4px 0 2px">— ${f.furo} —</div>` : ''}
+            ${f.tamanhos.map(t => {
+              const id = 'lcqtd' + (lcSeq++);
+              const produtoLabel = st.subtipo + (f.furo ? ' — ' + f.furo : '');
+              return `
+              <div class="lc-row" style="padding:5px 0;max-width:360px">
+                <label style="display:flex;align-items:center;gap:10px;font-size:17px;cursor:pointer">
+                  <input type="checkbox" class="lc-chk" data-marca="${g.marca}" data-produto="${produtoLabel}" data-tamanho="${t.tamanho}" data-unidade="${t.unidade || ''}" onchange="toggleQtdLC(this, '${id}')" style="margin:0;flex-shrink:0;width:20px;height:20px;cursor:pointer">
+                  <span style="flex:1">${t.tamanho}</span>
+                  <span style="display:flex;align-items:baseline;gap:6px">
+                    <span style="color:${!t.urgente ? 'var(--text)' : (t.situacao === 'critico' ? 'var(--danger)' : 'var(--warn)')};font-weight:${t.urgente ? 600 : 400}">Saldo: ${fmtNum(t.saldo)} ${t.unidade || ''}</span>
+                    ${t.semPedido ? '<span style="font-size:12px;color:var(--muted);font-weight:400">(sem pedido)</span>' : ''}
+                  </span>
+                </label>
+                <div id="qtdbox-${id}" style="display:none;padding:5px 0 0 30px">
+                  <input type="number" min="1" id="${id}" class="lc-qtd-input" placeholder="Quantidade a comprar" style="width:200px;font-size:15px;height:36px">
+                </div>
+              </div>`;
+            }).join('')}
+          `).join('')}
+        </div>
+      `).join('')}
+    </div>`;
+}
+
+function renderListaCompras() {
+  const el = document.getElementById('lc-content');
+  if (!el) return;
+  const marcas = _agruparListaCompras(lcDados);
+  const todas = _agruparListaComprasCompleto(lcDados);
+  const nomesQualificados = new Set(marcas.map(g => g.marca));
+  const extras = todas.filter(g => !nomesQualificados.has(g.marca));
+
+  if (!marcas.length && !extras.length) {
+    el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:30px 0">Nenhum produto cadastrado nessas categorias.</p>';
+    return;
+  }
+
+  lcSeq = 0;
+  // marcas com pendência aparecem direto; o resto do catálogo fica pronto no
+  // DOM mas escondido, só aparecendo quando o filtro de marca encontra ela
+  el.innerHTML = marcas.map(g => _cardMarcaLC(g, false)).join('')
+    + extras.map(g => _cardMarcaLC(g, true)).join('');
+
+  // preenche o dropdown de marcas com as marcas de verdade que existem nessas
+  // categorias, pra quem for usar não precisar adivinhar nome nenhum
+  const opcoesEl = document.getElementById('lc-marca-filtro-options');
+  if (opcoesEl) {
+    const nomesOrdenados = todas.map(g => g.marca).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    opcoesEl.innerHTML = '<div class="multiselect-option" onclick="selecionarMarcaLC(\'\')" style="cursor:pointer"><span>Todas as marcas</span></div>'
+      + nomesOrdenados.map(m => `<div class="multiselect-option" onclick="selecionarMarcaLC('${m.replace(/'/g, "\\'")}')" style="cursor:pointer"><span>${m}</span></div>`).join('');
+  }
+}
+
+function selecionarMarcaLC(marca) {
+  const btnText = document.getElementById('lc-marca-filtro-btn-text');
+  if (btnText) btnText.textContent = marca || 'Todas as marcas';
+  const dropdown = document.getElementById('lc-marca-filtro-dropdown');
+  if (dropdown) dropdown.style.display = 'none';
+  filtrarListaCompras(marca);
+}
+
+function toggleQtdLC(chk, id) {
+  const box = document.getElementById('qtdbox-' + id);
+  box.style.display = chk.checked ? 'block' : 'none';
+  if (chk.checked) document.getElementById(id).focus();
+}
+
+function filtrarListaCompras(texto) {
+  const t = (texto || '').toLowerCase().trim();
+  document.querySelectorAll('#lc-content > [data-marca-card]').forEach(card => {
+    if (!t) {
+      // sem busca: só quem tem pendência fica visível (comportamento padrão)
+      card.style.display = card.dataset.ocultoPadrao === '1' ? 'none' : '';
+    } else {
+      // com busca: qualquer marca das 4 categorias pode aparecer, mesmo sem pendência
+      card.style.display = card.dataset.marca.includes(t) ? '' : 'none';
+    }
+  });
+}
+
+function gerarPedidoCompra() {
+  const marcados = Array.from(document.querySelectorAll('#lc-content .lc-chk:checked'));
+  if (!marcados.length) { showAlert('Selecione pelo menos um item para gerar o pedido.', 'danger'); return; }
+
+  const itens = [];
+  let faltaQtd = false;
+  marcados.forEach(chk => {
+    const qtdInput = chk.closest('.lc-row').querySelector('.lc-qtd-input');
+    const qtd = qtdInput.value;
+    if (!qtd || Number(qtd) <= 0) {
+      qtdInput.style.outline = '1px solid var(--danger)';
+      faltaQtd = true;
+      return;
+    }
+    qtdInput.style.outline = '';
+    itens.push({ marca: chk.dataset.marca, produto: chk.dataset.produto, tamanho: chk.dataset.tamanho, unidade: chk.dataset.unidade, qtd: Number(qtd) });
+  });
+  if (faltaQtd) { showAlert('Informe a quantidade para todos os itens marcados.', 'danger'); return; }
+
+  const porMarca = {};
+  itens.forEach(i => { (porMarca[i.marca] = porMarca[i.marca] || []).push(i); });
+
+  const corpo = Object.keys(porMarca).sort((a, b) => a.localeCompare(b, 'pt-BR')).map(marca => `
+    <div style="margin-bottom:18px;break-inside:avoid">
+      <div style="font-weight:700;font-size:15px;margin-bottom:6px">${marca}</div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="border-bottom:1px solid #ccc">
+          <th style="text-align:left;padding:4px 6px 4px 0">Produto</th>
+          <th style="text-align:left;padding:4px 6px">Tamanho</th>
+          <th style="text-align:right;padding:4px 0 4px 6px">Qtd. solicitada</th>
+        </tr></thead>
+        <tbody>
+          ${porMarca[marca].map(i => `<tr style="border-bottom:1px solid #eee">
+            <td style="padding:4px 6px 4px 0">${i.produto}</td>
+            <td style="padding:4px 6px">${i.tamanho}</td>
+            <td style="padding:4px 0 4px 6px;text-align:right;font-weight:700">${fmtNum(i.qtd)} ${i.unidade || ''}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  `).join('');
+
+  const dataHoje = new Date().toLocaleDateString('pt-BR');
+  const tituloRelatorio = `Pedido de Compra - ${dataHoje}`;
+
+  const win = window.open('', '_blank');
+  win.document.write(`<html><head><title>${tituloRelatorio} PRATIC</title>
+    <style>@page{size:A4;margin:15mm 15mm 15mm 15mm}
+    body{font-family:Arial,sans-serif;margin:0;font-size:13px;color:#111}
+    @media screen{body{padding:20mm 15mm;max-width:210mm;margin:0 auto;box-sizing:border-box}}
+    @media print{body{padding:0}}</style></head><body>
+    ${_getEmpresaHeader(tituloRelatorio)}
+    <div style="font-size:10px;color:#777;margin-bottom:16px">Emitido em: ${new Date().toLocaleString('pt-BR')}</div>
+    ${corpo}
+    </body></html>`);
+  win.document.close();
+  setTimeout(() => win.print(), 500);
+}
+
+
+function imprimirListaCompras() {
+  const marcas = _agruparListaCompras(lcDados);
+  if (!marcas.length) { showAlert('Nenhum produto cadastrado nessas categorias.'); return; }
+
+  const corpo = marcas.map(g => {
+    const bola = g.criticos > 0 ? '🔴' : (g.atencao > 0 ? '🟡' : '🟢');
+    return `
+    <div style="padding:10px 0;margin-bottom:2px;border-bottom:1px solid #ccc;break-inside:avoid">
+      <div style="font-weight:700;font-size:16px;margin-bottom:8px">${bola} ${g.marca} <span style="color:#777;font-weight:400;font-size:12px">(${g.total} ${g.total === 1 ? 'item' : 'itens'})</span></div>
+      ${g.subtipos.map(st => `
+        <div style="margin-bottom:8px">
+          <div style="font-size:12px;font-weight:700;color:#1d4ed8;text-transform:uppercase;margin-bottom:3px">${st.subtipo}</div>
+          ${st.furos.map(f => `
+            ${f.furo ? `<div style="font-size:11px;font-weight:700;color:#047857;margin:3px 0 2px">— ${f.furo} —</div>` : ''}
+            ${f.tamanhos.map(t => `
+              <div style="display:flex;justify-content:space-between;align-items:baseline;gap:14px;padding:3px 0;font-size:14px;max-width:380px">
+                <span>${t.tamanho}</span>
+                <span style="display:flex;align-items:baseline;gap:6px">
+                  <span style="color:${!t.urgente ? '#111' : (t.situacao === 'critico' ? '#b91c1c' : '#92400e')};font-weight:${t.urgente ? 600 : 400}">Saldo: ${fmtNum(t.saldo)} ${t.unidade || ''}</span>
+                  ${t.semPedido ? '<span style="font-size:10px;color:#777;font-weight:400">(sem pedido)</span>' : ''}
+                </span>
+              </div>
+            `).join('')}
+          `).join('')}
+        </div>
+      `).join('')}
+    </div>`;
+  }).join('');
+
+  const win = window.open('', '_blank');
+  win.document.write(`<html><head><title>Lista de Compras PRATIC</title>
+    <style>@page{size:A4;margin:15mm 15mm 15mm 15mm}
+    body{font-family:Arial,sans-serif;margin:0;font-size:13px;color:#111}
+    @media screen{body{padding:20mm 15mm;max-width:210mm;margin:0 auto;box-sizing:border-box}}
+    @media print{body{padding:0}}</style></head><body>
+    ${_getEmpresaHeader('Lista de Compras')}
+    <div style="font-size:10px;color:#777;margin-bottom:12px">Emitido em: ${new Date().toLocaleString('pt-BR')}</div>
+    <div style="max-width:460px">${corpo}</div>
+    </body></html>`);
+  win.document.close();
+  setTimeout(() => win.print(), 500);
+}
+
+// ─── CONSUMO MÉDIO ────────────────────────────────────────────────────────
+let cmDados = [];
+let cmExpandido = new Set(); // chaves de categoria/marca abertas
+let cmSvdPorProduto = {};    // id produto -> {situacao, saldo_projetado} vindo do Saldo vs Demanda
+let cmMesesAtual = 6;
+let cmUltimaAtualizacaoTexto = '';
+
+async function loadConsumoMedio() {
+  try {
+    const cats = await api('/estoque/categorias');
+    const sel = document.getElementById('cm-filtro-cat');
+    if (sel && sel.options.length <= 1) {
+      cats.forEach(c => {
+        const o = document.createElement('option');
+        o.value = c.id; o.textContent = c.nome;
+        sel.appendChild(o);
+      });
+    }
+  } catch(e) {}
+
+  const catId = document.getElementById('cm-filtro-cat')?.value || '';
+  const meses = document.getElementById('cm-janela')?.value || '6';
+  cmMesesAtual = Number(meses);
+  let url = `/estoque/consumo-medio?meses=${meses}`;
+  if (catId) url += '&categoria_id=' + catId;
+
+  try {
+    cmDados = await api(url);
+
+    // Cruza com Saldo vs Demanda: um produto pode ter cobertura folgada pelo
+    // ritmo histórico de consumo e, ainda assim, já estar com déficit HOJE
+    // por causa de pedidos firmes em aberto. São duas perguntas diferentes
+    // ("quando o saldo deve zerar no ritmo atual" x "quanto já está prometido
+    // e não coberto agora"), então sinalizamos as duas juntas.
+    try {
+      const svd = await api('/estoque/saldo-vs-demanda');
+      cmSvdPorProduto = {};
+      svd.forEach(r => { cmSvdPorProduto[r.id] = r; });
+    } catch(e) { cmSvdPorProduto = {}; }
+
+    const marcaSel = document.getElementById('cm-filtro-marca');
+    if (marcaSel) {
+      const atual = marcaSel.value;
+      marcaSel.innerHTML = '<option value="">Todas as marcas</option>';
+      const marcas = [...new Set(cmDados.map(r => r.marca).filter(Boolean))].sort();
+      marcas.forEach(m => {
+        const o = document.createElement('option');
+        o.value = m; o.textContent = m;
+        marcaSel.appendChild(o);
+      });
+      if (marcas.includes(atual)) marcaSel.value = atual;
+    }
+
+    cmUltimaAtualizacaoTexto = `🕐 Janela: últimos ${meses} meses · Atualizado em: ` + new Date().toLocaleString('pt-BR');
+    renderConsumoMedioTree();
+  } catch(e) { showAlert('Erro ao carregar Consumo Médio: ' + e.message, 'danger'); }
+}
+
+function _cmCoberturaBadge(dias) {
+  if (dias === null || dias === undefined) return '<span style="color:var(--muted)">—</span>';
+  if (dias < 30) return `<span class="pill pill-danger">${fmtNum(dias)}d</span>`;
+  if (dias < 90) return `<span class="pill pill-warn">${fmtNum(dias)}d</span>`;
+  return `<span class="pill pill-success">${fmtNum(dias)}d</span>`;
+}
+
+function toggleCmGrupo(key) {
+  if (cmExpandido.has(key)) cmExpandido.delete(key);
+  else cmExpandido.add(key);
+  renderConsumoMedioTree();
+}
+
+function renderConsumoMedioTree() {
+  const tbody = document.getElementById('cm-tbody');
+  if (!tbody) return;
+
+  const marcaFiltro = document.getElementById('cm-filtro-marca')?.value || '';
+  const dados = marcaFiltro ? cmDados.filter(r => r.marca === marcaFiltro) : cmDados;
+
+  const elAtualizacao = document.getElementById('cm-ultima-atualizacao');
+  if (elAtualizacao) {
+    const piorCaso = dados.reduce((pior, r) => {
+      if (r.dias_historico == null) return pior;
+      if (!pior || r.dias_historico < pior.dias_historico) return r;
+      return pior;
+    }, null);
+    const avisoHistorico = (piorCaso && piorCaso.dias_historico < cmMesesAtual * 30)
+      ? ` · ⚠ o produto com menos histórico no filtro atual é ${piorCaso.nome} (${piorCaso.codigo}), com só ${piorCaso.dias_historico} dia(s) de consumo registrado — outros produtos podem ter o mesmo aviso (veja o * ao lado da cobertura de cada um)`
+      : '';
+    elAtualizacao.innerHTML = cmUltimaAtualizacaoTexto +
+      (avisoHistorico ? `<span style="color:var(--warn)">${avisoHistorico}</span>` : '');
+  }
+
+  if (!dados.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:32px">Nenhum produto encontrado</td></tr>';
+    return;
+  }
+
+  // Agrupar: categoria -> marca -> produtos
+  const arvore = new Map();
+  dados.forEach(r => {
+    const cat = r.categoria || '—';
+    if (!arvore.has(cat)) arvore.set(cat, new Map());
+    const marcas = arvore.get(cat);
+    const marca = r.marca || '—';
+    if (!marcas.has(marca)) marcas.set(marca, []);
+    marcas.get(marca).push(r);
+  });
+
+  let html = '';
+  for (const [cat, marcas] of arvore) {
+    const catKey = 'cat:' + cat;
+    const catAberta = cmExpandido.has(catKey);
+    const catProdutos = [...marcas.values()].flat();
+    const catConsumo = catProdutos.reduce((s,p) => s + (p.consumo_periodo||0), 0);
+    const catSaldo = catProdutos.reduce((s,p) => s + (p.saldo_atual||0), 0);
+    const catMediaMensal = catProdutos.reduce((s,p) => s + (p.media_mensal||0), 0);
+    const catMediaQuinzenal = catProdutos.reduce((s,p) => s + (p.media_quinzenal||0), 0);
+    const catCobertura = catMediaMensal > 0 ? Math.round(catSaldo / (catMediaMensal/30)) : null;
+
+    html += `<tr style="cursor:pointer;background:var(--surface1)" onclick="toggleCmGrupo('${catKey.replace(/'/g,"\\'")}')">
+      <td style="font-weight:700">${catAberta?'▾':'▸'} ${cat}</td>
+      <td style="font-weight:700">${fmtNum(catSaldo)}</td>
+      <td style="font-weight:700">${catConsumo>0?fmtNum(catConsumo):'—'}</td>
+      <td style="font-weight:700">${catMediaMensal>0?fmtNum(Math.round(catMediaMensal)):'—'}</td>
+      <td style="font-weight:700">${catMediaQuinzenal>0?fmtNum(Math.round(catMediaQuinzenal)):'—'}</td>
+      <td>${_cmCoberturaBadge(catCobertura)}</td>
+    </tr>`;
+
+    if (!catAberta) continue;
+
+    for (const [marca, produtos] of marcas) {
+      const marcaKey = 'marca:' + cat + '|' + marca;
+      const marcaAberta = cmExpandido.has(marcaKey);
+      const marcaConsumo = produtos.reduce((s,p) => s + (p.consumo_periodo||0), 0);
+      const marcaSaldo = produtos.reduce((s,p) => s + (p.saldo_atual||0), 0);
+      const marcaMediaMensal = produtos.reduce((s,p) => s + (p.media_mensal||0), 0);
+      const marcaMediaQuinzenal = produtos.reduce((s,p) => s + (p.media_quinzenal||0), 0);
+      const marcaCobertura = marcaMediaMensal > 0 ? Math.round(marcaSaldo / (marcaMediaMensal/30)) : null;
+
+      html += `<tr style="cursor:pointer" onclick="toggleCmGrupo('${marcaKey.replace(/'/g,"\\'")}')">
+        <td style="padding-left:28px;font-weight:600;color:var(--muted)">${marcaAberta?'▾':'▸'} ${marca}</td>
+        <td style="font-weight:600">${fmtNum(marcaSaldo)}</td>
+        <td style="font-weight:600">${marcaConsumo>0?fmtNum(marcaConsumo):'—'}</td>
+        <td style="font-weight:600">${marcaMediaMensal>0?fmtNum(Math.round(marcaMediaMensal)):'—'}</td>
+        <td style="font-weight:600">${marcaMediaQuinzenal>0?fmtNum(Math.round(marcaMediaQuinzenal)):'—'}</td>
+        <td>${_cmCoberturaBadge(marcaCobertura)}</td>
+      </tr>`;
+
+      if (!marcaAberta) continue;
+
+      produtos.forEach(p => {
+        const svd = cmSvdPorProduto[p.id];
+        const jaCritico = svd && svd.saldo_projetado < 0;
+        html += `<tr>
+          <td style="padding-left:44px;font-size:13px">${p.nome}${p.codigo?` <span style="color:var(--muted);font-size:11px">${p.codigo}</span>`:''}</td>
+          <td>${fmtNum(p.saldo_atual)} <span style="color:var(--muted);font-size:11px">${p.unidade||''}</span></td>
+          <td>${p.consumo_periodo>0?fmtNum(p.consumo_periodo):'—'}</td>
+          <td>${p.media_mensal>0?fmtNum(Math.round(p.media_mensal)):'—'}</td>
+          <td>${p.media_quinzenal>0?fmtNum(Math.round(p.media_quinzenal)):'—'}</td>
+          <td>
+            ${_cmCoberturaBadge(p.cobertura_dias)}${p.historico_curto ? `<span style="color:var(--warn);font-size:11px;margin-left:4px" title="Calculado com base em apenas ${p.dias_historico} dia(s) de histórico real, não na janela cheia selecionada">*</span>` : ''}
+            ${jaCritico ? `<div style="margin-top:4px"><span class="pill pill-danger" style="font-size:10px" title="Pedidos em aberto já superam o saldo atual (déficit de ${fmtNum(Math.abs(svd.saldo_projetado))} ${p.unidade||''})">⚠ déficit em pedidos</span></div>` : ''}
+          </td>
+        </tr>`;
+      });
+    }
+  }
+
+  tbody.innerHTML = html;
+}
+
+// ─── PAINEL GERENCIAL ──────────────────────────────────────────────────────
+const CORES_CATEGORIA_GER = ['#3b82f6', '#f0b429', '#10b981', '#ef4444', '#a855f7', '#14b8a6', '#6b7280'];
+
+async function loadGerencial() {
+  const mesEl = document.getElementById('ger-mes');
+  if (!mesEl.value) mesEl.value = currentMonth();
+  const mes = mesEl.value;
+
+  document.getElementById('ger-kpi-cards').innerHTML = `
+    <div class="card"><div class="skeleton skeleton-title"></div><div class="skeleton skeleton-value"></div></div>
+    <div class="card"><div class="skeleton skeleton-title"></div><div class="skeleton skeleton-value"></div></div>
+    <div class="card"><div class="skeleton skeleton-title"></div><div class="skeleton skeleton-value"></div></div>
+    <div class="card"><div class="skeleton skeleton-title"></div><div class="skeleton skeleton-value"></div></div>`;
+
+  try {
+    const d = await api('/gerencial/resumo?mes=' + mes);
+    renderGerencial(d);
+  } catch (e) {
+    showAlert('Erro ao carregar Painel Gerencial: ' + e.message, 'danger');
+  }
+}
+
+function _gerDelta(atual, anterior, inverso) {
+  atual = Number(atual) || 0; anterior = Number(anterior) || 0;
+  if (anterior === 0) {
+    if (atual === 0) return '<span class="card-sub">sem alteração</span>';
+    return `<span class="card-sub">mês anterior foi zero</span>`;
+  }
+  const diffPct = ((atual - anterior) / anterior * 100);
+  const bom = inverso ? diffPct <= 0 : diffPct >= 0;
+  const seta = diffPct >= 0 ? '▲' : '▼';
+  return `<span class="card-sub" style="color:${bom ? 'var(--success)' : 'var(--danger)'}">${seta} ${Math.abs(diffPct).toFixed(0)}% vs mês anterior</span>`;
+}
+
+function renderGerencial(d) {
+  const k = d.kpis;
+  document.getElementById('ger-sub').textContent = `Comparado ao mês anterior (${d.mes_anterior})`;
+  document.getElementById('ger-print-header').innerHTML = _getEmpresaHeader('Painel Gerencial — ' + mesLabel(d.mes));
+  document.getElementById('ger-print-footer').innerHTML = _getPrintFooter();
+
+  document.getElementById('ger-kpi-cards').innerHTML = `
+    <div class="card">
+      <div class="card-label">Produzido no mês</div>
+      <div class="card-value">${fmtNum(k.produzido_mes)}</div>
+      ${_gerDelta(k.produzido_mes, k.produzido_mes_anterior, false)}
+    </div>
+    <div class="card">
+      <div class="card-label">Perdas</div>
+      <div class="card-value">${k.perdas_pct}%</div>
+      ${_gerDelta(k.perdas_pct, k.perdas_pct_mes_anterior, true)}
+    </div>
+    <div class="card">
+      <div class="card-label">Pedidos despachados</div>
+      <div class="card-value">${fmtNum(k.pedidos_despachados)}</div>
+      ${_gerDelta(k.pedidos_despachados, k.pedidos_despachados_mes_anterior, false)}
+    </div>
+    <div class="card">
+      <div class="card-label">Produto mais produzido</div>
+      <div class="card-value" style="font-size:16px">${k.produto_mais_produzido ? k.produto_mais_produzido.nome : '—'}</div>
+      <div class="card-sub">${k.produto_mais_produzido ? fmtNum(k.produto_mais_produzido.total) + ' unidades' : ''}</div>
+    </div>`;
+
+  const elProdutos = document.getElementById('ger-produtos');
+  elProdutos.innerHTML = d.producao_por_produto.length ? d.producao_por_produto.map(p =>
+    `<div class="ger-rank-row"><span>${p.nome}</span><b>${fmtNum(p.total)}</b></div>`
+  ).join('') : '<p style="color:var(--muted);font-size:13px">Sem produção no período.</p>';
+
+  const elOperadores = document.getElementById('ger-operadores');
+  elOperadores.innerHTML = d.producao_por_operador.length ? d.producao_por_operador.map(op => `
+    <div class="ger-op-block">
+      <div class="ger-op-header"><b>${op.colaborador}</b><b>${fmtNum(op.total)}</b></div>
+      <div class="ger-op-cats">
+        ${op.categorias.map((c, i) => `<span class="ger-cat-pill" style="background:${CORES_CATEGORIA_GER[i % CORES_CATEGORIA_GER.length]}26;color:${CORES_CATEGORIA_GER[i % CORES_CATEGORIA_GER.length]}">${c.categoria}: ${fmtNum(c.total)}</span>`).join('')}
+      </div>
+    </div>
+  `).join('') : '<p style="color:var(--muted);font-size:13px">Nenhum operador ativo neste mês.</p>';
+
+  document.getElementById('ger-chart-mensal').innerHTML = _gerSvgEvolucaoMensal(d.evolucao_mensal);
+  document.getElementById('ger-chart-anual').innerHTML = _gerSvgEvolucaoAnual(d.evolucao_anual);
+
+  document.getElementById('ger-perdas-sobras').innerHTML = _gerDivergenteHtml(d.perdas_sobras_por_produto);
+  const totais = d.perdas_sobras_totais || {perda:0, sobra:0};
+  document.getElementById('ger-perdas-sobras-total').innerHTML =
+    `<span style="color:var(--danger);font-weight:700">Perda total: ${fmtNum(totais.perda)}</span>` +
+    `<span style="margin:0 8px">·</span>` +
+    `<span style="color:var(--warn);font-weight:700">Sobra total: ${fmtNum(totais.sobra)}</span>`;
+}
+
+function _gerSvgEvolucaoMensal(dados) {
+  if (!dados || !dados.length) return '<p style="color:var(--muted);font-size:13px">Sem histórico suficiente.</p>';
+  const nomesMes = {'01':'Jan','02':'Fev','03':'Mar','04':'Abr','05':'Mai','06':'Jun','07':'Jul','08':'Ago','09':'Set','10':'Out','11':'Nov','12':'Dez'};
+  const producoes = dados.map(x => x.producao);
+  const metas = dados.map(x => x.meta);
+  const n = dados.length;
+  const larguraUtil = 528, xIni = 10;
+  const passo = larguraUtil / n;
+  const larguraBarra = Math.min(60, passo - 10);
+  const baseY = 140, topoY = 20;
+  const maxProd = Math.max(...producoes, 1);
+  const metasDentroEscala = metas.filter(m => m <= maxProd * 1.8);
+  const maxEscala = Math.max(maxProd, ...(metasDentroEscala.length ? metasDentroEscala : [maxProd]));
+  const escala = (baseY - topoY) / maxEscala;
+
+  let bars = '', labels = '', metaPts = [], metaForaTexto = '', mesLabels = '';
+  dados.forEach((item, i) => {
+    const x = xIni + i * passo + (passo - larguraBarra) / 2;
+    const cx = x + larguraBarra / 2;
+    const h = Math.max(item.producao * escala, 1);
+    const y = baseY - h;
+    bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${larguraBarra.toFixed(1)}" height="${h.toFixed(1)}" fill="#3b82f6" rx="3"/>`;
+    labels += `<text x="${cx.toFixed(1)}" y="${(y-6).toFixed(1)}" font-size="11" fill="var(--text)" font-weight="700" text-anchor="middle">${fmtNum(item.producao)}</text>`;
+    if (item.meta <= maxEscala) {
+      metaPts.push(`${cx.toFixed(1)},${(baseY - item.meta * escala).toFixed(1)}`);
+    } else {
+      metaForaTexto += `<text x="${cx.toFixed(1)}" y="12" font-size="10" fill="#e8eaf0" text-anchor="middle">meta: ${fmtNum(item.meta)}</text>`;
+      metaPts.push(`${cx.toFixed(1)},${topoY}`);
+    }
+    const [ano, m] = item.mes.split('-');
+    mesLabels += `<text x="${cx.toFixed(1)}" y="155" font-size="11" fill="#6b7280" text-anchor="middle">${nomesMes[m] || m}</text>`;
+  });
+
+  const linhaMeta = metaPts.length > 1
+    ? `<polyline points="${metaPts.join(' ')}" fill="none" stroke="#e8eaf0" stroke-width="1.5" stroke-dasharray="4,3"/>` +
+      metaPts.map(p => `<circle cx="${p.split(',')[0]}" cy="${p.split(',')[1]}" r="3" fill="#e8eaf0"/>`).join('')
+    : '';
+
+  return `
+    <svg viewBox="0 0 548 165" width="100%" height="165">
+      ${bars}${labels}${linhaMeta}${metaForaTexto}${mesLabels}
+    </svg>
+    <div style="display:flex;gap:16px;margin-top:4px;font-size:12px;color:var(--muted)">
+      <span><span style="display:inline-block;width:14px;height:3px;background:#3b82f6;margin-right:6px;vertical-align:middle"></span>Produzido</span>
+      <span><span style="display:inline-block;width:14px;height:0;border-top:1.5px dashed #e8eaf0;margin-right:6px;vertical-align:middle"></span>Meta</span>
+    </div>`;
+}
+
+function _gerSvgEvolucaoAnual(dados) {
+  if (!dados || !dados.length) return '<p style="color:var(--muted);font-size:13px">Sem histórico suficiente.</p>';
+  const n = dados.length;
+  const larguraUtil = 528, xIni = 10, gap = 20;
+  const larguraBarra = (larguraUtil - gap * (n - 1)) / n;
+  const baseY = 140, topoY = 20;
+  const maxVal = Math.max(...dados.map(x => x.total), 1);
+  const escala = (baseY - topoY) / maxVal;
+  const cores = CORES_CATEGORIA_GER;
+
+  let bars = '', labels = '';
+  dados.forEach((item, i) => {
+    const x = xIni + i * (larguraBarra + gap);
+    const h = Math.max(item.total * escala, 1);
+    const y = baseY - h;
+    bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${larguraBarra.toFixed(1)}" height="${h.toFixed(1)}" fill="${cores[i % cores.length]}" rx="3"/>`;
+    labels += `<text x="${(x + larguraBarra/2).toFixed(1)}" y="${(y-6).toFixed(1)}" font-size="11" fill="var(--text)" font-weight="700" text-anchor="middle">${fmtNum(item.total)}</text>`;
+    labels += `<text x="${(x + larguraBarra/2).toFixed(1)}" y="155" font-size="11" fill="#6b7280" text-anchor="middle">${item.colaborador}</text>`;
+  });
+
+  return `<svg viewBox="0 0 548 165" width="100%" height="165">${bars}${labels}</svg>`;
+}
+
+function _gerDivergenteHtml(dados) {
+  if (!dados || !dados.length) return '<p style="color:var(--muted);font-size:13px">Sem perdas ou sobras registradas no período.</p>';
+  const maxAbs = Math.max(...dados.map(p => Math.max(p.perda || 0, p.sobra || 0)), 1);
+  let rows = '';
+  dados.forEach(p => {
+    const perda = p.perda || 0, sobra = p.sobra || 0;
+    if (perda > 0) {
+      const pct = Math.max(perda / maxAbs * 50, 1.2).toFixed(2);
+      rows += `<div class="ger-diverge-row">
+        <div>${p.nome}</div>
+        <div class="ger-diverge-value-left">${fmtNum(perda)}</div>
+        <div class="ger-diverge-track"><div class="ger-diverge-center"></div><div class="ger-diverge-bar-left" style="width:${pct}%"></div></div>
+        <div class="ger-diverge-value-right"></div>
+      </div>`;
+    } else {
+      const pct = Math.max(sobra / maxAbs * 50, 1.2).toFixed(2);
+      rows += `<div class="ger-diverge-row">
+        <div>${p.nome}</div>
+        <div class="ger-diverge-value-left"></div>
+        <div class="ger-diverge-track"><div class="ger-diverge-center"></div><div class="ger-diverge-bar-right" style="width:${pct}%"></div></div>
+        <div class="ger-diverge-value-right">${fmtNum(sobra)}</div>
+      </div>`;
+    }
+  });
+  return rows + `<div style="display:flex;gap:16px;margin-top:12px;font-size:12px;color:var(--muted)">
+    <span><span style="display:inline-block;width:9px;height:9px;background:var(--danger);border-radius:2px;margin-right:5px"></span>Perda</span>
+    <span><span style="display:inline-block;width:9px;height:9px;background:var(--warn);border-radius:2px;margin-right:5px"></span>Sobra</span>
+  </div>`;
+}
+
+function mostrarEvolucaoGerencial(tipo) {
+  document.getElementById('ger-chart-mensal').style.display = tipo === 'mensal' ? 'block' : 'none';
+  document.getElementById('ger-chart-anual').style.display = tipo === 'anual' ? 'block' : 'none';
+  document.getElementById('ger-btn-mensal').className = 'btn btn-sm ' + (tipo === 'mensal' ? 'btn-primary' : 'btn-secondary');
+  document.getElementById('ger-btn-anual').className = 'btn btn-sm ' + (tipo === 'anual' ? 'btn-primary' : 'btn-secondary');
+}
+
+// ─── PINTURA ───────────────────────────────────────────────────────────────
+let pintCoresAtual = 1;
+let pintProdutosCache = [];
+
+async function abrirPintura() {
+  const [cols, produtos] = await Promise.all([
+    api('/colaboradores/?tipo=operador,auxiliar'),
+    api('/estoque/produtos').catch(() => [])
+  ]);
+
+  const operadores = cols.filter(c => (c.tipo || '').toLowerCase() === 'operador');
+  const auxiliares = cols.filter(c => (c.tipo || '').toLowerCase() === 'auxiliar');
+  document.getElementById('pint-colaborador').innerHTML =
+    '<option value="">Selecione...</option>' +
+    (operadores.length ? `<optgroup label="Operadores">${operadores.map(c => `<option value="${c.id}">${c.nome}</option>`).join('')}</optgroup>` : '') +
+    (auxiliares.length ? `<optgroup label="Auxiliares">${auxiliares.map(c => `<option value="${c.id}">${c.nome}</option>`).join('')}</optgroup>` : '');
+
+  pintProdutosCache = (produtos || []).filter(p => p.categoria_tipo !== 'revenda');
+
+  document.getElementById('pint-data').value = new Date().toISOString().split('T')[0];
+  document.getElementById('pint-pedido').value = '';
+  document.getElementById('pint-quantidade').value = '';
+  document.getElementById('pint-perda').value = '';
+  document.getElementById('pint-sobra').value = '';
+  _setVal('pint-edit-id', '');
+  document.getElementById('pint-form-title').textContent = 'Novo lançamento de pintura';
+  document.getElementById('pint-salvar-btn').textContent = 'Salvar Lançamento';
+  document.getElementById('pint-cancelar-edicao').style.display = 'none';
+  selecionarCoresPintura(1);
+  atualizarEstadoTipoPerdaPintura();
+
+  // Pré-preenchimento vindo do formulário de Pedido (checkbox "precisa de pintura"):
+  // limita o dropdown de produto só aos itens desse pedido, em vez do catálogo inteiro.
+  const prefill = window._pinturaPrefill;
+  window._pinturaPrefill = null;
+  if (prefill && prefill.produto_ids && prefill.produto_ids.length) {
+    renderProdutoPintura(pintProdutosCache.filter(p => prefill.produto_ids.includes(p.id)), true);
+  } else {
+    renderProdutoPintura(pintProdutosCache, false);
+  }
+
+  if (prefill) {
+    document.getElementById('pint-pedido').value = prefill.pedido_numero || '';
+    if (prefill.produto_id) {
+      document.getElementById('pint-produto').value = prefill.produto_id;
+    }
+  }
+
+  const mesEl = document.getElementById('pint-filtro-mes');
+  if (mesEl && !mesEl.value) mesEl.value = currentMonth();
+
+  await loadPintura();
+}
+
+function renderProdutoPintura(lista, filtrado) {
+  const sel = document.getElementById('pint-produto');
+  sel.innerHTML = '<option value="">Selecione...</option>' +
+    lista.map(p => `<option value="${p.id}">${p.codigo ? p.codigo + ' — ' : ''}${p.nome}</option>`).join('');
+  const linkEl = document.getElementById('pint-produto-ver-todos');
+  if (linkEl) linkEl.style.display = filtrado ? 'inline' : 'none';
+}
+
+function verTodosProdutosPintura() {
+  renderProdutoPintura(pintProdutosCache, false);
+}
+
+function selecionarCoresPintura(n) {
+  pintCoresAtual = n;
+  document.querySelectorAll('.pint-cor-btn').forEach(btn => {
+    const ativo = Number(btn.dataset.cores) === n;
+    btn.className = 'btn pint-cor-btn ' + (ativo ? 'btn-primary' : 'btn-secondary');
+  });
+}
+
+function atualizarEstadoTipoPerdaPintura() {
+  const perda = Number(_getVal('pint-perda')) || 0;
+  const sel = document.getElementById('pint-perda-tipo');
+  sel.disabled = !(perda > 0);
+  sel.style.opacity = (perda > 0) ? '' : '.5';
+}
+
+async function salvarPintura() {
+  const editId = _getVal('pint-edit-id');
+  const colaboradorId = _getVal('pint-colaborador');
+  const data = _getVal('pint-data');
+  if (!colaboradorId) { showAlert('Selecione o colaborador', 'danger'); return; }
+  if (!data) { showAlert('Informe a data', 'danger'); return; }
+
+  const quantidade = Number(_getVal('pint-quantidade')) || 0;
+  const perda = Number(_getVal('pint-perda')) || 0;
+  const sobra = Number(_getVal('pint-sobra')) || 0;
+  if (quantidade <= 0 && perda <= 0 && sobra <= 0) {
+    showAlert('Informe ao menos a quantidade pintada, perda ou sobra', 'danger');
+    return;
+  }
+
+  const body = {
+    colaborador_id: Number(colaboradorId),
+    data,
+    pedido_numero: _getVal('pint-pedido') || null,
+    produto_estoque_id: _getVal('pint-produto') ? Number(_getVal('pint-produto')) : null,
+    quantidade_cores: pintCoresAtual,
+    quantidade_pintada: quantidade,
+    perda_quantidade: perda,
+    perda_tipo: perda > 0 ? _getVal('pint-perda-tipo') : null,
+    sobra_quantidade: sobra
+  };
+
+  try {
+    if (editId) {
+      await api('/pintura/' + editId, 'PUT', body);
+      showAlert('Lançamento de pintura atualizado!');
+    } else {
+      await api('/pintura/', 'POST', body);
+      showAlert('Lançamento de pintura salvo!');
+    }
+    cancelarEdicaoPintura();
+    await loadPintura();
+  } catch (e) {
+    showAlert('Erro ao salvar: ' + e.message, 'danger');
+  }
+}
+
+function editarPintura(id) {
+  const l = (pintLancamentosCache || []).find(x => x.id === id);
+  if (!l) { showAlert('Lançamento não encontrado nesta lista.', 'danger'); return; }
+
+  _setVal('pint-edit-id', l.id);
+  document.getElementById('pint-colaborador').value = l.colaborador_id;
+  document.getElementById('pint-data').value = l.data;
+  document.getElementById('pint-pedido').value = l.pedido_numero || '';
+  renderProdutoPintura(pintProdutosCache, false);
+  document.getElementById('pint-produto').value = l.produto_estoque_id || '';
+  selecionarCoresPintura(l.quantidade_cores || 1);
+  document.getElementById('pint-quantidade').value = l.quantidade_pintada || '';
+  document.getElementById('pint-perda').value = l.perda_quantidade || '';
+  document.getElementById('pint-sobra').value = l.sobra_quantidade || '';
+  if (l.perda_tipo) document.getElementById('pint-perda-tipo').value = l.perda_tipo;
+  atualizarEstadoTipoPerdaPintura();
+
+  document.getElementById('pint-form-title').textContent = 'Editando lançamento de pintura';
+  document.getElementById('pint-salvar-btn').textContent = 'Atualizar Lançamento';
+  document.getElementById('pint-cancelar-edicao').style.display = 'inline-block';
+  document.getElementById('page-pintura').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function cancelarEdicaoPintura() {
+  _setVal('pint-edit-id', '');
+  document.getElementById('pint-pedido').value = '';
+  document.getElementById('pint-quantidade').value = '';
+  document.getElementById('pint-perda').value = '';
+  document.getElementById('pint-sobra').value = '';
+  document.getElementById('pint-perda-tipo').value = 'Quebra';
+  document.getElementById('pint-data').value = new Date().toISOString().split('T')[0];
+  renderProdutoPintura(pintProdutosCache, false);
+  selecionarCoresPintura(1);
+  atualizarEstadoTipoPerdaPintura();
+  document.getElementById('pint-form-title').textContent = 'Novo lançamento de pintura';
+  document.getElementById('pint-salvar-btn').textContent = 'Salvar Lançamento';
+  document.getElementById('pint-cancelar-edicao').style.display = 'none';
+}
+
+let pintLancamentosCache = [];
+
+async function loadPintura() {
+  const mes = _getVal('pint-filtro-mes') || currentMonth();
+  const tbody = document.getElementById('pint-tbody');
+  if (!tbody) return;
+  try {
+    const lancamentos = await api('/pintura/?mes=' + encodeURIComponent(mes));
+    pintLancamentosCache = lancamentos;
+    if (!lancamentos.length) {
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:24px">Nenhum lançamento neste mês</td></tr>';
+      return;
+    }
+    const coresLabel = { 1: '1 cor', 2: '2 cores', 3: '3 cores' };
+    tbody.innerHTML = lancamentos.map(l => `
+      <tr>
+        <td>${fmtDate(l.data)}</td>
+        <td>${l.colaborador_nome}</td>
+        <td>${l.pedido_numero || '—'}</td>
+        <td>${l.produto_nome ? (l.produto_codigo ? l.produto_codigo + ' — ' : '') + l.produto_nome : '—'}</td>
+        <td>${coresLabel[l.quantidade_cores] || l.quantidade_cores}</td>
+        <td>${fmtNum(l.quantidade_pintada)}</td>
+        <td>${l.perda_quantidade > 0 ? `<span class="pill pill-danger">${fmtNum(l.perda_quantidade)}</span>` : '—'}</td>
+        <td>${l.sobra_quantidade > 0 ? `<span class="pill pill-warn">${fmtNum(l.sobra_quantidade)}</span>` : '—'}</td>
+        <td>
+          <button class="btn btn-sm btn-secondary" onclick="editarPintura(${l.id})" title="Editar">✎</button>
+          <button class="btn btn-sm btn-danger" onclick="deletarPintura(${l.id})" title="Excluir">✕</button>
+        </td>
+      </tr>
+    `).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--danger);padding:24px">Erro ao carregar: ${e.message}</td></tr>`;
+  }
+}
+
+async function deletarPintura(id) {
+  if (!confirm('Remover este lançamento de pintura?')) return;
+  try {
+    await api('/pintura/' + id, 'DELETE');
+    showAlert('Lançamento removido.');
+    await loadPintura();
+  } catch (e) {
+    showAlert('Erro ao remover: ' + e.message, 'danger');
+  }
+}
+
+async function deletarPintura(id) {
+  if (!confirm('Remover este lançamento de pintura?')) return;
+  try {
+    await api('/pintura/' + id, 'DELETE');
+    showAlert('Lançamento removido.');
+    await loadPintura();
+  } catch (e) {
+    showAlert('Erro ao remover: ' + e.message, 'danger');
+  }
+}
+
+// ─── PINTURA · ABA GERENCIAL ────────────────────────────────────────────
+function switchPinturaTab(tab) {
+  document.getElementById('pint-tab-lancamentos').style.display = tab === 'lancamentos' ? 'block' : 'none';
+  document.getElementById('pint-tab-gerencial').style.display = tab === 'gerencial' ? 'block' : 'none';
+  document.getElementById('pint-tab-btn-lancamentos').style.cssText = tab === 'lancamentos' ? 'border-color:var(--accent);color:var(--accent)' : '';
+  document.getElementById('pint-tab-btn-gerencial').style.cssText = tab === 'gerencial' ? 'border-color:var(--accent);color:var(--accent)' : '';
+  if (tab === 'gerencial') {
+    const mesEl = document.getElementById('pint-ger-mes');
+    if (mesEl && !mesEl.value) mesEl.value = currentMonth();
+    loadPinturaGerencial();
+  }
+}
+
+async function loadPinturaGerencial() {
+  const mes = _getVal('pint-ger-mes') || currentMonth();
+  let d;
+  try {
+    d = await api('/pintura/gerencial-resumo?mes=' + encodeURIComponent(mes));
+  } catch (e) {
+    showAlert('Erro ao carregar dados gerenciais: ' + e.message, 'danger');
+    return;
+  }
+
+  document.getElementById('pint-ger-sub').textContent = `Mês de referência: ${mesLabel(mes)}`;
+
+  const totalPintado = d.produtividade_por_colaborador.reduce((s, p) => s + (p.total_pintado || 0), 0);
+  const totalLancamentos = d.produtividade_por_colaborador.reduce((s, p) => s + (p.lancamentos || 0), 0);
+  const totalPerda = d.perdas_por_motivo.reduce((s, p) => s + (p.total_perda || 0), 0);
+
+  document.getElementById('pint-ger-kpis').innerHTML = `
+    <div class="card">
+      <div class="card-label">Total pintado</div>
+      <div class="card-value">${fmtNum(totalPintado)}</div>
+      <div class="card-sub">${fmtNum(totalLancamentos)} lançamento(s)</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Total perdido</div>
+      <div class="card-value" style="color:var(--danger)">${fmtNum(totalPerda)}</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Pedidos com pintura pendente</div>
+      <div class="card-value" style="color:${d.pedidos_pendentes.length ? 'var(--warn)' : 'var(--success)'}">${d.pedidos_pendentes.length}</div>
+    </div>
+  `;
+
+  const elProd = document.getElementById('pint-ger-produtividade');
+  elProd.innerHTML = d.produtividade_por_colaborador.length
+    ? d.produtividade_por_colaborador.map(p => `<div class="ger-rank-row"><span>${p.colaborador}</span><b>${fmtNum(p.total_pintado)} <span style="color:var(--muted);font-weight:400">(${p.lancamentos} lanç.)</span></b></div>`).join('')
+    : '<p style="color:var(--muted);font-size:13px">Sem lançamentos neste mês.</p>';
+
+  const elPerdas = document.getElementById('pint-ger-perdas');
+  elPerdas.innerHTML = d.perdas_por_motivo.length
+    ? d.perdas_por_motivo.map(p => `<div class="ger-rank-row"><span>${p.motivo}</span><b style="color:var(--danger)">${fmtNum(p.total_perda)}</b></div>`).join('')
+    : '<p style="color:var(--muted);font-size:13px">Sem perdas registradas neste mês.</p>';
+
+  const coresLabel = { 1: '1 cor', 2: '2 cores', 3: '3 cores' };
+  const elCores = document.getElementById('pint-ger-cores');
+  elCores.innerHTML = d.distribuicao_cores.length
+    ? d.distribuicao_cores.map(c => `<div class="ger-rank-row"><span>${coresLabel[c.cores] || c.cores}</span><b>${fmtNum(c.total_pintado)} <span style="color:var(--muted);font-weight:400">(${c.lancamentos} lanç.)</span></b></div>`).join('')
+    : '<p style="color:var(--muted);font-size:13px">Sem lançamentos neste mês.</p>';
+
+  const elPend = document.getElementById('pint-ger-pendentes');
+  elPend.innerHTML = d.pedidos_pendentes.length
+    ? d.pedidos_pendentes.map(p => `<div class="ger-rank-row"><span>Pedido ${p.numero_pedido} — ${p.cliente}</span><b style="color:var(--warn)">${p.prazo_entrega ? fmtDate(p.prazo_entrega) : '—'}</b></div>`).join('')
+    : '<p style="color:var(--success);font-size:13px">Nenhum pedido pendente de pintura. 🎉</p>';
+
+  document.getElementById('pint-ger-evolucao').innerHTML = _gerSvgEvolucaoMensalSimples(d.evolucao_mensal);
+}
+
+function _gerSvgEvolucaoMensalSimples(dados) {
+  if (!dados || !dados.length) return '<p style="color:var(--muted);font-size:13px">Sem histórico suficiente.</p>';
+  const nomesMes = {'01':'Jan','02':'Fev','03':'Mar','04':'Abr','05':'Mai','06':'Jun','07':'Jul','08':'Ago','09':'Set','10':'Out','11':'Nov','12':'Dez'};
+  const n = dados.length;
+  const larguraUtil = 528, xIni = 10;
+  const passo = larguraUtil / n;
+  const larguraBarra = Math.min(60, passo - 10);
+  const baseY = 140, topoY = 20;
+  const maxVal = Math.max(...dados.map(x => x.total_pintado), 1);
+  const escala = (baseY - topoY) / maxVal;
+
+  let bars = '', labels = '', mesLabels = '';
+  dados.forEach((item, i) => {
+    const x = xIni + i * passo + (passo - larguraBarra) / 2;
+    const cx = x + larguraBarra / 2;
+    const h = Math.max(item.total_pintado * escala, 1);
+    const y = baseY - h;
+    bars += `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${larguraBarra.toFixed(1)}" height="${h.toFixed(1)}" fill="#a855f7" rx="3"/>`;
+    labels += `<text x="${cx.toFixed(1)}" y="${(y-6).toFixed(1)}" font-size="11" fill="var(--text)" font-weight="700" text-anchor="middle">${fmtNum(item.total_pintado)}</text>`;
+    const [ano, m] = item.mes.split('-');
+    mesLabels += `<text x="${cx.toFixed(1)}" y="155" font-size="11" fill="#6b7280" text-anchor="middle">${nomesMes[m] || m}</text>`;
+  });
+
+  return `<svg viewBox="0 0 548 165" width="100%" height="165">${bars}${labels}${mesLabels}</svg>`;
+}
+
+async function gerarRelatorioPintura() {
+  const mes = _getVal('pint-filtro-mes') || currentMonth();
+  let dados;
+  try {
+    dados = await api(`/pintura/relatorio-por-produto?mes_ini=${encodeURIComponent(mes)}&mes_fim=${encodeURIComponent(mes)}`);
+  } catch (e) {
+    showAlert('Erro ao gerar relatório: ' + e.message, 'danger');
+    return;
+  }
+  if (!dados.length) {
+    showAlert('Não há lançamentos de pintura neste mês para gerar relatório.', 'warning');
+    return;
+  }
+
+  const totalPintado = dados.reduce((s, d) => s + (d.total_pintado || 0), 0);
+  const totalPerda = dados.reduce((s, d) => s + (d.total_perda || 0), 0);
+  const totalSobra = dados.reduce((s, d) => s + (d.total_sobra || 0), 0);
+
+  const linhas = dados.map(d => `
+    <tr>
+      <td style="padding:7px;border-bottom:1px solid #ddd;font-family:Arial,sans-serif;">${d.produto_codigo}</td>
+      <td style="padding:7px;border-bottom:1px solid #ddd;font-family:Arial,sans-serif;">${d.produto_nome}</td>
+      <td style="padding:7px;border-bottom:1px solid #ddd;font-family:Arial,sans-serif;">${d.lancamentos}</td>
+      <td style="padding:7px;border-bottom:1px solid #ddd;font-family:Arial,sans-serif;">${fmtNum(d.total_pintado)}</td>
+      <td style="padding:7px;border-bottom:1px solid #ddd;font-family:Arial,sans-serif;">${fmtNum(d.total_perda)}</td>
+      <td style="padding:7px;border-bottom:1px solid #ddd;font-family:Arial,sans-serif;">${fmtNum(d.total_sobra)}</td>
+    </tr>`).join('');
+
+  const tituloReport = `Relatório de Pintura por Produto — ${mesLabel(mes)}`;
+  const tableHtml = `
+    <div style="font-family:Arial,sans-serif;margin-bottom:12px;font-size:13px;color:#333;">
+      <strong>Período: ${mesLabel(mes)}</strong> · Total pintado: ${fmtNum(totalPintado)} · Total perda: ${fmtNum(totalPerda)} · Total sobra: ${fmtNum(totalSobra)}
+    </div>
+    <table style="width:100%;border-collapse:collapse;margin-top:10px;">
+      <thead>
+        <tr style="background:#333;color:#fff;">
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Código</th>
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Produto</th>
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Lançamentos</th>
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Total Pintado</th>
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Total Perda</th>
+          <th style="padding:8px;text-align:left;font-family:Arial,sans-serif;">Total Sobra</th>
+        </tr>
+      </thead>
+      <tbody>${linhas}</tbody>
+    </table>
+  `;
+
+  const win = window.open('', '_blank');
+  win.document.write(`<html><head><title>${tituloReport}</title><style>@page{margin:0}body{font-family:Arial,sans-serif;margin:15mm 15mm 22mm 15mm;font-size:12px;counter-reset:page}.print-footer{position:fixed;bottom:8mm;left:15mm;right:15mm;border-top:1px solid #ddd;padding-top:6px;display:flex;justify-content:space-between;font-size:10px;color:#777;font-family:Arial,sans-serif;counter-increment:page}.page-number::after{content:counter(page)}</style></head><body>${_getEmpresaHeader(tituloReport)}${tableHtml}${_getPrintFooter()}</body></html>`);
+  win.document.close();
+  setTimeout(() => win.print(), 500);
+}
+
+function exportarListaCompras(formato) {
+  const table = document.getElementById('lista-compras-table');
+  if (!table) return;
+  const tituloEl = document.querySelector('#modal-lista-compras .modal-title');
+  const titulo = (tituloEl?.textContent || 'Lista de Compras').replace(/^[^\wÀ-ú]+/, '').trim();
+  if (formato === 'pdf') {
+    const win = window.open('','_blank');
+    win.document.write(`<html><head><title>${titulo} PRATIC</title>
+      <style>@page{margin:0}body{font-family:Arial,sans-serif;margin:15mm 15mm 22mm 15mm;font-size:12px;counter-reset:page}table{width:100%;border-collapse:collapse}th{background:#333;color:#fff;padding:8px;text-align:left}td{padding:7px;border-bottom:1px solid #ddd}.print-footer{position:fixed;bottom:8mm;left:15mm;right:15mm;border-top:1px solid #ddd;padding-top:6px;display:flex;justify-content:space-between;font-size:10px;color:#777;font-family:Arial,sans-serif;counter-increment:page}.page-number::after{content:counter(page)}</style>
+      </head><body>
+      ${_getEmpresaHeader(titulo)}
+      ${table.outerHTML}
+      ${_getPrintFooter()}
+      </body></html>`);
+    win.document.close();
+    setTimeout(() => win.print(), 500);
+  } else {
+    const rows = [];
+    table.querySelectorAll('tr').forEach(tr => {
+      const row = [];
+      tr.querySelectorAll('th,td').forEach(td => row.push('"' + td.textContent.trim().replace(/"/g,'""') + '"'));
+      rows.push(row.join(';'));
+    });
+    const csv = '\uFEFF' + rows.join('\n');
+    const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${titulo.toLowerCase().replace(/[^a-z0-9]+/g,'_')}_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+  }
+}
+
+function exportarSVD(formato) {
+  const table = document.getElementById('svd-table');
+  if (!table) return;
+  
+  // Group rows by Category
+  const grouped = {};
+  table.querySelectorAll('tbody tr').forEach(tr => {
+    const tds = tr.querySelectorAll('td');
+    if (tds.length >= 8) {
+      const prod = tds[0].innerText.trim();
+      const cat = tds[1].innerText.trim();
+      const saldoAtual = tds[2].innerText.trim();
+      const saldoProj = tds[7].innerText.trim();
+      
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push({ prod, cat, saldoAtual, saldoProj });
+    }
+  });
+
+  if (formato === 'pdf') {
+    const printTable = document.createElement('table');
+    printTable.style.width = '100%';
+    printTable.style.borderCollapse = 'collapse';
+    printTable.innerHTML = `
+      <thead>
+        <tr>
+          <th style="background:#333;color:#fff;padding:6px;text-align:left">Produto</th>
+          <th style="background:#333;color:#fff;padding:6px;text-align:left">Categoria</th>
+          <th style="background:#333;color:#fff;padding:6px;text-align:left">Saldo Atual</th>
+          <th style="background:#333;color:#fff;padding:6px;text-align:left">Saldo Projetado</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    `;
+    const tbody = printTable.querySelector('tbody');
+    
+    Object.keys(grouped).forEach(cat => {
+      // Products in this category
+      grouped[cat].forEach(item => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td style="padding:5px;border-bottom:1px solid #ddd">${item.prod}</td>
+          <td style="padding:5px;border-bottom:1px solid #ddd">${item.cat}</td>
+          <td style="padding:5px;border-bottom:1px solid #ddd;font-weight:700">${item.saldoAtual}</td>
+          <td style="padding:5px;border-bottom:1px solid #ddd;font-weight:700">${item.saldoProj}</td>
+        `;
+        tbody.appendChild(row);
+      });
+      
+      // Skip a line (pula uma linha)
+      const blankRow = document.createElement('tr');
+      blankRow.innerHTML = `<td colspan="4" style="height:15px;border:none;"></td>`;
+      tbody.appendChild(blankRow);
+
+      // Describe the category (descreve a categoria)
+      const descRow = document.createElement('tr');
+      descRow.innerHTML = `
+        <td colspan="4" style="background:#f1f5f9;font-weight:700;padding:8px;border-bottom:1px solid #ccc;color:#333">
+          Categoria: ${cat} (Fim da Categoria)
+        </td>
+      `;
+      tbody.appendChild(descRow);
+      
+      // Skip another line for separation
+      const postBlankRow = document.createElement('tr');
+      postBlankRow.innerHTML = `<td colspan="4" style="height:15px;border:none;"></td>`;
+      tbody.appendChild(postBlankRow);
+    });
+
+    const win = window.open('','_blank');
+    win.document.write(`<html><head><title>Saldo vs Demanda PRATIC</title>
+      <style>
+        @page {
+          size: A4 portrait;
+          margin: 15mm 15mm 22mm 15mm;
+        }
+        body {
+          font-family: Arial, sans-serif;
+          margin: 0;
+          font-size: 11px;
+          counter-reset: page;
+        }
+        table {
+          width: 100%;
+          border-collapse: collapse;
+        }
+        tr {
+          page-break-inside: avoid;
+          break-inside: avoid;
+        }
+        thead {
+          display: table-header-group;
+        }
+        th {
+          background: #333;
+          color: #fff;
+          padding: 6px;
+          text-align: left;
+        }
+        td {
+          padding: 5px;
+          border-bottom: 1px solid #ddd;
+        }
+        .print-footer {
+          position: fixed;
+          bottom: -15mm;
+          left: 0;
+          right: 0;
+          border-top: 1px solid #ddd;
+          padding-top: 6px;
+          display: flex;
+          justify-content: space-between;
+          font-size: 10px;
+          color: #777;
+          font-family: Arial, sans-serif;
+          counter-increment: page;
+        }
+        .page-number::after {
+          content: counter(page);
+        }
+      </style>
+      </head><body>
+      ${_getEmpresaHeader('Saldo vs Demanda')}
+      ${printTable.outerHTML}
+      ${_getPrintFooter()}
+      </body></html>`);
+    win.document.close();
+    setTimeout(() => win.print(), 500);
+  } else {
+    const rows = [];
+    rows.push(['"Produto"', '"Categoria"', '"Saldo Atual"', '"Saldo Projetado"'].join(';'));
+    
+    Object.keys(grouped).forEach(cat => {
+      grouped[cat].forEach(item => {
+        const prodEsc = '"' + item.prod.replace(/\n/g, ' ').replace(/"/g, '""') + '"';
+        const catEsc = '"' + item.cat.replace(/"/g, '""') + '"';
+        const saldoAtualEsc = '"' + item.saldoAtual.replace(/"/g, '""') + '"';
+        const saldoProjEsc = '"' + item.saldoProj.replace(/"/g, '""') + '"';
+        rows.push([prodEsc, catEsc, saldoAtualEsc, saldoProjEsc].join(';'));
+      });
+      // Skip a line
+      rows.push(';;;');
+      // Describe the category
+      rows.push([`"Categoria: ${cat} (Fim da Categoria)"`, '""', '""', '""'].join(';'));
+      // Skip another line
+      rows.push(';;;');
+    });
+    
+    const csv = '\uFEFF' + rows.join('\n');
+    const blob = new Blob([csv], {type:'text/csv;charset=utf-8'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `saldo_demanda_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+  }
+}
+
+async function _getSvdCategoriasOcultas() {
+  // Fonte de verdade: backend (persiste entre cargas de página e dispositivos).
+  // Salva a lista de categorias desmarcadas/ocultadas.
+  // Assim, novas categorias criadas aparecem ativas por padrão.
+  try {
+    const cfg = await api('/configuracoes/svd_categorias_ocultas');
+    if (cfg && cfg.valor) {
+      try {
+        const arr = JSON.parse(cfg.valor);
+        localStorage.setItem('svd_categorias_ocultas', cfg.valor);
+        return arr;
+      } catch (e) {}
+    } else {
+      // Tenta migrar da chave antiga svd_categorias_visiveis se existir
+      const cfgAntiga = await api('/configuracoes/svd_categorias_visiveis');
+      if (cfgAntiga && cfgAntiga.valor) {
+        try {
+          const visiveis = JSON.parse(cfgAntiga.valor);
+          const cats = await api('/estoque/categorias');
+          const ocultas = [];
+          if (!visiveis.includes('null')) ocultas.push('null');
+          cats.forEach(c => {
+            if (!visiveis.includes(String(c.id))) {
+              ocultas.push(String(c.id));
+            }
+          });
+          const valor = JSON.stringify(ocultas);
+          await api('/configuracoes/svd_categorias_ocultas', 'PUT', { valor });
+          localStorage.setItem('svd_categorias_ocultas', valor);
+          return ocultas;
+        } catch (e) {}
+      }
+      // Se não houver nada no servidor, usa cache local
+      const local = localStorage.getItem('svd_categorias_ocultas');
+      if (local) { try { return JSON.parse(local); } catch (e) {} }
+    }
+  } catch (e) {
+    const local = localStorage.getItem('svd_categorias_ocultas');
+    if (local) { try { return JSON.parse(local); } catch (e2) {} }
+  }
+  return []; // Por padrão, nenhuma categoria é oculta
+}
+
+async function abrirConfigCategoriasSVD() {
+  const container = document.getElementById('modal-svd-categorias-content');
+  if (!container) return;
+  container.innerHTML = '<div style="color:var(--muted);text-align:center;padding:12px">Carregando...</div>';
+  openModal('modal-svd-categorias');
+
+  try {
+    const cats = await api('/estoque/categorias');
+    const ocultas = await _getSvdCategoriasOcultas();
+
+    let html = '';
+    
+    // Opção "Sem Categoria"
+    const semCatChecked = !ocultas.includes('null');
+    html += `
+      <label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:4px;cursor:pointer;background:var(--surface2)">
+        <input type="checkbox" class="svd-cat-checkbox" value="null" ${semCatChecked ? 'checked' : ''}>
+        <span style="font-weight:600;color:var(--text)">📁 Sem Categoria</span>
+      </label>
+    `;
+
+    // Categorias cadastradas
+    cats.forEach(c => {
+      const isChecked = !ocultas.includes(String(c.id));
+      html += `
+        <label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:4px;cursor:pointer;background:var(--surface2)">
+          <input type="checkbox" class="svd-cat-checkbox" value="${c.id}" ${isChecked ? 'checked' : ''}>
+          <span>${c.nome}</span>
+        </label>
+      `;
+    });
+
+    container.innerHTML = html;
+  } catch (e) {
+    container.innerHTML = `<div style="color:var(--danger);padding:12px">Erro ao carregar categorias: ${e.message}</div>`;
+  }
+}
+
+function marcarTodasCategoriasSVD(marcar) {
+  const checkboxes = document.querySelectorAll('.svd-cat-checkbox');
+  checkboxes.forEach(cb => cb.checked = marcar);
+}
+
+async function aplicarCategoriasSVD() {
+  const checkboxes = document.querySelectorAll('.svd-cat-checkbox');
+  const ocultas = [];
+  checkboxes.forEach(cb => {
+    if (!cb.checked) {
+      ocultas.push(cb.value);
+    }
+  });
+  const valor = JSON.stringify(ocultas);
+  localStorage.setItem('svd_categorias_ocultas', valor);
+  try {
+    await api('/configuracoes/svd_categorias_ocultas', 'PUT', { valor });
+  } catch (e) {
+    showAlert('Salvo localmente, mas não foi possível gravar no servidor: ' + e.message, 'danger');
+  }
+  closeModal('modal-svd-categorias');
+  loadSaldoDemanda();
+}
+
+// ─── LIMPAR DADOS ─────────────────────────────────────────────────────────────
+
+async function limparDados(tipo) {
+  const msgs = {
+    producao:    'Isso vai remover TODA a produção diária e premiações. Confirma?',
+    pedidos:     'Isso vai remover TODOS os pedidos e itens. Confirma?',
+    estoque_mov: 'Isso vai remover todas as movimentações e zerar os saldos. Confirma?',
+    tudo:        '⚠️ ATENÇÃO: Isso vai remover TODOS os dados operacionais (produção, pedidos, estoque, EPI). Os cadastros (colaboradores, máquinas, produtos) serão mantidos.\n\nTem CERTEZA?'
+  };
+  if (!confirm(msgs[tipo])) return;
+  if (tipo === 'tudo' && !confirm('Última confirmação: apagar TUDO mesmo?')) return;
+
+  const alertEl = document.getElementById('limpar-alert');
+  try {
+    const r = await api('/configuracoes/limpar/' + tipo, 'POST', {});
+    if (alertEl) {
+      alertEl.innerHTML = `<div class="alert alert-success" style="margin-top:8px">✅ ${r.mensagem}</div>`;
+      setTimeout(() => alertEl.innerHTML = '', 5000);
+    }
+    showAlert(r.mensagem);
+  } catch(e) {
+    if (alertEl) alertEl.innerHTML = `<div class="alert alert-danger">${e.message}</div>`;
+    showAlert('Erro: ' + e.message, 'danger');
+  }
+}
+
+// ─── PERMISSÕES POR USUÁRIO ───────────────────────────────────────────────────
+
+const MODULOS_CONFIG = {
+  dashboard:      { label:'📊 Dashboard',         acoes:['ver'] },
+  producao:       { label:'🏭 Produção Diária',    acoes:['ver','criar','editar','deletar'] },
+  premiacao:      { label:'🏆 Premiação',          acoes:['ver','criar','editar','deletar'] },
+  pintura:        { label:'🎨 Pintura',            acoes:['ver','criar','editar','deletar'] },
+  colaboradores:  { label:'👥 Colaboradores',      acoes:['ver','criar','editar','deletar'] },
+  maquinas:       { label:'⚙️ Máquinas',           acoes:['ver','criar','editar','deletar'] },
+  pedidos:        { label:'🧾 Pedidos',            acoes:['ver','criar','editar','deletar','importar'] },
+  estoque:        { label:'📦 Estoque',            acoes:['ver','criar','editar','deletar','movimentar'] },
+  epi:            { label:'🦺 EPI',               acoes:['ver','criar','editar','deletar'] },
+  'saldo-demanda':{ label:'📊 Saldo vs Demanda',  acoes:['ver'] },
+  'consumo-medio':{ label:'📉 Consumo Médio',     acoes:['ver'] },
+  'gerencial':{ label:'📈 Painel Gerencial',       acoes:['ver'] },
+  graficos:       { label:'📈 Gráficos',          acoes:['ver'] },
+  relatorios:     { label:'📋 Relatórios',        acoes:['ver','exportar'] },
+  configuracoes:  { label:'🔧 Configurações',     acoes:['ver','editar'] },
+  backup:         { label:'💾 Backup',            acoes:['backup','restaurar','limpar'] },
+  permissoes:     { label:'🔐 Controle de Acesso',acoes:['ver','editar'] },
+  empresa:        { label:'🏢 Dados da Empresa',  acoes:['ver','editar'] },
+  expedicao:      { label:'🚚 Expedição',          acoes:['ver','despachar','desfazer'] },
+};
+
+const ACAO_LABEL = {
+  ver:'Ver', criar:'Criar', editar:'Editar', deletar:'Deletar',
+  importar:'Importar', movimentar:'Movimentar', exportar:'Exportar',
+  backup:'Backup', restaurar:'Restaurar', limpar:'Limpar',
+  despachar:'Despachar', desfazer:'Desfazer'
+};
+
+let permUsuarioAtual = {};
+
+async function loadPermUsuarios() {
+  try {
+    const users = await api('/auth/usuarios');
+    const sel = document.getElementById('perm-usr-select');
+    if (!sel) return;
+    // Resetar para recarregar sempre
+    sel.innerHTML = '<option value="">— Selecione um usuário —</option>' +
+      users.map(u =>
+        `<option value="${u.id}">${u.nome} (${u.username}) — ${u.role}</option>`
+      ).join('');
+  } catch(e) { console.error('Erro ao carregar usuários:', e); }
+}
+
+async function loadPermissoesUsuario() {
+  const id = document.getElementById('perm-usr-select')?.value;
+  const tabela = document.getElementById('perm-usr-tabela');
+  const infoEl = document.getElementById('perm-usr-info');
+  if (!id) { if(tabela) tabela.style.display='none'; return; }
+
+  try {
+    const [users, perms] = await Promise.all([
+      api('/auth/usuarios'),
+      api('/auth/usuarios/' + id + '/permissoes')
+    ]);
+    const usr = users.find(u => u.id == id);
+    if (infoEl && usr) infoEl.textContent = `Perfil: ${usr.role} | ${usr.ativo ? 'Ativo' : 'Inativo'}`;
+    permUsuarioAtual = perms;
+    renderPermUsuarioGrid(perms);
+    if (tabela) tabela.style.display = 'block';
+  } catch(e) { showAlert('Erro ao carregar permissões: ' + e.message, 'danger'); }
+}
+
+function renderPermUsuarioGrid(perms) {
+  const el = document.getElementById('perm-usr-grid');
+  if (!el) return;
+
+  // Todas as ações possíveis para montar colunas fixas
+  const todasAcoes = ['ver','criar','editar','deletar','importar','movimentar','exportar','backup','restaurar','limpar','despachar','desfazer'];
+
+  // Cabeçalho
+  let html = `
+    <div style="display:grid;grid-template-columns:220px repeat(${todasAcoes.length},1fr);gap:6px;padding:10px 0;border-bottom:2px solid var(--border);margin-bottom:4px">
+      <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;font-weight:700">Módulo</div>
+      ${todasAcoes.map(a=>`<div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;text-align:center">${ACAO_LABEL[a]||a}</div>`).join('')}
+    </div>`;
+
+  html += Object.entries(MODULOS_CONFIG).map(([modulo, cfg]) => {
+    const cols = todasAcoes.map(acao => {
+      const temAcao = cfg.acoes.includes(acao);
+      if (!temAcao) return `<div></div>`;
+      const ativo = perms[modulo]?.[acao] ?? false;
+      return `<div style="display:flex;justify-content:center;align-items:center">
+        <label class="toggle-switch" style="cursor:pointer;position:relative;display:inline-block;width:40px;height:22px">
+          <input type="checkbox" id="perm_${modulo}_${acao}" ${ativo?'checked':''}
+            onchange="permToggleChanged('${modulo}','${acao}',this.checked)"
+            style="opacity:0;width:0;height:0;position:absolute">
+          <span id="span_${modulo}_${acao}" style="position:absolute;top:0;left:0;right:0;bottom:0;background:${ativo?'var(--accent)':'var(--surface2)'};border:1px solid ${ativo?'var(--accent)':'var(--border)'};border-radius:22px;transition:.3s;pointer-events:none">
+            <span style="position:absolute;height:16px;width:16px;left:${ativo?'20':'2'}px;bottom:2px;background:white;border-radius:50%;transition:.3s"></span>
+          </span>
+        </label>
+      </div>`;
+    }).join('');
+
+    return `<div style="display:grid;grid-template-columns:220px repeat(${todasAcoes.length},1fr);gap:6px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)">
+      <div style="font-size:13px;font-weight:500">${cfg.label}</div>
+      ${cols}
+    </div>`;
+  }).join('');
+
+  el.innerHTML = html;
+}
+
+function permToggleChanged(modulo, acao, checked) {
+  if (!permUsuarioAtual[modulo]) permUsuarioAtual[modulo] = {};
+  permUsuarioAtual[modulo][acao] = checked;
+  const span = document.getElementById(`span_${modulo}_${acao}`);
+  if (span) {
+    span.style.background = checked ? 'var(--accent)' : 'var(--surface2)';
+    span.style.borderColor = checked ? 'var(--accent)' : 'var(--border)';
+    const dot = span.querySelector('span');
+    if (dot) dot.style.left = checked ? '20px' : '2px';
+  }
+}
+
+function permUsuarioTodos(liberar) {
+  Object.entries(MODULOS_CONFIG).forEach(([modulo, cfg]) => {
+    cfg.acoes.forEach(acao => {
+      const cb = document.getElementById(`perm_${modulo}_${acao}`);
+      const span = document.getElementById(`span_${modulo}_${acao}`);
+      if (cb) cb.checked = liberar;
+      if (span) {
+        span.style.background = liberar ? 'var(--accent)' : 'var(--surface2)';
+        span.style.borderColor = liberar ? 'var(--accent)' : 'var(--border)';
+        const dot = span.querySelector('span');
+        if (dot) dot.style.left = liberar ? '20px' : '2px';
+      }
+      if (!permUsuarioAtual[modulo]) permUsuarioAtual[modulo] = {};
+      permUsuarioAtual[modulo][acao] = liberar;
+    });
+  });
+}
+
+async function salvarPermissoesUsuario() {
+  const id = document.getElementById('perm-usr-select')?.value;
+  if (!id) { showAlert('Selecione um usuário', 'danger'); return; }
+
+  // Feedback visual no botão
+  const btn = document.querySelector('[onclick="salvarPermissoesUsuario()"]');
+  const textoOriginal = btn?.innerHTML;
+  if (btn) { btn.disabled = true; btn.innerHTML = '⏳ Salvando...'; }
+
+  // Coletar estado dos toggles
+  const body = {};
+  Object.entries(MODULOS_CONFIG).forEach(([modulo, cfg]) => {
+    body[modulo] = {};
+    cfg.acoes.forEach(acao => {
+      const el = document.getElementById(`perm_${modulo}_${acao}`);
+      body[modulo][acao] = el ? el.checked : false;
+    });
+  });
+
+  try {
+    await api('/auth/usuarios/' + id + '/permissoes', 'PUT', body);
+    if (btn) { btn.innerHTML = '✅ Salvo!'; btn.style.background = 'var(--success)'; }
+    setTimeout(() => {
+      if (btn) { btn.disabled = false; btn.innerHTML = textoOriginal; btn.style.background = ''; }
+    }, 2000);
+    showAlert('Permissões salvas com sucesso!');
+  } catch(e) {
+    if (btn) { btn.disabled = false; btn.innerHTML = textoOriginal; btn.style.background = ''; }
+    showAlert('Erro: ' + e.message, 'danger');
+  }
+}
+
+// ─── CARREGAR PERMISSÕES DO USUÁRIO LOGADO ────────────────────────────────────
+
+let minhasPermissoes = null;
+
+async function carregarMinhasPermissoes() {
+  try {
+    minhasPermissoes = await api('/auth/me/permissoes');
+  } catch(e) {
+    minhasPermissoes = null;
+  }
+}
+
+function temPermissao(modulo, acao) {
+  if (!minhasPermissoes) return true; // Se não carregou, libera (segurança no backend)
+  return minhasPermissoes[modulo]?.[acao] ?? false;
+}
+
+function aplicarPermissoesUI() {
+  if (!minhasPermissoes) return;
+  // Ocultar botões de criar
+  document.querySelectorAll('[data-perm-criar]').forEach(el => {
+    const modulo = el.getAttribute('data-perm-criar');
+    if (!temPermissao(modulo, 'criar')) el.style.display = 'none';
+  });
+  // Ocultar botões de editar
+  document.querySelectorAll('[data-perm-editar]').forEach(el => {
+    const modulo = el.getAttribute('data-perm-editar');
+    if (!temPermissao(modulo, 'editar')) el.style.display = 'none';
+  });
+  // Ocultar botões de deletar
+  document.querySelectorAll('[data-perm-deletar]').forEach(el => {
+    const modulo = el.getAttribute('data-perm-deletar');
+    if (!temPermissao(modulo, 'deletar')) el.style.display = 'none';
+  });
+  // Ocultar botões de importar
+  document.querySelectorAll('[data-perm-importar]').forEach(el => {
+    const modulo = el.getAttribute('data-perm-importar');
+    if (!temPermissao(modulo, 'importar')) el.style.display = 'none';
+  });
+  // Ocultar botões de movimentar
+  document.querySelectorAll('[data-perm-movimentar]').forEach(el => {
+    const modulo = el.getAttribute('data-perm-movimentar');
+    if (!temPermissao(modulo, 'movimentar')) el.style.display = 'none';
+  });
+  document.querySelectorAll('[data-perm-despachar]').forEach(el => {
+    const modulo = el.getAttribute('data-perm-despachar');
+    if (!temPermissao(modulo, 'despachar')) el.style.display = 'none';
+  });
+  document.querySelectorAll('[data-perm-desfazer]').forEach(el => {
+    const modulo = el.getAttribute('data-perm-desfazer');
+    if (!temPermissao(modulo, 'desfazer')) el.style.display = 'none';
+  });
+}
+
+// ─── PEDIDOS SEM VENDEDOR VINCULADO (Gestor) ──────────────────────────────────
+// O nome do vendedor que vem no PDF é ligado ao usuário pelo nome dele ou pelos
+// "nomes na importação" do cadastro. Quando não bate, o pedido aparece aqui.
+
+let _semVendedorLista = [];
+let _vendedoresLista = [];
+
+async function carregarAvisoSemVendedor() {
+  const el = document.getElementById('ped-sem-vendedor-banner');
+  if (!el) return;
+  if (!window.usuarioLogado || window.usuarioLogado.role !== 'gestor') { el.innerHTML = ''; return; }
+  try {
+    _semVendedorLista = await api('/pedidos/sem-vendedor');
+  } catch (e) { el.innerHTML = ''; return; }
+  const n = _semVendedorLista.length;
+  if (!n) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div style="background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.4);border-radius:10px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <span style="font-size:20px">🧾</span>
+    <div style="flex:1;min-width:220px"><strong style="color:var(--warn)">${n} pedido(s) sem vendedor vinculado</strong>
+      <div style="font-size:12px;color:var(--muted)">O nome do vendedor do pedido não corresponde a nenhum usuário. Atribua para o pedido aparecer para o vendedor certo.</div></div>
+    <button class="btn btn-sm btn-secondary" onclick="abrirModalSemVendedor()">Resolver →</button>
+  </div>`;
+}
+
+async function abrirModalSemVendedor() {
+  try {
+    const r = await Promise.all([api('/pedidos/sem-vendedor'), api('/auth/vendedores')]);
+    _semVendedorLista = r[0] || [];
+    _vendedoresLista = r[1] || [];
+  } catch (e) { showAlert('Erro ao carregar: ' + e.message, 'danger'); return; }
+  renderModalSemVendedor();
+  openModal('modal-sem-vendedor');
+}
+
+function renderModalSemVendedor() {
+  const tbody = document.getElementById('sem-vendedor-tbody');
+  if (!tbody) return;
+  if (!_semVendedorLista.length) {
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:var(--muted);padding:24px">✅ Todos os pedidos em andamento têm vendedor vinculado</td></tr>';
+    return;
+  }
+  const opts = '<option value="">Escolher vendedor...</option>' + _vendedoresLista.map(v =>
+    `<option value="${v.id}">${_escHtml(v.nome)}${v.role !== 'comercial' ? ' (' + _escHtml(v.role) + ')' : ''}</option>`).join('');
+  tbody.innerHTML = _semVendedorLista.map(p => `
+    <tr>
+      <td><strong>${_escHtml(p.numero_pedido)}</strong></td>
+      <td>${_escHtml(p.cliente_nome || '—')}</td>
+      <td>${p.vendedor ? `<span style="color:var(--warn)">“${_escHtml(p.vendedor)}”</span>` : '<span style="color:var(--muted)">— sem nome no pedido —</span>'}</td>
+      <td><select id="semvend-sel-${p.id}" style="min-width:180px">${opts}</select></td>
+      <td style="white-space:nowrap">
+        ${p.vendedor ? `<label style="display:inline-flex;align-items:center;gap:6px;font-size:12px;margin-right:8px" title="Nas próximas importações, esse nome já cai direto para o vendedor escolhido"><input type="checkbox" id="semvend-lembrar-${p.id}" checked> lembrar nome</label>` : ''}
+        <button class="btn btn-sm btn-primary" onclick="atribuirVendedorPedido(${p.id})">Atribuir</button>
+      </td>
+    </tr>`).join('');
+}
+
+async function atribuirVendedorPedido(pedidoId) {
+  const sel = document.getElementById('semvend-sel-' + pedidoId);
+  const usuarioId = sel ? sel.value : '';
+  if (!usuarioId) { showAlert('Escolha o vendedor', 'danger'); return; }
+  const lembrarEl = document.getElementById('semvend-lembrar-' + pedidoId);
+  const lembrar_nome = lembrarEl ? lembrarEl.checked : false;
+  try {
+    const r = await api('/pedidos/' + pedidoId + '/vendedor', 'PUT', { usuario_id: +usuarioId, lembrar_nome });
+    showAlert(r.mensagem + (r.outros_vinculados ? ` (+${r.outros_vinculados} outro(s) pedido(s) com o mesmo nome)` : ''));
+    _semVendedorLista = await api('/pedidos/sem-vendedor');
+    renderModalSemVendedor();
+    carregarAvisoSemVendedor();
+  } catch (e) { showAlert('Erro: ' + e.message, 'danger'); }
+}
+
+window.carregarAvisoSemVendedor = carregarAvisoSemVendedor;
+window.abrirModalSemVendedor = abrirModalSemVendedor;
+window.atribuirVendedorPedido = atribuirVendedorPedido;
+/* ===================== PDV (Bloco 2b) ===================== */
+let pdvCats=[], pdvProds=[], pdvClientes=[], pdvNivel=null, pdvCarrinho=[], pdvParcelas=[], pdvClienteId=null, pdvQaSel=-1, pdvCliSel=-1, pdvGerenciar=false;
+function pdvFmt(v){ return 'R$ ' + (Number(v)||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function _pdvNum(v){ return (Number(v)||0).toLocaleString('pt-BR'); }
+
+async function abrirPDV(){
+  const ov=document.getElementById('pdv-overlay'); if(!ov) return;
+  pdvNivel=null; pdvCarrinho=[]; pdvParcelas=[]; pdvClienteId=null; pdvGerenciar=false;
+  { const _gb=document.getElementById('pdv-ger-btn'); if(_gb) _gb.classList.remove('on'); }
+  document.getElementById('pdv-cliente-busca').value='';
+  document.getElementById('pdv-cliente-sel').style.display='none';
+  document.getElementById('pdv-cliente-list').style.display='none';
+  ['pdv-acr','pdv-fre','pdv-dgl'].forEach(id=>{ const e=document.getElementById(id); if(e) e.value=0; });
+  ['pdv-numero','pdv-prazo','pdv-obs','pdv-busca-prod'].forEach(id=>{ const e=document.getElementById(id); if(e) e.value=''; });
+  document.getElementById('pdv-vendedor').textContent = (window.usuarioLogado && window.usuarioLogado.nome) ? window.usuarioLogado.nome : 'Usuário logado';
+  ov.style.display='flex'; document.body.style.overflow='hidden';
+  try{
+    const r = await Promise.all([
+      api('/estoque/categorias').catch(()=>[]),
+      api('/estoque/produtos').catch(()=>[]),
+      api('/pedidos/clientes').catch(()=>[]),
+    ]);
+    pdvCats=r[0]||[]; pdvProds=r[1]||[]; pdvClientes=r[2]||[];
+  }catch(e){ pdvCats=[]; pdvProds=[]; pdvClientes=[]; }
+  pdvRenderNav(); pdvRenderCart(); pdvRenderParcelas();
+}
+function fecharPDV(){ const ov=document.getElementById('pdv-overlay'); if(ov) ov.style.display='none'; document.body.style.overflow=''; }
+
+/* categorias (árvore) */
+function pdvFilhos(id){ return pdvCats.filter(c => (c.parent_id||null)===id); }
+function pdvContaProd(id){ let n=pdvProds.filter(p=>p.categoria_id===id).length; pdvFilhos(id).forEach(f=>n+=pdvContaProd(f.id)); return n; }
+function pdvCaminho(id){ const path=[]; let cur=id; while(cur!=null){ const c=pdvCats.find(x=>x.id===cur); if(!c) break; path.unshift(c); cur=c.parent_id||null; } return path; }
+function pdvIrNivel(id){ pdvNivel=id; pdvRenderNav(); }
+function pdvVoltar(){ if(pdvNivel==null) return; const c=pdvCats.find(x=>x.id===pdvNivel); pdvNivel = c ? (c.parent_id||null) : null; pdvRenderNav(); }
+function pdvRenderNav(){
+  const path=pdvCaminho(pdvNivel);
+  let bc=`<span class="bc-item" onclick="pdvIrNivel(null)">Início</span>`;
+  path.forEach(c=> bc+=`<span class="bc-sep">›</span><span class="bc-item" onclick="pdvIrNivel(${c.id})">${c.nome}</span>`);
+  document.getElementById('pdv-bc').innerHTML=bc;
+  document.getElementById('pdv-voltar').style.display = pdvNivel==null ? 'none' : 'inline-flex';
+  let subs=pdvFilhos(pdvNivel);
+  if(!pdvGerenciar) subs=subs.filter(c=>!c.oculta_pdv);
+  const ehFolha = pdvFilhos(pdvNivel).length===0;
+  let prods=(pdvNivel!=null && ehFolha)?pdvProds.filter(p=>p.categoria_id===pdvNivel):[];
+  if(!pdvGerenciar) prods=prods.filter(p=>!p.oculta_pdv);
+  let html='';
+  if(subs.length){
+    html+='<div class="cats">'+subs.map(c=>{
+      const temFilho=pdvFilhos(c.id).length>0; const qt=pdvContaProd(c.id);
+      const _oc=!!c.oculta_pdv;
+      const _eye = pdvGerenciar?`<span class="card-eye${_oc?' off':''}" title="${_oc?'Mostrar no PDV':'Ocultar do PDV'}" onclick="event.stopPropagation();pdvToggleOcultarCat(${c.id})">${_oc?'\ud83d\udeab':'\ud83d\udc41'}</span>`:'';
+      return `<div class="cat-wrap${_oc?' oculta':''}">${_eye}<button class="cat" onclick="pdvIrNivel(${c.id})">${c.nome}<span class="sub">${_oc?'(oculta) ':''}${temFilho?'subcategorias':qt+' produto(s)'}</span></button></div>`;
+    }).join('')+'</div>';
+  }
+  if(prods.length) html+='<div class="prods">'+prods.map(pdvProdCard).join('')+'</div>';
+  if(!subs.length && !prods.length) html='<div class="vazio">Esta categoria não tem produtos.</div>';
+  if(pdvGerenciar){
+    const _addP = (pdvNivel!=null)?`<button class="ger-add" onclick="pdvAbrirSeletorProdutos()">+ Escolher produtos</button>`:'';
+    html = `<div class="ger-bar"><button class="ger-add" onclick="pdvCriarCategoria()">+ ${pdvNivel!=null?'Subcategoria':'Categoria'}</button>${_addP}</div>`+html;
+  }
+  document.getElementById('pdv-cat-area').innerHTML=html;
+}
+function pdvProdCard(p){ const _op=!!p.oculta_pdv; const _eye = pdvGerenciar?`<span class="card-eye${_op?' off':''}" title="${_op?'Mostrar no PDV':'Ocultar do PDV'}" onclick="event.stopPropagation();pdvToggleOcultarProd(${p.id})">${_op?'\ud83d\udeab':'\ud83d\udc41'}</span>`:''; return `<div class="prod${pdvGerenciar?' gmode':''}${_op?' oculta':''}" onclick="${pdvGerenciar?'':`pdvAddItem(${p.id})`}">${_eye}<div class="pn">${p.nome||''}</div><div class="pp">${pdvFmt(p.preco)}</div><div class="pc">${p.codigo||''}</div></div>`; }
+
+/* busca rápida de produto */
+function pdvQaMatches(){ const q=(document.getElementById('pdv-busca-prod').value||'').toLowerCase().trim(); if(!q) return []; return pdvProds.filter(p=>((p.nome||'')+' '+(p.codigo||'')).toLowerCase().includes(q) && (pdvGerenciar||(!pdvCatOculta(p.categoria_id) && !p.oculta_pdv))).slice(0,8); }
+function pdvQaInput(){ const m=pdvQaMatches(); pdvQaSel=m.length?0:-1; const b=document.getElementById('pdv-qa-list'); if(!m.length){ b.style.display='none'; b.innerHTML=''; return; } b.style.display='block'; b.innerHTML=m.map((p,i)=>`<div class="ac-item ${i===0?'sel':''}" onclick="pdvQaAdd(${p.id})"><span>${p.nome||''}<span class="c">${p.codigo||''}</span></span><span class="p">${pdvFmt(p.preco)}</span></div>`).join(''); }
+function pdvQaKey(e){ const m=pdvQaMatches(); if(e.key==='ArrowDown'){pdvQaSel=Math.min(pdvQaSel+1,m.length-1);pdvQaHi();e.preventDefault();} else if(e.key==='ArrowUp'){pdvQaSel=Math.max(pdvQaSel-1,0);pdvQaHi();e.preventDefault();} else if(e.key==='Enter'){ if(m.length) pdvQaAdd(m[pdvQaSel>=0?pdvQaSel:0].id); e.preventDefault();} else if(e.key==='Escape'){ document.getElementById('pdv-qa-list').style.display='none'; } }
+function pdvQaHi(){ document.querySelectorAll('#pdv-qa-list .ac-item').forEach((el,i)=>el.classList.toggle('sel',i===pdvQaSel)); }
+function pdvQaAdd(pid){ pdvAddItem(pid); document.getElementById('pdv-busca-prod').value=''; document.getElementById('pdv-qa-list').style.display='none'; }
+
+/* cliente autocomplete */
+function pdvCliMatches(){ const q=(document.getElementById('pdv-cliente-busca').value||'').toLowerCase().trim(); if(!q) return pdvClientes.slice(0,15); return pdvClientes.filter(c=>((c.razao_social||'')+' '+(c.nome_fantasia||'')+' '+(c.cnpj||'')).toLowerCase().includes(q)).slice(0,15); }
+function pdvCliInput(){ const m=pdvCliMatches(); pdvCliSel=m.length?0:-1; const b=document.getElementById('pdv-cliente-list'); if(!m.length){ b.style.display='none'; b.innerHTML=''; return; } b.style.display='block'; b.innerHTML=m.map((c,i)=>`<div class="ac-item ${i===0?'sel':''}" onclick="pdvCliPick(${c.id})"><span>${c.razao_social||''}${c.cnpj?'<span class="c">'+c.cnpj+'</span>':''}</span></div>`).join(''); }
+function pdvCliKey(e){ const m=pdvCliMatches(); if(e.key==='ArrowDown'){pdvCliSel=Math.min(pdvCliSel+1,m.length-1);pdvCliHi();e.preventDefault();} else if(e.key==='ArrowUp'){pdvCliSel=Math.max(pdvCliSel-1,0);pdvCliHi();e.preventDefault();} else if(e.key==='Enter'){ if(m.length) pdvCliPick(m[pdvCliSel>=0?pdvCliSel:0].id); e.preventDefault();} else if(e.key==='Escape'){ document.getElementById('pdv-cliente-list').style.display='none'; } }
+function pdvCliHi(){ document.querySelectorAll('#pdv-cliente-list .ac-item').forEach((el,i)=>el.classList.toggle('sel',i===pdvCliSel)); }
+function pdvCliPick(id){ const c=pdvClientes.find(x=>x.id===id); if(!c) return; pdvClienteId=id; document.getElementById('pdv-cliente-busca').value=''; document.getElementById('pdv-cliente-list').style.display='none'; const sel=document.getElementById('pdv-cliente-sel'); sel.style.display='block'; sel.innerHTML=`✔ ${c.razao_social||''}${c.cnpj?' ('+c.cnpj+')':''} <a href="#" onclick="pdvLimparCliente();return false" style="color:#ef4444;margin-left:8px">trocar</a>`; }
+function pdvLimparCliente(){ pdvClienteId=null; document.getElementById('pdv-cliente-sel').style.display='none'; document.getElementById('pdv-cliente-busca').focus(); }
+function pdvNovoCliente(){ let m=document.getElementById("pdv-cliform"); if(m) m.remove(); m=document.createElement("div"); m.id="pdv-cliform"; m.className="pdv-pick"; m.innerHTML=`<div class="pick-card" style="max-width:540px"><div class="pick-head"><b>Novo cliente</b><button class="pdv-x" onclick="pdvFecharCliForm()">\u2715</button></div><div class="cliform-grid"><label class="cf-full">Raz\u00e3o social / Nome *<input class="pinp" id="ncli-razao" autocomplete="off"></label><label>Nome fantasia<input class="pinp" id="ncli-fant" autocomplete="off"></label><label>CNPJ / CPF<input class="pinp" id="ncli-doc" autocomplete="off"></label><label>Telefone<input class="pinp" id="ncli-tel" autocomplete="off"></label><label>E-mail<input class="pinp" id="ncli-email" autocomplete="off"></label><label>Cidade<input class="pinp" id="ncli-cidade" autocomplete="off"></label><label>UF<input class="pinp" id="ncli-uf" autocomplete="off" maxlength="2"></label></div><div class="pick-foot"><span class="parc-resumo">* obrigat\u00f3rio</span><div style="display:flex;gap:8px"><button class="pbtn pbtn-can" onclick="pdvFecharCliForm()">Cancelar</button><button class="pbtn pbtn-fin" onclick="pdvSalvarNovoCliente()">Salvar cliente</button></div></div></div>`; document.getElementById("pdv-overlay").appendChild(m); const r=document.getElementById("ncli-razao"); if(r) r.focus(); }
+function pdvFecharCliForm(){ const m=document.getElementById("pdv-cliform"); if(m) m.remove(); }
+async function pdvSalvarNovoCliente(){ const v=id=>(document.getElementById(id).value||"").trim(); const razao=v("ncli-razao"); if(!razao){ pdvToast("Informe a raz\u00e3o social / nome.","danger"); return; } const body={ razao_social:razao, nome_fantasia:v("ncli-fant")||null, cnpj:v("ncli-doc")||null, telefone:v("ncli-tel")||null, email:v("ncli-email")||null, cidade:v("ncli-cidade")||null, uf:(v("ncli-uf")||"").toUpperCase()||null }; try{ const r=await api("/pedidos/clientes","POST",body); pdvToast("Cliente cadastrado!"); try{ pdvClientes=await api("/pedidos/clientes")||[]; }catch(e){} pdvFecharCliForm(); if(r&&r.id) pdvCliPick(r.id); }catch(e){ pdvToast(e.message||"Erro ao cadastrar cliente","danger"); } }
+
+/* carrinho */
+function pdvAddItem(pid){ const p=pdvProds.find(x=>x.id===pid); if(!p) return; const ex=pdvCarrinho.find(i=>i.pid===pid); if(ex) ex.qtd+=1; else pdvCarrinho.push({pid:p.id, nome:p.nome, codigo:p.codigo, unidade:p.unidade||'und', qtd:1, vunit:Number(p.preco)||0, desc:0}); pdvRenderCart(); setTimeout(()=>{ const inp=document.querySelector('#pdv-cart input[data-q="'+pid+'"]'); if(inp){ inp.focus(); inp.select(); } },0); }
+function pdvSetItem(pid,campo,val){ const i=pdvCarrinho.find(x=>x.pid===pid); if(!i) return; i[campo]=Math.max(0,Number(val)||0); pdvCalc(); }
+function pdvRemItem(pid){ pdvCarrinho=pdvCarrinho.filter(x=>x.pid!==pid); pdvRenderCart(); }
+function pdvRenderCart(){
+  const tb=document.getElementById('pdv-cart');
+  document.getElementById('pdv-cart-vazio').style.display = pdvCarrinho.length ? 'none' : 'block';
+  tb.innerHTML=pdvCarrinho.map(i=>{
+    const tot=i.qtd*i.vunit-i.desc;
+    return `<tr>
+      <td class="le">${i.nome}<div style="color:#6b7280;font-size:10.5px">${i.codigo||''}</div></td>
+      <td><input class="ci" type="number" data-q="${i.pid}" value="${i.qtd}" min="0" oninput="pdvSetItem(${i.pid},'qtd',this.value)"></td>
+      <td><input class="ci" type="number" step="0.01" value="${i.vunit}" oninput="pdvSetItem(${i.pid},'vunit',this.value)"></td>
+      <td><input class="ci" type="number" step="0.01" value="${i.desc}" oninput="pdvSetItem(${i.pid},'desc',this.value)"></td>
+      <td style="font-weight:700">${pdvFmt(tot)}</td>
+      <td><button class="rm" onclick="pdvRemItem(${i.pid})">×</button></td>
+    </tr>`;
+  }).join('');
+  pdvCalc();
+}
+function pdvCalc(){
+  const sub=pdvCarrinho.reduce((s,i)=>s+(i.qtd*i.vunit-i.desc),0);
+  const acr=+document.getElementById('pdv-acr').value||0, fre=+document.getElementById('pdv-fre').value||0, dgl=+document.getElementById('pdv-dgl').value||0;
+  const total=Math.max(0, sub+acr+fre-dgl), qtd=pdvCarrinho.reduce((s,i)=>s+(+i.qtd||0),0);
+  document.getElementById('pdv-sub').textContent=pdvFmt(sub);
+  document.getElementById('pdv-tot').textContent=pdvFmt(total);
+  document.getElementById('pdv-bq').textContent=_pdvNum(qtd);
+  document.getElementById('pdv-bt').textContent=pdvFmt(total);
+  pdvRenderParcResumo();
+}
+
+/* parcelas (manual) */
+function pdvAddParcela(){ pdvParcelas.push({forma:'A Prazo', venc:'', valor:0}); pdvRenderParcelas(); }
+function pdvSetParc(idx,campo,val){ pdvParcelas[idx][campo]=(campo==='valor'?(Number(val)||0):val); pdvRenderParcResumo(); }
+function pdvRemParc(idx){ pdvParcelas.splice(idx,1); pdvRenderParcelas(); }
+function pdvRenderParcelas(){
+  const formas=['A Prazo','Dinheiro','PIX','Cartão','Boleto','Cheque'];
+  document.getElementById('pdv-parcelas').innerHTML=pdvParcelas.map((p,idx)=>`<div class="prow">
+    <select onchange="pdvSetParc(${idx},'forma',this.value)">${formas.map(f=>`<option ${p.forma===f?'selected':''}>${f}</option>`).join('')}</select>
+    <input type="date" value="${p.venc||''}" onchange="pdvSetParc(${idx},'venc',this.value)">
+    <input type="number" step="0.01" placeholder="Valor" value="${p.valor||''}" oninput="pdvSetParc(${idx},'valor',this.value)">
+    <button class="rm" onclick="pdvRemParc(${idx})">×</button>
+  </div>`).join('');
+  pdvRenderParcResumo();
+}
+function pdvRenderParcResumo(){ const s=pdvParcelas.reduce((a,p)=>a+(+p.valor||0),0); const el=document.getElementById('pdv-parc-resumo'); if(!pdvParcelas.length){ el.textContent=''; return; } el.innerHTML=`Soma das parcelas: <b>${pdvFmt(s)}</b> &nbsp;•&nbsp; Total: <b>${document.getElementById('pdv-tot').textContent}</b>`; }
+
+/* finalizar */
+async function finalizarPDV(){
+  if(!pdvClienteId){ pdvToast('Selecione o cliente.','danger'); return; }
+  const itens=pdvCarrinho.filter(i=>(i.qtd||0)>0);
+  if(!itens.length){ pdvToast('Adicione ao menos um item com quantidade.','danger'); return; }
+  const payload={
+    cliente_id: pdvClienteId,
+    numero_pedido: (document.getElementById('pdv-numero').value||'').trim() || null,
+    prazo_entrega: document.getElementById('pdv-prazo').value || '',
+    vendedor: (window.usuarioLogado && window.usuarioLogado.nome) ? window.usuarioLogado.nome : null,
+    observacoes: (document.getElementById('pdv-obs').value||'').trim(),
+    acrescimo: +document.getElementById('pdv-acr').value||0,
+    frete: +document.getElementById('pdv-fre').value||0,
+    desconto_global: +document.getElementById('pdv-dgl').value||0,
+    itens: itens.map(i=>({produto_id:i.pid, descricao:i.nome, quantidade:i.qtd, unidade:i.unidade||'und', valor_unitario:i.vunit, desconto:i.desc})),
+    parcelas: pdvParcelas.filter(p=>(p.valor||0)>0 || p.venc).map(p=>({forma_pagamento:p.forma, vencimento:p.venc||'', valor:p.valor||0})),
+  };
+  const btn=document.getElementById('pdv-finalizar');
+  try{
+    if(btn){ btn.disabled=true; btn.textContent='Salvando...'; }
+    const r=await api('/pedidos/','POST',payload);
+    showAlert('Pedido '+(r.numero_pedido||'')+' criado!');
+    fecharPDV();
+    if(typeof loadPedidos==='function'){ try{ loadPedidos(); }catch(e){} }
+  }catch(e){ pdvToast(e.message||'Erro ao salvar pedido','danger'); }
+  finally{ if(btn){ btn.disabled=false; btn.textContent='Finalizar pedido'; } }
+}
+
+document.addEventListener('click',function(e){ if(!e.target.closest('#pdv-overlay .rel')){ ['pdv-qa-list','pdv-cliente-list'].forEach(id=>{ const b=document.getElementById(id); if(b) b.style.display='none'; }); } });
+window.abrirPDV=abrirPDV; window.fecharPDV=fecharPDV; window.pdvIrNivel=pdvIrNivel; window.pdvVoltar=pdvVoltar;
+window.pdvAddItem=pdvAddItem; window.pdvSetItem=pdvSetItem; window.pdvRemItem=pdvRemItem;
+window.pdvQaInput=pdvQaInput; window.pdvQaKey=pdvQaKey; window.pdvQaAdd=pdvQaAdd;
+window.pdvCliInput=pdvCliInput; window.pdvCliKey=pdvCliKey; window.pdvCliPick=pdvCliPick; window.pdvLimparCliente=pdvLimparCliente; window.pdvNovoCliente=pdvNovoCliente;
+window.pdvCalc=pdvCalc; window.pdvAddParcela=pdvAddParcela; window.pdvSetParc=pdvSetParc; window.pdvRemParc=pdvRemParc; window.finalizarPDV=finalizarPDV;
+
+/* ---- PDV: gerenciar catálogo (excluir / criar cards) ---- */
+function pdvToast(msg,type){ const ov=document.getElementById("pdv-overlay"); if(!ov || ov.style.display==="none"){ if(typeof showAlert==="function") showAlert(msg,type); return; } const t=document.createElement("div"); t.className="pdv-toast "+(type==="danger"?"err":"ok"); t.textContent=msg; ov.appendChild(t); setTimeout(()=>{ t.classList.add("out"); setTimeout(()=>{ if(t.parentNode) t.remove(); },320); }, 2600); }
+function pdvToggleGerenciar(){ pdvGerenciar=!pdvGerenciar; const b=document.getElementById("pdv-ger-btn"); if(b) b.classList.toggle("on",pdvGerenciar); pdvRenderNav(); }
+async function pdvReloadCatalogo(){ try{ const r=await Promise.all([api("/estoque/categorias").catch(()=>[]), api("/estoque/produtos").catch(()=>[])]); pdvCats=r[0]||[]; pdvProds=r[1]||[]; }catch(e){} pdvRenderNav(); }
+async function pdvCriarCategoria(){ const nome=prompt(pdvNivel!=null?"Nome da nova subcategoria:":"Nome da nova categoria:"); if(!nome||!nome.trim()) return; try{ await api("/estoque/categorias","POST",{nome:nome.trim(), parent_id:pdvNivel}); pdvToast("Categoria criada!"); await pdvReloadCatalogo(); }catch(e){ pdvToast(e.message||"Erro ao criar categoria","danger"); } }
+let pdvPickSel=new Set();
+function pdvAbrirSeletorProdutos(){ if(pdvNivel==null){ showAlert("Entre em uma categoria para escolher os produtos.","danger"); return; } const catNome=(pdvCats.find(c=>c.id===pdvNivel)||{}).nome||""; let m=document.getElementById("pdv-prodpick"); if(m) m.remove(); m=document.createElement("div"); m.id="pdv-prodpick"; m.className="pdv-pick"; m.innerHTML=`<div class="pick-card"><div class="pick-head"><b>Produtos exibidos em \u201c${catNome}\u201d</b><button class="pdv-x" onclick="pdvFecharSeletor()">\u2715</button></div><input class="pinp" id="pdv-pick-busca" autocomplete="off" placeholder="Buscar produto por nome ou c\u00f3digo..." oninput="pdvPickRender()"><div class="pick-list" id="pdv-pick-list"></div><div class="pick-foot"><span id="pdv-pick-info" class="parc-resumo"></span><div style="display:flex;gap:8px"><button class="pbtn pbtn-can" onclick="pdvFecharSeletor()">Cancelar</button><button class="pbtn pbtn-fin" onclick="pdvSalvarSeletor()">Salvar</button></div></div></div>`; document.getElementById("pdv-overlay").appendChild(m); pdvPickSel=new Set(pdvProds.filter(p=>p.categoria_id===pdvNivel && !p.oculta_pdv).map(p=>p.id)); pdvPickRender(); const bi=document.getElementById("pdv-pick-busca"); if(bi) bi.focus(); }
+function pdvPickRender(){ const q=(document.getElementById("pdv-pick-busca").value||"").toLowerCase().trim(); const list=pdvProds.filter(p=> !q || ((p.nome||"")+" "+(p.codigo||"")).toLowerCase().includes(q)); const box=document.getElementById("pdv-pick-list"); box.innerHTML = list.length ? list.map(p=>{ const checked=pdvPickSel.has(p.id)?"checked":""; const outro=(p.categoria_id!=null && p.categoria_id!==pdvNivel)?`<span class="pick-cat">${(pdvCats.find(c=>c.id===p.categoria_id)||{}).nome||""}</span>`:""; return `<label class="pick-item"><input type="checkbox" ${checked} onchange="pdvPickToggle(${p.id},this.checked)"><span class="pn">${p.nome||""}</span><span class="pc">${p.codigo||""}</span>${outro}</label>`; }).join("") : `<div class="vazio">Nenhum produto encontrado.</div>`; const info=document.getElementById("pdv-pick-info"); if(info) info.textContent=pdvPickSel.size+" selecionado(s)"; }
+function pdvPickToggle(id,on){ if(on) pdvPickSel.add(id); else pdvPickSel.delete(id); const info=document.getElementById("pdv-pick-info"); if(info) info.textContent=pdvPickSel.size+" selecionado(s)"; }
+function pdvFecharSeletor(){ const m=document.getElementById("pdv-prodpick"); if(m) m.remove(); }
+async function pdvSalvarSeletor(){ const mostrar=[...pdvPickSel]; const paraAtribuir=mostrar.filter(id=>{ const p=pdvProds.find(x=>x.id===id); return p && p.categoria_id!==pdvNivel; }); const visiveisAtuais=pdvProds.filter(p=>p.categoria_id===pdvNivel && !p.oculta_pdv).map(p=>p.id); const ocultar=visiveisAtuais.filter(id=>!pdvPickSel.has(id)); try{ if(paraAtribuir.length) await api("/estoque/produtos/atribuir-categoria","POST",{produto_ids:paraAtribuir, categoria_id:pdvNivel}); if(mostrar.length) await api("/estoque/produtos/visibilidade-pdv","POST",{produto_ids:mostrar, oculta:false}); if(ocultar.length) await api("/estoque/produtos/visibilidade-pdv","POST",{produto_ids:ocultar, oculta:true}); pdvToast("Produtos da categoria atualizados!"); pdvFecharSeletor(); await pdvReloadCatalogo(); }catch(e){ pdvToast(e.message||"Erro ao salvar produtos","danger"); } }
+function pdvCatOculta(id){ let cur=id, g=0; while(cur!=null && g++<25){ const c=pdvCats.find(x=>x.id===cur); if(!c) break; if(c.oculta_pdv) return true; cur=c.parent_id||null; } return false; }
+async function pdvToggleOcultarCat(id){ const c=pdvCats.find(x=>x.id===id); if(!c) return; const novo = c.oculta_pdv?0:1; try{ await api("/estoque/categorias/"+id+"/ocultar","POST",{oculta:!!novo}); c.oculta_pdv=novo; pdvToast(novo?("Categoria \u201c"+(c.nome||"")+"\u201d ocultada do PDV"):("Categoria \u201c"+(c.nome||"")+"\u201d voltou a aparecer no PDV")); pdvRenderNav(); }catch(e){ pdvToast(e.message||"Erro ao alterar visibilidade","danger"); } }
+async function pdvToggleOcultarProd(id){ const p=pdvProds.find(x=>x.id===id); if(!p) return; const novo=p.oculta_pdv?0:1; try{ await api("/estoque/produtos/visibilidade-pdv","POST",{produto_ids:[id], oculta:!!novo}); p.oculta_pdv=novo; if(novo) pdvCarrinho=pdvCarrinho.filter(i=>i.pid!==id); pdvToast(novo?("Produto ocultado do PDV"):("Produto vis\u00edvel no PDV")); pdvRenderNav(); if(novo) pdvRenderCart(); }catch(e){ pdvToast(e.message||"Erro ao alterar visibilidade","danger"); } }
+window.pdvToggleGerenciar=pdvToggleGerenciar; window.pdvCriarCategoria=pdvCriarCategoria; window.pdvToggleOcultarCat=pdvToggleOcultarCat;
+window.pdvAbrirSeletorProdutos=pdvAbrirSeletorProdutos; window.pdvPickRender=pdvPickRender; window.pdvPickToggle=pdvPickToggle; window.pdvFecharSeletor=pdvFecharSeletor; window.pdvSalvarSeletor=pdvSalvarSeletor;
+window.pdvToggleOcultarProd=pdvToggleOcultarProd; window.pdvFecharCliForm=pdvFecharCliForm; window.pdvSalvarNovoCliente=pdvSalvarNovoCliente;
+
+
+
+
+async function imprimirPedido(id) {
+  try {
+    const p = await api('/pedidos/' + id);
+    let emp = window.empresaDados;
+    if (!emp) {
+      try {
+        emp = await api('/configuracoes/empresa');
+        window.empresaDados = emp;
+      } catch(e) {
+        emp = {};
+      }
+    }
+
+    const subtotal = p.itens.reduce((acc, i) => acc + ((Number(i.quantidade)||0) * (Number(i.valor_unitario)||0) - (Number(i.desconto)||0)), 0);
+    const acrescimo = Number(p.acrescimo) || 0;
+    const frete = Number(p.frete) || 0;
+    const descontoGlobal = Number(p.desconto_global) || 0;
+    const valorTotal = Math.max(0, subtotal + acrescimo + frete - descontoGlobal);
+    const qtdItens = p.itens.reduce((acc, i) => acc + (Number(i.quantidade) || 0), 0);
+
+    const statusLabel = {
+      aberto: 'Aberto',
+      em_producao: 'Em produção',
+      produzido: 'Produzido',
+      entregue: 'Entregue'
+    }[p.status] || p.status;
+
+    function formatDateTimeString(str) {
+      if(!str) return '—';
+      const clean = str.replace('T', ' ').split('.')[0];
+      const [datePart, timePart] = clean.split(' ');
+      if(!datePart) return '—';
+      const [y, m, d] = datePart.split('-');
+      const time = timePart ? timePart.slice(0, 5) : '';
+      return d + '/' + m + '/' + y + (time ? ' ' + time : '');
+    }
+
+    const itemsHtml = p.itens.map((i, idx) => {
+      const qty = Number(i.quantidade) || 0;
+      const unitPrice = Number(i.valor_unitario) || 0;
+      const desc = Number(i.desconto) || 0;
+      const total = qty * unitPrice - desc;
+      const bg = idx % 2 === 0 ? '#f4f7fc' : '#ffffff';
+      return '<tr style="background: ' + bg + '; font-size: 11px;">' +
+        '<td style="padding: 6px 8px; text-align: center; border-bottom: 1px solid #ddd;">' + (i.produto_codigo || i.produto_id || '—') + '</td>' +
+        '<td style="padding: 6px 8px; text-align: left; border-bottom: 1px solid #ddd;">' + (i.descricao || '—') + '</td>' +
+        '<td style="padding: 6px 8px; text-align: center; border-bottom: 1px solid #ddd;">' + (i.unidade || 'UND').toUpperCase() + '</td>' +
+        '<td style="padding: 6px 8px; text-align: right; border-bottom: 1px solid #ddd;">' + fmtNum(qty) + '</td>' +
+        '<td style="padding: 6px 8px; text-align: right; border-bottom: 1px solid #ddd;">R$ ' + unitPrice.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+        '<td style="padding: 6px 8px; text-align: right; border-bottom: 1px solid #ddd;">R$ ' + desc.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+        '<td style="padding: 6px 8px; text-align: right; border-bottom: 1px solid #ddd; font-weight: bold;">R$ ' + total.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+      '</tr>';
+    }).join('');
+
+    const parcelasHtml = p.parcelas && p.parcelas.length ? 
+      '<div style="display: flex; justify-content: center; margin-top: 25px;">' +
+        '<table style="width: 75%; border-collapse: collapse; border: 1px solid #ccc; font-size: 11px;">' +
+          '<thead>' +
+            '<tr style="background: #f4f7fc; border-bottom: 1px solid #ccc;">' +
+              '<th colspan="3" style="padding: 6px; text-align: center; font-weight: bold; font-size: 12px;">Parcelas</th>' +
+            '</tr>' +
+            '<tr style="background: #fdfdfd; border-bottom: 1px solid #ccc;">' +
+              '<th style="padding: 6px; text-align: left; font-weight: bold; border-right: 1px solid #ccc; font-size: 11px;">Forma de Pagamento</th>' +
+              '<th style="padding: 6px; text-align: center; font-weight: bold; border-right: 1px solid #ccc; font-size: 11px;">Data de Vencimento</th>' +
+              '<th style="padding: 6px; text-align: right; font-weight: bold; font-size: 11px;">Valor</th>' +
+            '</tr>' +
+          '</thead>' +
+          '<tbody>' +
+            p.parcelas.map(pa => 
+              '<tr style="border-bottom: 1px solid #ccc;">' +
+                '<td style="padding: 6px; text-align: left; border-right: 1px solid #ccc;">' + (pa.forma_pagamento || '—') + '</td>' +
+                '<td style="padding: 6px; text-align: center; border-right: 1px solid #ccc;">' + fmtDate(pa.vencimento) + '</td>' +
+                '<td style="padding: 6px; text-align: right; font-weight: bold;">R$ ' + (Number(pa.valor)||0).toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+              '</tr>'
+            ).join('') +
+          '</tbody>' +
+        '</table>' +
+      '</div>' : '';
+
+    const logoHtml = emp.logo 
+      ? '<img src="' + emp.logo + '" style="max-height: 55px; max-width: 160px; object-fit: contain; margin-right: 15px;">' 
+      : '';
+
+    const empNome = emp.razao_social || emp.nome || 'PRATIC';
+    const empCnpj = emp.cnpj ? 'Cnpj: ' + emp.cnpj : '';
+    const empTel = emp.telefone ? 'Telefone: ' + emp.telefone : '';
+    const empFantasia = emp.nome_fantasia ? 'Nome Fantasia: ' + emp.nome_fantasia : '';
+    
+    let empEndereco = '';
+    if (emp.logradouro) {
+      empEndereco = emp.logradouro;
+      if (emp.numero) empEndereco += ', ' + emp.numero;
+      if (emp.complemento) empEndereco += ' - ' + emp.complemento;
+      if (emp.bairro) empEndereco += ', ' + emp.bairro;
+      if (emp.cep) empEndereco += ' - CEP: ' + emp.cep;
+      if (emp.cidade) {
+        empEndereco += ', ' + emp.cidade;
+        if (emp.uf) empEndereco += '/' + emp.uf.toUpperCase();
+      }
+    }
+
+    const docContent = 
+      '<div style="font-family: Arial, sans-serif; color: #000; line-height: 1.4; font-size: 12px; padding: 20px 10px; max-width: 800px; margin: 0 auto; min-height: 270mm; position: relative;">' +
+        '<!-- CABECALHO -->' +
+        '<table style="width: 100%; border-collapse: collapse; margin-bottom: 10px;">' +
+          '<tr>' +
+            '<td style="vertical-align: middle; width: 80px;">' + logoHtml + '</td>' +
+            '<td style="vertical-align: top;">' +
+              '<div style="font-size: 15px; font-weight: bold; text-transform: uppercase;">' + empNome + '</div>' +
+              (empEndereco ? '<div style="font-size: 11px; color: #333; margin-top: 3px;">' + empEndereco + '</div>' : '') +
+              '<div style="font-size: 11px; color: #333; margin-top: 2px;">' +
+                [empCnpj, empTel].filter(Boolean).join('&nbsp;&nbsp;&nbsp;&nbsp;') +
+              '</div>' +
+              (empFantasia ? '<div style="font-size: 11px; color: #333; margin-top: 2px;">' + empFantasia + '</div>' : '') +
+            '</td>' +
+            '<td style="vertical-align: top; text-align: right; width: 120px;">' +
+              '<div style="font-size: 20px; font-weight: bold; color: #000; text-transform: uppercase;">Pedido</div>' +
+            '</td>' +
+          '</tr>' +
+        '</table>' +
+
+        '<!-- CODIGO / DATA / STATUS -->' +
+        '<hr style="border: 0; border-top: 1px solid #000; margin: 6px 0;">' +
+        '<div style="font-size: 11px; font-weight: bold; padding: 2px 0;">' +
+          'Código do Pedido : ' + p.numero_pedido + ' - Data de Lançamento: ' + formatDateTimeString(p.created_at) + ' - Status: ' + statusLabel +
+        '</div>' +
+        '<hr style="border: 0; border-top: 1px solid #000; margin: 6px 0;">' +
+
+        '<!-- CLIENTE INFO -->' +
+        '<table style="width: 100%; margin-top: 10px; font-size: 12px; border-collapse: collapse; line-height: 1.6;">' +
+          '<tr>' +
+            '<td style="width: 50%; vertical-align: top; padding: 2px 0;"><strong>Cliente:</strong> ' + (p.cliente_nome || '—') + '</td>' +
+            '<td style="width: 50%; vertical-align: top; padding: 2px 0;"><strong>Documento:</strong> ' + (p.cliente_cnpj || '—') + '</td>' +
+          '</tr>' +
+          '<tr>' +
+            '<td style="vertical-align: top; padding: 2px 0;"><strong>Telefone:</strong> ' + (p.cliente_telefone || '—') + '</td>' +
+            '<td style="vertical-align: top; padding: 2px 0;"><strong>Celular:</strong> —</td>' +
+          '</tr>' +
+          '<tr>' +
+            '<td style="vertical-align: top; padding: 2px 0;">' +
+              '<strong>Endereço:</strong> ' + [p.cliente_logradouro, p.cliente_numero].filter(Boolean).join(', ') + (p.cliente_complemento ? ' - ' + p.cliente_complemento : '') + (p.cliente_cep ? ' - ' + p.cliente_cep : '') +
+            '</td>' +
+            '<td style="vertical-align: top; padding: 2px 0;"><strong>Bairro:</strong> ' + (p.cliente_bairro || '—') + '</td>' +
+          '</tr>' +
+          '<tr>' +
+            '<td style="vertical-align: top; padding: 2px 0;"><strong>Cidade:</strong> ' + (p.cliente_cidade || '—') + '</td>' +
+            '<td style="vertical-align: top; padding: 2px 0;"><strong>Estado:</strong> ' + (p.cliente_uf || '—') + '</td>' +
+          '</tr>' +
+          '<tr>' +
+            '<td style="vertical-align: top; padding: 2px 0;"><strong>Vendedor:</strong> ' + (p.vendedor || '—') + '</td>' +
+            '<td style="vertical-align: top; padding: 2px 0;"><strong>Pessoa para Contato:</strong> —</td>' +
+          '</tr>' +
+        '</table>' +
+
+        '<!-- TABELA PRODUTOS -->' +
+        '<table style="width: 100%; border-collapse: collapse; margin-top: 18px;">' +
+          '<thead>' +
+            '<tr style="border-bottom: 2px solid #333; font-size: 11px; text-transform: uppercase;">' +
+              '<th style="padding: 6px 8px; text-align: center; font-weight: bold; border-bottom: 2px solid #333;">Produto</th>' +
+              '<th style="padding: 6px 8px; text-align: left; font-weight: bold; border-bottom: 2px solid #333; width: 42%;">Descrição</th>' +
+              '<th style="padding: 6px 8px; text-align: center; font-weight: bold; border-bottom: 2px solid #333;">Unidade</th>' +
+              '<th style="padding: 6px 8px; text-align: right; font-weight: bold; border-bottom: 2px solid #333;">Quantidade</th>' +
+              '<th style="padding: 6px 8px; text-align: right; font-weight: bold; border-bottom: 2px solid #333;">Valor Unitário</th>' +
+              '<th style="padding: 6px 8px; text-align: right; font-weight: bold; border-bottom: 2px solid #333;">Desconto</th>' +
+              '<th style="padding: 6px 8px; text-align: right; font-weight: bold; border-bottom: 2px solid #333;">Valor Total</th>' +
+            '</tr>' +
+          '</thead>' +
+          '<tbody>' +
+            itemsHtml +
+          '</tbody>' +
+        '</table>' +
+
+        '<!-- PARCELAS -->' +
+        parcelasHtml +
+
+        '<!-- OBSERVACOES E TOTAIS -->' +
+        '<table style="width: 100%; margin-top: 25px; font-size: 12px; border-collapse: collapse;">' +
+          '<tr>' +
+            '<td style="width: 50%; vertical-align: top; padding-right: 15px;">' +
+              (p.observacoes ? 
+                '<div style="border: 1px solid #ccc; padding: 10px; border-radius: 6px; background: #fafafa; font-size: 11px; line-height: 1.5;">' +
+                  '<strong>Observação:</strong><br>' +
+                  p.observacoes +
+                '</div>' : '') +
+            '</td>' +
+            '<td style="width: 50%; vertical-align: top;">' +
+              '<table style="width: 100%; border-collapse: collapse; font-size: 12px; text-align: right; line-height: 1.6;">' +
+                '<tr>' +
+                  '<td style="padding: 4px 8px; color: #333; font-weight: bold;">SubTotal</td>' +
+                  '<td style="padding: 4px 8px; width: 140px; font-weight: bold;">R$ ' + subtotal.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+                '</tr>' +
+                '<tr>' +
+                  '<td style="padding: 4px 8px; color: #333; font-weight: bold;">Acréscimo</td>' +
+                  '<td style="padding: 4px 8px;">R$ ' + acrescimo.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+                '</tr>' +
+                '<tr>' +
+                  '<td style="padding: 4px 8px; color: #333; font-weight: bold;">Frete</td>' +
+                  '<td style="padding: 4px 8px;">R$ ' + frete.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+                '</tr>' +
+                '<tr>' +
+                  '<td style="padding: 4px 8px; color: #333; font-weight: bold;">Desconto Global</td>' +
+                  '<td style="padding: 4px 8px;">R$ ' + descontoGlobal.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+                '</tr>' +
+                '<tr style="border-top: 1px solid #333; font-size: 13px;">' +
+                  '<td style="padding: 6px 8px; font-weight: bold; color: #000; text-transform: uppercase;">Valor Total</td>' +
+                  '<td style="padding: 6px 8px; font-weight: bold; color: #000;">R$ ' + valorTotal.toLocaleString('pt-BR', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>' +
+                '</tr>' +
+                '<tr>' +
+                  '<td style="padding: 4px 8px; color: #333; font-weight: bold;">Quantidade Itens</td>' +
+                  '<td style="padding: 4px 8px; font-weight: bold;">' + fmtNum(qtdItens) + '</td>' +
+                '</tr>' +
+                '<tr>' +
+                  '<td style="padding: 4px 8px; color: #333; font-weight: bold;">Peso dos Produtos</td>' +
+                  '<td style="padding: 4px 8px; font-weight: bold;">0,00</td>' +
+                '</tr>' +
+              '</table>' +
+            '</td>' +
+          '</tr>' +
+        '</table>' +
+
+        '<!-- RODAPE -->' +
+        '<div style="position: absolute; bottom: 10px; left: 10px; right: 10px; border-top: 1px solid #ccc; padding-top: 6px; display: flex; justify-content: space-between; font-size: 10px; color: #777;">' +
+          '<span>Desenvolvido por criadorpro.com.br</span>' +
+          '<span>Página: 1</span>' +
+        '</div>' +
+      '</div>';
+
+    const win = window.open('', '_blank');
+    win.document.write('<html><head><title>Pedido ' + p.numero_pedido + '</title><style>' +
+      '@page { size: A4; margin: 0; }' +
+      '* { box-sizing: border-box; }' +
+      'body { margin: 0; background: #fff; }' +
+      '</style></head><body>' + docContent + '</body></html>');
+    win.document.close();
+    win.focus();
+    setTimeout(() => win.print(), 350);
+  } catch(e) {
+    showAlert('Erro ao gerar relatório do pedido: ' + e.message, 'danger');
+  }
+}
+
+window.imprimirPedido = imprimirPedido;
+
+async function gerarListaComprasEstoque() {
+  try {
+    const catId = _getVal('est-filtro-cat');
+    const catSel = document.getElementById('est-filtro-cat');
+    const catNome = catId && catSel ? catSel.selectedOptions[0]?.text : '';
+    let url = '/estoque/produtos';
+    if (catId) url += '?categoria_id=' + encodeURIComponent(catId);
+    const todos = await api(url);
+    const itens = todos.filter(p => {
+      const qtd = Number(p.quantidade_atual || 0);
+      const min = Number(p.estoque_minimo || 0);
+      return qtd <= 0 || (min > 0 && qtd <= min);
+    });
+
+    if (!itens.length) {
+      showAlert(catId ? `Nenhum produto em falta ou abaixo do mínimo em "${catNome}"!` : 'Nenhum produto em falta ou abaixo do mínimo no estoque!');
+      return;
+    }
+
+    // Ordenar itens por Categoria e depois por Nome
+    itens.sort((a, b) => {
+      const catA = (a.categoria_nome || '').toLowerCase();
+      const catB = (b.categoria_nome || '').toLowerCase();
+      if (catA !== catB) return catA.localeCompare(catB);
+      return (a.nome || '').toLowerCase().localeCompare((b.nome || '').toLowerCase());
+    });
+
+    document.getElementById('modal-lista-compras-content').innerHTML = `
+      <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
+        Materiais que estão em falta (saldo ≤ 0) ou abaixo do estoque mínimo.
+      </p>
+      <div class="table-wrap">
+        <table id="lista-compras-table">
+          <thead>
+            <tr>
+              <th>Código</th>
+              <th>Produto</th>
+              <th>Categoria</th>
+              <th>Marca</th>
+              <th>Qtd. Atual</th>
+              <th>Mínimo</th>
+              <th>Falta</th>
+              <th>Sugestão de Compra</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${itens.map(p => {
+              const qtd = Number(p.quantidade_atual || 0);
+              const min = Number(p.estoque_minimo || 0);
+              const deficit = min > qtd ? (min - qtd) : (qtd <= 0 ? 1 : 0);
+              const sugestao = deficit;
+              return `<tr>
+                <td><strong>${p.codigo || '—'}</strong></td>
+                <td><strong>${p.nome || ''}</strong></td>
+                <td>${p.categoria_nome || '—'}</td>
+                <td>${p.marca || '—'}</td>
+                <td>${fmtNum(qtd)} ${p.unidade || 'un'}</td>
+                <td>${fmtNum(min)} ${p.unidade || 'un'}</td>
+                <td style="color:var(--danger);font-weight:700">${deficit > 0 ? fmtNum(deficit) : '—'} ${p.unidade || 'un'}</td>
+                <td style="color:var(--success);font-weight:700">${sugestao > 0 ? fmtNum(sugestao) : '—'} ${p.unidade || 'un'}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>`;
+
+    const titleEl = document.querySelector('#modal-lista-compras .modal-title');
+    if (titleEl) {
+      titleEl.textContent = catId ? `🛒 Lista de Compras (Estoque) — ${catNome}` : '🛒 Lista de Compras (Estoque)';
+    }
+
+    openModal('modal-lista-compras');
+  } catch(e) {
+    showAlert('Erro ao gerar lista de compras: ' + e.message, 'danger');
+  }
+}
+
+async function gerarRelatorioCategoriaEstoque() {
+  const catId = _getVal('est-filtro-cat');
+  if (!catId) { showAlert('Selecione uma categoria primeiro', 'warn'); return; }
+  const catSel = document.getElementById('est-filtro-cat');
+  const catNome = catSel?.selectedOptions[0]?.text || 'Categoria';
+
+  try {
+    const itens = await api('/estoque/produtos?categoria_id=' + encodeURIComponent(catId));
+    if (!itens.length) { showAlert(`Nenhum produto cadastrado em "${catNome}"`, 'warn'); return; }
+
+    itens.sort((a, b) => (a.nome || '').toLowerCase().localeCompare((b.nome || '').toLowerCase()));
+
+    const totalItens = itens.length;
+    const emFalta = itens.filter(p => Number(p.quantidade_atual || 0) <= 0).length;
+    const baixo = itens.filter(p => {
+      const qtd = Number(p.quantidade_atual || 0);
+      const min = Number(p.estoque_minimo || 0);
+      return min > 0 && qtd > 0 && qtd <= min;
+    }).length;
+    const qtdTotal = itens.reduce((s, p) => s + Number(p.quantidade_atual || 0), 0);
+
+    document.getElementById('modal-lista-compras-content').innerHTML = `
+      <p style="color:var(--muted);font-size:13px;margin-bottom:16px">
+        ${totalItens} produto(s) · ${fmtNum(qtdTotal)} un. em estoque no total · ${emFalta} em falta · ${baixo} abaixo do mínimo.
+      </p>
+      <div class="table-wrap">
+        <table id="lista-compras-table">
+          <thead>
+            <tr>
+              <th>Código</th>
+              <th>Produto</th>
+              <th>Marca</th>
+              <th>Qtd. Atual</th>
+              <th>Mínimo</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${itens.map(p => {
+              const st = _statusProduto(p);
+              return `<tr>
+                <td><strong>${p.codigo || '—'}</strong></td>
+                <td><strong>${p.nome || ''}</strong></td>
+                <td>${p.marca || '—'}</td>
+                <td>${fmtNum(p.quantidade_atual || 0)} ${p.unidade || 'un'}</td>
+                <td>${fmtNum(p.estoque_minimo || 0)} ${p.unidade || 'un'}</td>
+                <td><span class="pill ${st.classe}">${st.texto}</span></td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>`;
+
+    const titleEl = document.querySelector('#modal-lista-compras .modal-title');
+    if (titleEl) titleEl.textContent = `📄 Relatório de Estoque — ${catNome}`;
+
+    openModal('modal-lista-compras');
+  } catch(e) {
+    showAlert('Erro ao gerar relatório da categoria: ' + e.message, 'danger');
+  }
+}
+
+window.gerarListaComprasEstoque = gerarListaComprasEstoque;
