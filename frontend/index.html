@@ -2757,6 +2757,7 @@
     <div id="modal-ped-det-content"></div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal('modal-ped-detalhe')">Fechar</button>
+      <button class="btn btn-secondary" id="btn-ped-ja-entregue" style="display:none;margin-right:auto" title="Gestor: pedido que já saiu por fora do sistema">✓ Marcar como entregue</button>
       <button class="btn btn-primary" id="btn-imprimir-pedido-modal">🖨️ Imprimir Pedido</button>
     </div>
   </div>
@@ -3170,7 +3171,7 @@
 
 <script src="js/cotacao.js?v=20261030-embalagem"></script>
 <script src="js/estoque-cliente.js?v=20261030-estcli"></script>
-<script src="js/app.js?v=20261103-fase3-10-avisos"></script>
+<script src="js/app.js?v=20261103-fase3-11-gestor-entregue"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');
