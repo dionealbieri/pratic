@@ -4821,7 +4821,7 @@ async function loadTransportadora() {
       <td>${s2 === 'aguardando_retirada' ? '<span style="color:var(--muted)">Cliente retira</span>' : _escHtml(p.transportadora || '—')}</td>
       <td>${s2 === 'aguardando_retirada' ? '—' : fmtBRL(p.frete || 0)}</td>
       <td>${previsao}</td>
-      <td>${p.nota_fiscal||'—'}</td>
+      <td style="white-space:nowrap">${p.nota_fiscal||'—'}${_nfPdfLink(p)}</td>
       <td>${pendente ? _seloDiasEtapa(_diasDesde(p.status_desde)) : (p.data_despacho ? fmtDate(p.data_despacho) : '—')}</td>
       <td><span class="pill ${s2 === 'produzido' ? 'pill-danger' : STATUS_PILL_PED[s2]}">${s2 === 'produzido' ? '⏳ Aguardando vendedor' : STATUS_LABEL_PED[s2]}</span></td>
       <td class="flex gap-2" style="flex-wrap:wrap">${acoes}</td>
@@ -4893,6 +4893,7 @@ async function abrirDespacho(id) {
   if (orig) orig.textContent = temEndPedido ? 'Endereço específico deste pedido' : 'Do cadastro do cliente — confira antes de despachar';
   const chk = document.getElementById('desp-end-atualizar-cad');
   if (chk) chk.checked = false;
+  _nfPdfWidget('desp-nf-pdf', id, p, 'desp-nf');
   openModal('modal-despacho');
   // Volumes e peso calculados pelas caixas (cadastro do produto + lançamentos manuais)
   if (typeof resumoCotacaoHTML === 'function') {
@@ -4976,6 +4977,69 @@ async function salvarDespacho() {
 }
 window.salvarDespacho = salvarDespacho;
 
+// ─── PDF DA NOTA FISCAL (Expedição anexa; vendedor e gestor abrem) ──────────
+function _nfPdfWidget(elId, pedidoId, p, inputNfId) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  const pode = temPermissao('expedicao', 'despachar') || (window.meuUsuario && window.meuUsuario.role === 'gestor') || localStorage.getItem('user_role') === 'gestor';
+  const tem = !!(p && p.nf_arquivo);
+  const url = API + '/pedidos/' + pedidoId + '/nf-arquivo';
+  let html = '';
+  if (tem) {
+    html = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.3);border-radius:8px;padding:8px 12px;font-size:13px">
+      <span>📄 <strong>${_escHtml(p.nf_arquivo_nome || 'nota-fiscal.pdf')}</strong>${p.nf_arquivo_por ? ` <span style="color:var(--muted)">· ${_escHtml(p.nf_arquivo_por)}${p.nf_arquivo_em ? ' em ' + fmtDate(String(p.nf_arquivo_em).slice(0, 10)) : ''}</span>` : ''}</span>
+      <a class="btn btn-sm btn-secondary" href="${url}" target="_blank" rel="noopener" style="text-decoration:none">👁 Ver</a>
+      ${pode ? `<label class="btn btn-sm btn-secondary" style="cursor:pointer;margin:0">🔄 Trocar<input type="file" accept="application/pdf,.pdf" style="display:none" onchange="_nfPdfEnviar(this,'${elId}',${pedidoId},${inputNfId ? `'${inputNfId}'` : 'null'})"></label>
+      <button type="button" class="btn btn-sm btn-secondary" onclick="_nfPdfRemover('${elId}',${pedidoId},${inputNfId ? `'${inputNfId}'` : 'null'})">🗑</button>` : ''}
+    </div>`;
+  } else if (pode) {
+    html = `<label class="btn btn-secondary" style="cursor:pointer;margin:0;display:inline-flex;align-items:center;gap:6px">📎 Anexar PDF da NF<input type="file" accept="application/pdf,.pdf" style="display:none" onchange="_nfPdfEnviar(this,'${elId}',${pedidoId},${inputNfId ? `'${inputNfId}'` : 'null'})"></label>
+      <span style="font-size:12px;color:var(--muted);margin-left:8px">O número da NF é preenchido a partir do PDF, quando possível.</span>`;
+  } else {
+    html = '<span style="font-size:13px;color:var(--muted)">Sem PDF anexado.</span>';
+  }
+  el.innerHTML = html;
+}
+window._nfPdfWidget = _nfPdfWidget;
+
+function _nfPdfLink(p) {
+  return p && p.nf_arquivo ? ` <a href="${API}/pedidos/${p.id}/nf-arquivo" target="_blank" rel="noopener" title="Abrir o PDF da nota fiscal" style="text-decoration:none">📄</a>` : '';
+}
+window._nfPdfLink = _nfPdfLink;
+
+async function _nfPdfRecarregar(elId, pedidoId, inputNfId) {
+  try { const p = await api('/pedidos/' + pedidoId); _nfPdfWidget(elId, pedidoId, p, inputNfId); } catch (e) {}
+  if (typeof loadTransportadora === 'function' && document.getElementById('ped-transp-filtro')) { try { loadTransportadora(); } catch (e) {} }
+}
+
+async function _nfPdfEnviar(input, elId, pedidoId, inputNfId) {
+  const f = input.files && input.files[0];
+  if (!f) return;
+  const el = document.getElementById(elId);
+  if (el) el.innerHTML = '<span style="font-size:13px;color:var(--muted)">Enviando PDF...</span>';
+  try {
+    const fd = new FormData(); fd.append('arquivo', f);
+    const r = await fetch(API + '/pedidos/' + pedidoId + '/nf-arquivo', { method: 'POST', body: fd, credentials: 'same-origin' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || 'Erro ao enviar o PDF');
+    const nfEl = inputNfId ? document.getElementById(inputNfId) : null;
+    if (nfEl && !nfEl.value.trim() && d.numero_nf) {
+      nfEl.value = d.numero_nf;
+      showAlert('PDF anexado. Número da NF preenchido pelo PDF: ' + d.numero_nf + ' — confira.');
+    } else showAlert('PDF da nota fiscal anexado.');
+  } catch (e) { showAlert(e.message, 'danger'); }
+  await _nfPdfRecarregar(elId, pedidoId, inputNfId);
+}
+window._nfPdfEnviar = _nfPdfEnviar;
+
+async function _nfPdfRemover(elId, pedidoId, inputNfId) {
+  if (!confirm('Remover o PDF da nota fiscal deste pedido?')) return;
+  try { await api('/pedidos/' + pedidoId + '/nf-arquivo', 'DELETE'); showAlert('PDF removido'); }
+  catch (e) { showAlert(e.message, 'danger'); }
+  await _nfPdfRecarregar(elId, pedidoId, inputNfId);
+}
+window._nfPdfRemover = _nfPdfRemover;
+
 async function abrirRetirada(id) {
   let p;
   try { p = await api('/pedidos/' + id); } catch (e) { showAlert('Erro ao carregar pedido: ' + e.message, 'danger'); return; }
@@ -4988,6 +5052,7 @@ async function abrirRetirada(id) {
   document.getElementById('ret-data').value = new Date().toISOString().slice(0, 10);
   document.getElementById('ret-volumes').value = 1;
   document.getElementById('ret-obs').value = '';
+  _nfPdfWidget('ret-nf-pdf', id, p, 'ret-nf');
   openModal('modal-retirada');
 }
 window.abrirRetirada = abrirRetirada;
@@ -5126,6 +5191,7 @@ async function verProdutosEnviados(id) {
       Despacho: <strong>${p.data_despacho ? fmtDate(p.data_despacho) : '—'}</strong> · Volumes: <strong>${p.volumes || '—'}</strong> · Frete pago: <strong>${fmtBRL(p.frete_pago || 0)}</strong>
       ${(p.entrega_logradouro || p.entrega_cidade) ? `<br>📍 Entrega: <strong>${_escHtml([[p.entrega_logradouro, p.entrega_numero].filter(Boolean).join(', '), p.entrega_complemento, p.entrega_bairro, [p.entrega_cidade, p.entrega_uf].filter(Boolean).join('/'), p.entrega_cep ? 'CEP ' + _fmtCepDesp(p.entrega_cep) : ''].filter(Boolean).join(' — '))}</strong>` : ''}
     </div>
+    <div style="margin-bottom:14px"><div style="font-size:13px;font-weight:600;margin-bottom:6px">PDF da nota fiscal</div><div id="envio-nf-pdf"></div></div>
     <div style="font-size:13px;font-weight:600;margin-bottom:8px">Produtos enviados</div>
     <div class="table-wrap">
       <table>
@@ -5135,6 +5201,7 @@ async function verProdutosEnviados(id) {
         </tbody>
       </table>
     </div>`;
+  _nfPdfWidget('envio-nf-pdf', id, p, null);
   if (typeof aplicarPermissoesUI === 'function') aplicarPermissoesUI();
   const btnEd = document.querySelector('#modal-envio-detalhe [onclick="editarEnvioAPartirDoDetalhe()"]');
   if (btnEd) btnEd.style.display = (p.status === 'enviado' && temPermissao('expedicao', 'despachar')) ? '' : 'none';
@@ -5258,7 +5325,7 @@ async function loadPedidosEntregues() {
       <td><strong>${p.numero_pedido}</strong></td>
       <td>${p.cliente_nome || '—'}</td>
       <td>${p.transportadora || '—'}</td>
-      <td>${p.nota_fiscal || '—'}</td>
+      <td style="white-space:nowrap">${p.nota_fiscal || '—'}${_nfPdfLink(p)}</td>
       <td>${p.rastreio || '—'}</td>
       <td>${p.volumes || '—'}</td>
       <td>${p.data_despacho ? fmtDate(p.data_despacho) : '—'}</td>
