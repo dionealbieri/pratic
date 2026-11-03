@@ -1620,7 +1620,7 @@ def _prazos_parados(conn) -> dict:
 def prazos_parados(current_user: dict = Depends(get_current_user)):
     conn = get_conn()
     try:
-        return _prazos_parados(conn)
+        return {**_prazos_parados(conn), "mostrar_desde": _vendedor_desde(conn)}
     finally:
         conn.close()
 
