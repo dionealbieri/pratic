@@ -2,6 +2,8 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, Depends
 from pydantic import BaseModel
 from typing import Optional, List
 from database import get_conn
+import database as _database
+from fastapi.responses import FileResponse
 from auth_utils import get_current_user
 from rotas.producao import _reverter_estoque_producao
 from vendedores import vincular_pedido, vincular_pedidos_sem_vendedor, separar_nomes, juntar_nomes
@@ -2054,6 +2056,7 @@ def meus_pedidos(current_user: dict = Depends(get_current_user)):
                    p.transportadora, p.frete, p.previsao_entrega, p.retirada_prevista,
                    p.obs_vendedor, p.nota_fiscal, p.data_despacho, p.data_entrega, p.envio_definido_em,
                    COALESCE(p.origem_estoque_cliente,0) AS origem_estoque_cliente,
+                   CASE WHEN p.nf_arquivo IS NOT NULL AND p.nf_arquivo != '' THEN 1 ELSE 0 END AS tem_nf_pdf,
                    c.razao_social AS cliente_nome, c.nome_fantasia,
                    CAST(julianday('now','localtime') - julianday(p.status_desde) AS INTEGER) AS dias_na_etapa,
                    julianday(p.prazo_entrega) - julianday('now') AS dias_restantes,
@@ -2110,6 +2113,115 @@ def meus_pedidos_visto(current_user: dict = Depends(get_current_user)):
                      (current_user["id"],))
         conn.commit()
         return {"mensagem": "ok"}
+    finally:
+        conn.close()
+
+
+# ─── PDF DA NOTA FISCAL ──────────────────────────────────────────────────────
+
+NF_MAX_BYTES = 10 * 1024 * 1024
+
+
+def _pasta_nf() -> str:
+    pasta = os.path.join(os.path.dirname(os.path.abspath(_database.DB_PATH)), "notas_fiscais")
+    os.makedirs(pasta, exist_ok=True)
+    return pasta
+
+
+def _pode_anexar_nf(current_user: dict) -> bool:
+    return current_user.get("role") == "gestor" or verificar_permissao("expedicao", "despachar", current_user)
+
+
+def _ler_numero_nf(caminho: str) -> str:
+    """Tenta achar o número da NF no PDF (DANFE): pela chave de acesso (44 dígitos,
+    nNF nas posições 26–34) ou por 'Nº 000.123.456'. Vazio se não achar."""
+    try:
+        from pypdf import PdfReader
+        texto = "\n".join((pg.extract_text() or "") for pg in PdfReader(caminho).pages[:2])
+    except Exception:
+        return ""
+    so_digitos = re.sub(r"[ .\-]", "", texto)
+    m = re.search(r"(?<!\d)(\d{2}\d{4}\d{14}55\d{3}(\d{9})\d{10})(?!\d)", so_digitos)
+    if m:
+        return str(int(m.group(2)))
+    m = re.search(r"N[º°oO]\.?\s*:?\s*(\d{3}\.?\d{3}\.?\d{3}|\d{1,9})", texto)
+    if m:
+        return str(int(re.sub(r"\D", "", m.group(1))))
+    return ""
+
+
+@router.post("/{id}/nf-arquivo")
+async def anexar_nf_arquivo(id: int, arquivo: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+    if not _pode_anexar_nf(current_user):
+        raise HTTPException(403, "Só a Expedição (ou o Gestor) anexa a nota fiscal.")
+    dados = await arquivo.read()
+    if not dados.startswith(b"%PDF"):
+        raise HTTPException(400, "Envie o PDF da nota fiscal.")
+    if len(dados) > NF_MAX_BYTES:
+        raise HTTPException(400, "Arquivo maior que 10 MB.")
+    conn = get_conn()
+    try:
+        ped = conn.execute("SELECT id, nf_arquivo FROM pedidos WHERE id=?", (id,)).fetchone()
+        if not ped:
+            raise HTTPException(404, "Pedido não encontrado")
+        nome = f"{id}_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.pdf"
+        caminho = os.path.join(_pasta_nf(), nome)
+        with open(caminho, "wb") as f:
+            f.write(dados)
+        antigo = ped["nf_arquivo"]
+        conn.execute("""UPDATE pedidos SET nf_arquivo=?, nf_arquivo_nome=?, nf_arquivo_em=datetime('now','localtime'),
+                        nf_arquivo_por=? WHERE id=?""",
+                     (nome, (arquivo.filename or "nota-fiscal.pdf")[:120], _nome_usuario(current_user), id))
+        conn.commit()
+        if antigo and antigo != nome:
+            try:
+                os.remove(os.path.join(_pasta_nf(), os.path.basename(antigo)))
+            except OSError:
+                pass
+        return {"mensagem": "Nota fiscal anexada", "numero_nf": _ler_numero_nf(caminho),
+                "nome": arquivo.filename or "nota-fiscal.pdf"}
+    finally:
+        conn.close()
+
+
+@router.get("/{id}/nf-arquivo")
+def ver_nf_arquivo(id: int, current_user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    try:
+        ped = conn.execute("SELECT vendedor_usuario_id, nf_arquivo, nota_fiscal, numero_pedido FROM pedidos WHERE id=?", (id,)).fetchone()
+    finally:
+        conn.close()
+    if not ped:
+        raise HTTPException(404, "Pedido não encontrado")
+    if current_user.get("role") == "comercial" and ped["vendedor_usuario_id"] != current_user["id"]:
+        raise HTTPException(403, "Este pedido não é seu.")
+    if not ped["nf_arquivo"]:
+        raise HTTPException(404, "Este pedido ainda não tem o PDF da nota fiscal.")
+    caminho = os.path.join(_pasta_nf(), os.path.basename(ped["nf_arquivo"]))
+    if not os.path.isfile(caminho):
+        raise HTTPException(404, "Arquivo da nota fiscal não encontrado no servidor.")
+    nome = f"NF-{ped['nota_fiscal'] or ped['numero_pedido']}.pdf"
+    return FileResponse(caminho, media_type="application/pdf", filename=nome,
+                        headers={"Content-Disposition": f'inline; filename="{nome}"'})
+
+
+@router.delete("/{id}/nf-arquivo")
+def remover_nf_arquivo(id: int, current_user: dict = Depends(get_current_user)):
+    if not _pode_anexar_nf(current_user):
+        raise HTTPException(403, "Só a Expedição (ou o Gestor) remove a nota fiscal.")
+    conn = get_conn()
+    try:
+        ped = conn.execute("SELECT nf_arquivo FROM pedidos WHERE id=?", (id,)).fetchone()
+        if not ped:
+            raise HTTPException(404, "Pedido não encontrado")
+        conn.execute("UPDATE pedidos SET nf_arquivo=NULL, nf_arquivo_nome=NULL, nf_arquivo_em=NULL, nf_arquivo_por=NULL WHERE id=?", (id,))
+        conn.commit()
+        if ped["nf_arquivo"]:
+            try:
+                os.remove(os.path.join(_pasta_nf(), os.path.basename(ped["nf_arquivo"])))
+            except OSError:
+                pass
+        return {"mensagem": "PDF da nota fiscal removido"}
     finally:
         conn.close()
 
@@ -3112,12 +3224,18 @@ def deletar_pedido(id: int, current_user = Depends(get_current_user)):
             if neg:
                 raise HTTPException(400, f"Não dá para excluir: parte deste estoque ({neg['descricao']}) já foi entregue ao cliente.")
         cur.execute("DELETE FROM estoque_cliente_mov WHERE pedido_id=?", (id,))
+        nf_pdf = cur.execute("SELECT nf_arquivo FROM pedidos WHERE id=?", (id,)).fetchone()
         cur.execute("DELETE FROM pedidos WHERE id=?", (id,))
         cur.execute("""INSERT INTO auditoria (usuario, acao, entidade, entidade_id, descricao, valor_anterior, valor_novo)
                        VALUES (?, 'excluir_pedido', 'pedidos', ?, ?, ?, '')""",
                     (_nome_usuario(current_user), id, f"Pedido '{numero_pedido}' excluído", ped["status"] or ""))
         
         conn.commit()
+        if nf_pdf and nf_pdf["nf_arquivo"]:
+            try:
+                os.remove(os.path.join(_pasta_nf(), os.path.basename(nf_pdf["nf_arquivo"])))
+            except OSError:
+                pass
     finally:
         conn.close()
     return {"mensagem": "Pedido removido"}
