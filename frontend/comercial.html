@@ -1153,7 +1153,7 @@ async function loadPedidosCom() {
         <button class="btn btn-sm btn-secondary" onclick="verDetalhe(${p.id})">Ver</button>
         <button class="btn btn-sm btn-secondary" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${p.id})">📄 PDF</button>
         ${btnNotaFiscal(p, !!p.nf_arquivo)}
-        ${comPodeExcluir && p.status === 'aberto' && !(p.itens_iniciados > 0) ? `<button class="btn btn-sm btn-danger" title="Excluir pedido (só em aberto, sem produção)" onclick="excluirPedidoVendedor(${p.id})">🗑 Excluir</button>` : ''}
+        ${(p.status || 'aberto') === 'aberto' && !(p.itens_iniciados > 0) ? `<button class="btn btn-sm btn-secondary" title="Editar o pedido (só antes da produção)" onclick="window.location.href='/?editar=${p.id}'">✏️ Editar</button> <button class="btn btn-sm btn-danger" title="Excluir pedido (só antes da produção)" onclick="excluirPedidoVendedor(${p.id})">🗑 Excluir</button>` : ''}
       </td>
     </tr>`;
   }).join('');
@@ -1689,6 +1689,10 @@ async function loadTopbarWidgets() {
 verificarAcessoComercial().then(ok => {
   if (ok && new URLSearchParams(location.search).get('importado') === '1') {
     setTimeout(() => showAlert('✅ Pedido importado com sucesso.'), 600);
+    history.replaceState(null, '', '/comercial');
+  }
+  if (ok && new URLSearchParams(location.search).get('editado') === '1') {
+    setTimeout(() => showAlert('✅ Pedido atualizado.'), 600);
     history.replaceState(null, '', '/comercial');
   }
   if (!ok) return;
