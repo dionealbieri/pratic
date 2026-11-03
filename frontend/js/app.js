@@ -4771,7 +4771,12 @@ async function loadTransportadora() {
     entregue: ['entregue'],
     todos: ['enviado', 'retirado', 'entregue'],
   };
-  let lista = rows.filter(p => (mapa[filtro] || ['aguardando_nf']).includes(st(p)));
+  // "Aguardando vendedor" = o mesmo que o vendedor vê: status gravado Produzido e lançado
+  // a partir da data de corte do Portal do Vendedor (pedidos antigos ficam de fora)
+  const desdeVend = (_prazosParados && _prazosParados.mostrar_desde) || '';
+  const aguardVend = p => p.status === 'produzido' && (!desdeVend || String(p.created_at || '').slice(0, 10) >= desdeVend);
+  let lista = filtro === 'aguardando_vendedor' ? rows.filter(aguardVend)
+    : rows.filter(p => (mapa[filtro] || ['aguardando_nf']).includes(st(p)));
   if (busca) lista = lista.filter(p =>
     String(p.numero_pedido || '').toLowerCase().includes(busca) ||
     String(p.cliente_nome || '').toLowerCase().includes(busca) ||
@@ -4786,7 +4791,7 @@ async function loadTransportadora() {
     const chip = (txt, qtd, alvo, cor) => `<button type="button" onclick="document.getElementById('ped-transp-filtro').value='${alvo}';loadTransportadora()" style="background:var(--surface2);border:1px solid ${filtro === alvo ? 'var(--accent)' : 'var(--border)'};border-radius:8px;padding:8px 12px;font-size:13px;color:var(--text);cursor:pointer;white-space:nowrap">${txt} <strong style="color:${cor}">${qtd}</strong></button>`;
     resumo.innerHTML = chip('🧾 Aguardando NF', n('aguardando_nf'), 'aguardando_nf', 'var(--accent)')
       + chip('🙋 Aguardando retirada', n('aguardando_retirada'), 'aguardando_retirada', 'var(--accent)')
-      + (ehGestor ? chip('⏳ Aguardando vendedor', n('produzido'), 'aguardando_vendedor', 'var(--danger)') : '');
+      + (ehGestor ? chip('⏳ Aguardando vendedor', rows.filter(aguardVend).length, 'aguardando_vendedor', 'var(--danger)') : '');
   }
 
   const tbody = document.getElementById('ped-transp-tbody');
@@ -4803,7 +4808,7 @@ async function loadTransportadora() {
     } else if (s2 === 'aguardando_retirada' && podeDespachar) {
       acoes = revPend > 0 ? btnRevenda : `<button class="btn btn-sm btn-primary" onclick="abrirRetirada(${p.id})">✅ Lançar NF e registrar retirada</button>`;
     } else if (s2 === 'produzido' && ehGestor) {
-      acoes = `<span style="font-size:12px;color:var(--muted)">aguardando o vendedor</span> <button class="btn btn-sm btn-secondary" title="Exceção do Gestor: despachar sem o vendedor ter definido o frete" onclick="abrirDespacho(${p.id})">📦 Despachar direto</button>`;
+      acoes = `<span style="font-size:12px;color:var(--muted)">aguardando o vendedor</span> <button class="btn btn-sm btn-secondary" title="Exceção do Gestor: despachar sem o vendedor ter definido o frete" onclick="abrirDespacho(${p.id})">📦 Despachar direto</button> <button class="btn btn-sm btn-secondary" title="Pedido que já saiu por fora do sistema: tira da lista marcando como entregue" onclick="marcarJaEntregue(${p.id}, '${_escHtml(p.numero_pedido)}')">✓ Já entregue</button>`;
     } else if (s2 === 'enviado' && podeDespachar) {
       acoes = `<button class="btn btn-sm btn-secondary" onclick="verProdutosEnviados(${p.id})">👁 Produtos</button> <button class="btn btn-sm btn-secondary" onclick="abrirDespacho(${p.id})">✏️</button> <button class="btn btn-sm btn-primary" onclick="confirmarEntrega(${p.id})">✓ Entregue</button>`;
     } else if (['enviado', 'retirado', 'entregue'].includes(s2)) {
@@ -5245,6 +5250,17 @@ async function confirmarEntrega(id) {
   } catch(e) { showAlert(e.message, 'danger'); }
 }
 window.confirmarEntrega = confirmarEntrega;
+
+// Gestor: pedido antigo que já saiu por fora do sistema (sem NF lançada aqui)
+async function marcarJaEntregue(id, numero) {
+  if (!confirm('Marcar o pedido ' + numero + ' como já entregue?\n\nUse só para pedido que já saiu e não vai passar pela Expedição no sistema. Ele sai das listas de pendentes.')) return;
+  try {
+    await api('/pedidos/' + id + '/confirmar-entrega', 'POST', {});
+    showAlert('Pedido ' + numero + ' marcado como entregue.');
+    loadTransportadora();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+window.marcarJaEntregue = marcarJaEntregue;
 
 // ─── TRANSPORTADORA / RELATÓRIOS ──────────────────────────────────────────────
 
