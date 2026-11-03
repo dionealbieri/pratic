@@ -2117,6 +2117,90 @@ def meus_pedidos_visto(current_user: dict = Depends(get_current_user)):
         conn.close()
 
 
+# ─── TROCA DE PRODUTO (MARCA) NA PRODUÇÃO JÁ LANÇADA ─────────────────────────
+
+class TrocarProdutoProducaoIn(BaseModel):
+    de_produto_id: int
+    para_produto_id: int
+
+
+@router.post("/{id}/trocar-produto-producao")
+def trocar_produto_producao(id: int, body: TrocarProdutoProducaoIn, current_user: dict = Depends(get_current_user)):
+    """O item do pedido mudou de produto (ex.: ALTACOPO → RIOPLASTIC) depois da produção lançada.
+    Passa os lançamentos de produção DESTE pedido do produto antigo para o novo: devolve ao estoque do
+    produto antigo o que foi baixado (produção, perdas, sobras) e baixa do novo, mantendo o vínculo com o
+    lançamento (editar/excluir a produção depois continua revertendo certo)."""
+    if current_user.get("role") == "comercial" or not (
+            current_user.get("role") == "gestor"
+            or verificar_permissao("producao", "editar", current_user)
+            or verificar_permissao("pedidos", "editar", current_user)):
+        raise HTTPException(403, "Sem permissão para corrigir a produção.")
+    de, para = body.de_produto_id, body.para_produto_id
+    if de == para:
+        raise HTTPException(400, "Escolha um produto diferente.")
+    conn = get_conn()
+    try:
+        ped = conn.execute("SELECT numero_pedido FROM pedidos WHERE id=?", (id,)).fetchone()
+        if not ped:
+            raise HTTPException(404, "Pedido não encontrado")
+        prods = {r["id"]: r for r in conn.execute("SELECT id, nome FROM estoque_produtos WHERE id IN (?, ?)", (de, para)).fetchall()}
+        if de not in prods or para not in prods:
+            raise HTTPException(400, "Produto não encontrado no estoque.")
+        lancs = conn.execute("SELECT id, produto_estoque_id FROM producao_diaria WHERE pedido_numero = ?",
+                             (ped["numero_pedido"],)).fetchall()
+        alterados, qtd_total, sem_vinculo = 0, 0.0, 0
+        cur = conn.cursor()
+
+        def _saldo(pid):
+            r = cur.execute("SELECT quantidade FROM estoque_saldo WHERE produto_id=?", (pid,)).fetchone()
+            if r is None:
+                cur.execute("INSERT INTO estoque_saldo (produto_id, quantidade) VALUES (?, 0)", (pid,))
+                return 0.0
+            return r["quantidade"] or 0
+
+        for l in lancs:
+            tem_item = cur.execute("SELECT 1 FROM producao_diaria_itens WHERE producao_diaria_id=? AND produto_estoque_id=?",
+                                   (l["id"], de)).fetchone()
+            if not tem_item and l["produto_estoque_id"] != de:
+                continue
+            movs = cur.execute("""SELECT id, saldo_anterior, saldo_posterior, quantidade, tipo FROM estoque_movimentacoes
+                                  WHERE producao_diaria_id=? AND produto_id=?""", (l["id"], de)).fetchall()
+            if movs:
+                # efeito líquido no saldo (negativo = baixou); perda "sem baixa" tem efeito zero
+                efeito = sum((m["saldo_posterior"] or 0) - (m["saldo_anterior"] or 0) for m in movs)
+                s_de, s_para = _saldo(de), _saldo(para)
+                cur.execute("UPDATE estoque_saldo SET quantidade=?, ultima_atualizacao=datetime('now') WHERE produto_id=?",
+                            (s_de - efeito, de))
+                cur.execute("UPDATE estoque_saldo SET quantidade=?, ultima_atualizacao=datetime('now') WHERE produto_id=?",
+                            (s_para + efeito, para))
+                cur.execute("UPDATE estoque_movimentacoes SET produto_id=? WHERE producao_diaria_id=? AND produto_id=?",
+                            (para, l["id"], de))
+                qtd_total += -efeito
+            else:
+                sem_vinculo += 1
+            cur.execute("UPDATE producao_diaria_itens SET produto_estoque_id=? WHERE producao_diaria_id=? AND produto_estoque_id=?",
+                        (para, l["id"], de))
+            if l["produto_estoque_id"] == de:
+                cur.execute("UPDATE producao_diaria SET produto_estoque_id=? WHERE id=?", (para, l["id"]))
+            alterados += 1
+        if not alterados:
+            raise HTTPException(400, f"Nenhum lançamento de produção deste pedido usa {prods[de]['nome']}.")
+        cur.execute("""INSERT INTO auditoria (usuario, acao, entidade, entidade_id, descricao, valor_anterior, valor_novo)
+                       VALUES (?, 'trocar_produto_producao', 'pedidos', ?, ?, ?, ?)""",
+                    (_nome_usuario(current_user), id,
+                     f"Pedido {ped['numero_pedido']}: {alterados} lançamento(s) de produção trocados de produto",
+                     prods[de]["nome"], prods[para]["nome"]))
+        conn.commit()
+        msg = f"{alterados} lançamento(s) passaram de {prods[de]['nome']} para {prods[para]['nome']}"
+        if qtd_total:
+            msg += f"; estoque acertado ({qtd_total:g} devolvidos ao produto antigo e baixados do novo)"
+        if sem_vinculo:
+            msg += f". {sem_vinculo} lançamento(s) antigo(s) sem vínculo de estoque: confira o saldo manualmente"
+        return {"mensagem": msg, "lancamentos": alterados, "quantidade": qtd_total, "sem_vinculo": sem_vinculo}
+    finally:
+        conn.close()
+
+
 # ─── PDF DA NOTA FISCAL ──────────────────────────────────────────────────────
 
 NF_MAX_BYTES = 10 * 1024 * 1024
@@ -2773,9 +2857,11 @@ def historico_producao_pedido(id: int):
         ORDER BY p.data ASC, p.id ASC, pdi.id ASC
     """, (pedido["numero_pedido"],)).fetchall()
     itens = conn.execute("""
-        SELECT i.produto_id, SUM(i.quantidade) as pedido, ep.nome as produto_nome, ep.marca as produto_marca
+        SELECT i.produto_id, SUM(i.quantidade) as pedido, ep.nome as produto_nome, ep.marca as produto_marca,
+               MAX(CASE WHEN ec.tipo = 'revenda' THEN 1 ELSE 0 END) as revenda
         FROM pedidos_itens i
         LEFT JOIN estoque_produtos ep ON ep.id = i.produto_id
+        LEFT JOIN estoque_categorias ec ON ec.id = ep.categoria_id
         WHERE i.pedido_id = ?
         GROUP BY i.produto_id
         ORDER BY MIN(i.id)
@@ -2795,6 +2881,7 @@ def historico_producao_pedido(id: int):
             "produto_id": it["produto_id"], "produto_nome": it["produto_nome"],
             "produto_marca": it["produto_marca"], "produto_tamanho": _tamanho_do_nome(it["produto_nome"]),
             "pedido": it["pedido"] or 0, "produzido": 0, "perda": 0, "sobra": 0, "fora_do_pedido": False,
+            "revenda": bool(it["revenda"]),
         }
     for l in resultado:
         r = resumo.get(l["produto_id"])
