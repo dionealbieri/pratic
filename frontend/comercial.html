@@ -895,7 +895,34 @@ function mpVerificarChegadas(d) {
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) { mpPendentesNaoVistas = 0; document.title = mpTituloOriginal; }
 });
-setInterval(() => { if (document.getElementById('tab-pedidos')) loadMeusPedidos(); }, 60000);
+// ─── ATUALIZAÇÃO AUTOMÁTICA ──────────────────────────────────────────────────
+// A cada 30 s (e ao voltar para a aba do navegador) recarrega o que está na tela:
+// novidades/cards/seções, a lista "Todos os meus pedidos" (mantendo filtro, busca e
+// página) e o estoque dos clientes. Com uma janela aberta, só confere as chegadas
+// (som/aviso) e deixa a tela como está para não atrapalhar o que está sendo feito.
+let mpAtualizando = false;
+function mpModalAberto() { return !!document.querySelector('.modal-overlay.open, .modal-overlay[style*="flex"]'); }
+function mpVisivel(id) { const el = document.getElementById(id); return !!(el && el.style.display !== 'none'); }
+async function mpAtualizarTela() {
+  if (mpAtualizando) return;
+  mpAtualizando = true;
+  try {
+    if (mpModalAberto()) {
+      // só checa se chegou algo (som + aviso), sem redesenhar
+      let d = { pedidos: [], novidades: [] };
+      try { d = await req('/pedidos/meus') || d; } catch (e) {}
+      try { const rm = await req('/remessas/meus') || {}; d.novidades = (d.novidades || []).concat(rm.novidades || []); } catch (e) {}
+      mpVerificarChegadas(d);
+      return;
+    }
+    await loadMeusPedidos();
+    if (mpVisivel('tab-pedidos')) await loadPedidosCom();
+    if (mpVisivel('tab-estoque') && typeof ecMontar === 'function') await ecMontar('ec-painel');
+  } catch (e) {
+  } finally { mpAtualizando = false; }
+}
+setInterval(mpAtualizarTela, 30000);   // continua rodando com a aba em segundo plano (para o som avisar)
+document.addEventListener('visibilitychange', () => { if (!document.hidden) mpAtualizarTela(); });
 document.addEventListener('DOMContentLoaded', mpAtualizarBotaoSom);
 mpAtualizarBotaoSom();
 
