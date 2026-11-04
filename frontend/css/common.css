@@ -129,6 +129,11 @@ nav {
   color: var(--muted);
 }
 
+/* Perfil com uma página só (Expedição) e telas do vendedor abertas no painel: sem barra lateral */
+body.sem-sidebar .sidebar { display: none !important; }
+body.sem-sidebar .main { margin-left: 0 !important; }
+body.sem-sidebar .menu-toggle { display: none !important; }
+
 /* MAIN */
 .main {
   margin-left: 240px;
