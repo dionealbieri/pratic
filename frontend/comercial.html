@@ -12,7 +12,7 @@
     document.documentElement.setAttribute('data-theme', savedTheme);
   })();
 </script>
-<link rel="stylesheet" href="css/common.css?v=2">
+<link rel="stylesheet" href="css/common.css?v=3">
 <script src="/js/cotacao.js?v=20261030-embalagem"></script>
 <script src="/js/estoque-cliente.js?v=20261030-estcli"></script>
 <style>
@@ -67,7 +67,7 @@
     <button class="tab-btn active" id="tabbtn-pedidos" onclick="switchTab('pedidos')">🧾 Meus Pedidos</button>
     <button class="tab-btn" id="tabbtn-estoque" onclick="switchTab('estoque')">🏷️ Estoque dos meus clientes</button>
     <button class="tab-btn" id="tabbtn-novo" onclick="switchTab('novo')" style="display:none">➕ Novo Pedido</button>
-    <button class="tab-btn" id="tabbtn-importar" onclick="switchTab('importar')">📥 Importar</button>
+    <button class="tab-btn" id="tabbtn-importar" onclick="window.location.href='/?importar=1'">📥 Importar</button>
     <button class="tab-btn" id="mp-som-btn" onclick="mpAlternarSom()" style="margin-left:auto" title="Toca um som e mostra um aviso quando chega pedido novo ou uma ação para você">🔔 Aviso sonoro: ligado</button>
   </div>
 
