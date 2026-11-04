@@ -2356,85 +2356,122 @@ def _cubagem_m3(qtd, c, l, a) -> float:
     return (qtd or 0) * (c or 0) * (l or 0) * (a or 0) / 1_000_000.0
 
 
+def _remessado_por_item(conn, pedido_id: int, incluir_pendentes: bool = True) -> dict:
+    """Quantidade de cada item que já saiu (ou está reservada) em remessas parciais."""
+    try:
+        sts = ("aguardando_nf", "aguardando_retirada", "enviado", "retirado") if incluir_pendentes else ("enviado", "retirado")
+        rows = conn.execute(f"""SELECT ri.pedido_item_id, SUM(ri.quantidade) AS q FROM pedidos_remessa_itens ri
+                               JOIN pedidos_remessas r ON r.id = ri.remessa_id
+                               WHERE r.pedido_id = ? AND r.status IN ({','.join('?' * len(sts))})
+                               GROUP BY ri.pedido_item_id""", (pedido_id, *sts)).fetchall()
+        return {r["pedido_item_id"]: r["q"] or 0 for r in rows}
+    except Exception:
+        return {}
+
+
+def _calcular_cotacao(conn, id: int, qtd_por_item: dict = None, usar_manuais: bool = True) -> dict:
+    """Núcleo do cálculo de caixas/peso/cubagem. qtd_por_item (item_id → quantidade) troca a quantidade
+    do item (remessa parcial, ou o saldo que falta enviar); item com 0 fica de fora."""
+    import math
+    _itens_db = conn.execute("""
+        SELECT i.id, i.descricao, i.quantidade, i.unidade, i.produto_id,
+               ep.nome AS produto_nome, ep.codigo AS produto_codigo,
+               COALESCE(ep.embalagem_qtd,0) AS emb_qtd, COALESCE(ep.embalagem_comprimento,0) AS emb_c,
+               COALESCE(ep.embalagem_largura,0) AS emb_l, COALESCE(ep.embalagem_altura,0) AS emb_a,
+               COALESCE(ep.embalagem_peso,0) AS emb_peso, ec.tipo AS categoria_tipo
+        FROM pedidos_itens i
+        LEFT JOIN estoque_produtos ep ON ep.id = i.produto_id
+        LEFT JOIN estoque_categorias ec ON ec.id = ep.categoria_id
+        WHERE i.pedido_id = ? ORDER BY i.id
+    """, (id,)).fetchall()
+    itens = []
+    for _r in _itens_db:
+        _d = dict(_r)
+        if qtd_por_item is not None:
+            _d["quantidade"] = qtd_por_item.get(_d["id"], 0)
+            if not _d["quantidade"]:
+                continue
+        itens.append(_d)
+    manuais = [dict(r) for r in conn.execute(
+        "SELECT * FROM pedidos_volumes WHERE pedido_id=? ORDER BY id", (id,)).fetchall()] if usar_manuais else []
+    if qtd_por_item is not None:
+        _ids = {i["id"] for i in itens}
+        manuais = [m for m in manuais if not m["pedido_item_id"] or m["pedido_item_id"] in _ids]
+    itens_com_manual = {m["pedido_item_id"] for m in manuais if m["pedido_item_id"]}
+
+    linhas, avisos = [], []
+    tot_cx = tot_peso = tot_m3 = 0.0
+    for it in itens:
+        nome = it["descricao"] or it["produto_nome"] or "Item"
+        base = {"item_id": it["id"], "descricao": nome, "quantidade": it["quantidade"] or 0,
+                "unidade": it["unidade"] or "", "revenda": it["categoria_tipo"] == "revenda"}
+        if it["id"] in itens_com_manual:
+            linhas.append({**base, "origem": "manual"})
+            continue
+        qtd = float(it["quantidade"] or 0)
+        tem_medida = it["emb_c"] > 0 and it["emb_l"] > 0 and it["emb_a"] > 0
+        if _eh_caixa(it["unidade"]):
+            caixas_exatas = qtd
+        elif it["emb_qtd"] > 0:
+            caixas_exatas = qtd / it["emb_qtd"]
+        else:
+            caixas_exatas = None
+        if caixas_exatas is None or not tem_medida or not it["emb_peso"]:
+            falta = []
+            if not it["produto_id"]:
+                falta.append("item sem produto vinculado")
+            else:
+                if caixas_exatas is None:
+                    falta.append("unidades por caixa")
+                if not tem_medida:
+                    falta.append("medidas da caixa")
+                if not it["emb_peso"]:
+                    falta.append("peso")
+            linhas.append({**base, "origem": "sem_dados", "falta": falta})
+            avisos.append(f"{nome}: falta {', '.join(falta)} — cadastre no produto ou lance as caixas.")
+            continue
+        caixas = math.ceil(round(caixas_exatas, 6))
+        # Peso proporcional: a última caixa pode ir incompleta
+        peso = round(caixas_exatas * it["emb_peso"], 2)
+        m3 = _cubagem_m3(caixas, it["emb_c"], it["emb_l"], it["emb_a"])
+        tot_cx += caixas; tot_peso += peso; tot_m3 += m3
+        linhas.append({**base, "origem": "cadastro", "unid_por_caixa": it["emb_qtd"],
+                       "caixas": caixas, "comprimento": it["emb_c"], "largura": it["emb_l"],
+                       "altura": it["emb_a"], "peso_caixa": it["emb_peso"],
+                       "peso_total": peso, "cubagem_m3": round(m3, 4)})
+    for m in manuais:
+        q = m["qtd_caixas"] or 0
+        peso = round(q * (m["peso_caixa"] or 0), 2)
+        m3 = _cubagem_m3(q, m["comprimento"], m["largura"], m["altura"])
+        m["peso_total"] = peso
+        m["cubagem_m3"] = round(m3, 4)
+        tot_cx += q; tot_peso += peso; tot_m3 += m3
+    return {
+        "itens": linhas, "manuais": manuais, "avisos": avisos,
+        "completo": not any(l["origem"] == "sem_dados" for l in linhas),
+        "totais": {"caixas": round(tot_cx, 2), "peso_kg": round(tot_peso, 2), "cubagem_m3": round(tot_m3, 4)},
+    }
+
+
 @router.get("/{id}/cotacao")
 def dados_cotacao(id: int, current_user: dict = Depends(get_current_user)):
     """Caixas, peso e cubagem do pedido para o vendedor cotar o frete.
     Cada item é calculado pelo cadastro do produto (unidades por caixa + medidas e peso
     da caixa fechada). Caixas lançadas à mão e ligadas a um item substituem o cálculo
-    daquele item; lançamentos sem item são somados à parte."""
-    import math
+    daquele item; lançamentos sem item são somados à parte. Com remessas parciais,
+    calcula só o saldo que ainda falta enviar."""
     conn = get_conn()
     try:
         ped = _acesso_pedido_cotacao(conn, id, current_user)
-        itens = conn.execute("""
-            SELECT i.id, i.descricao, i.quantidade, i.unidade, i.produto_id,
-                   ep.nome AS produto_nome, ep.codigo AS produto_codigo,
-                   COALESCE(ep.embalagem_qtd,0) AS emb_qtd, COALESCE(ep.embalagem_comprimento,0) AS emb_c,
-                   COALESCE(ep.embalagem_largura,0) AS emb_l, COALESCE(ep.embalagem_altura,0) AS emb_a,
-                   COALESCE(ep.embalagem_peso,0) AS emb_peso, ec.tipo AS categoria_tipo
-            FROM pedidos_itens i
-            LEFT JOIN estoque_produtos ep ON ep.id = i.produto_id
-            LEFT JOIN estoque_categorias ec ON ec.id = ep.categoria_id
-            WHERE i.pedido_id = ? ORDER BY i.id
-        """, (id,)).fetchall()
-        manuais = [dict(r) for r in conn.execute(
-            "SELECT * FROM pedidos_volumes WHERE pedido_id=? ORDER BY id", (id,)).fetchall()]
-        itens_com_manual = {m["pedido_item_id"] for m in manuais if m["pedido_item_id"]}
-
-        linhas, avisos = [], []
-        tot_cx = tot_peso = tot_m3 = 0.0
-        for it in itens:
-            nome = it["descricao"] or it["produto_nome"] or "Item"
-            base = {"item_id": it["id"], "descricao": nome, "quantidade": it["quantidade"] or 0,
-                    "unidade": it["unidade"] or "", "revenda": it["categoria_tipo"] == "revenda"}
-            if it["id"] in itens_com_manual:
-                linhas.append({**base, "origem": "manual"})
-                continue
-            qtd = float(it["quantidade"] or 0)
-            tem_medida = it["emb_c"] > 0 and it["emb_l"] > 0 and it["emb_a"] > 0
-            if _eh_caixa(it["unidade"]):
-                caixas_exatas = qtd
-            elif it["emb_qtd"] > 0:
-                caixas_exatas = qtd / it["emb_qtd"]
-            else:
-                caixas_exatas = None
-            if caixas_exatas is None or not tem_medida or not it["emb_peso"]:
-                falta = []
-                if not it["produto_id"]:
-                    falta.append("item sem produto vinculado")
-                else:
-                    if caixas_exatas is None:
-                        falta.append("unidades por caixa")
-                    if not tem_medida:
-                        falta.append("medidas da caixa")
-                    if not it["emb_peso"]:
-                        falta.append("peso")
-                linhas.append({**base, "origem": "sem_dados", "falta": falta})
-                avisos.append(f"{nome}: falta {', '.join(falta)} — cadastre no produto ou lance as caixas.")
-                continue
-            caixas = math.ceil(round(caixas_exatas, 6))
-            # Peso proporcional: a última caixa pode ir incompleta
-            peso = round(caixas_exatas * it["emb_peso"], 2)
-            m3 = _cubagem_m3(caixas, it["emb_c"], it["emb_l"], it["emb_a"])
-            tot_cx += caixas; tot_peso += peso; tot_m3 += m3
-            linhas.append({**base, "origem": "cadastro", "unid_por_caixa": it["emb_qtd"],
-                           "caixas": caixas, "comprimento": it["emb_c"], "largura": it["emb_l"],
-                           "altura": it["emb_a"], "peso_caixa": it["emb_peso"],
-                           "peso_total": peso, "cubagem_m3": round(m3, 4)})
-        for m in manuais:
-            q = m["qtd_caixas"] or 0
-            peso = round(q * (m["peso_caixa"] or 0), 2)
-            m3 = _cubagem_m3(q, m["comprimento"], m["largura"], m["altura"])
-            m["peso_total"] = peso
-            m["cubagem_m3"] = round(m3, 4)
-            tot_cx += q; tot_peso += peso; tot_m3 += m3
-        return {
-            "pedido_id": id, "numero_pedido": ped["numero_pedido"],
-            "itens": linhas, "manuais": manuais, "avisos": avisos,
-            "pode_editar": _pode_lancar_caixas(current_user),
-            "completo": not any(l["origem"] == "sem_dados" for l in linhas),
-            "totais": {"caixas": round(tot_cx, 2), "peso_kg": round(tot_peso, 2), "cubagem_m3": round(tot_m3, 4)},
-        }
+        remessado = _remessado_por_item(conn, id)
+        qtd = None
+        if remessado:
+            qtd = {r["id"]: max(0, (r["quantidade"] or 0) - remessado.get(r["id"], 0))
+                   for r in conn.execute("SELECT id, quantidade FROM pedidos_itens WHERE pedido_id=?", (id,)).fetchall()}
+        d = _calcular_cotacao(conn, id, qtd)
+        d.update({"pedido_id": id, "numero_pedido": ped["numero_pedido"], "pode_editar": _pode_lancar_caixas(current_user),
+                  "saldo_restante": bool(remessado)})
+        return d
     finally:
         conn.close()
 
@@ -2502,6 +2539,11 @@ def definir_envio(id: int, body: DefinirEnvioIn, current_user: dict = Depends(ge
             raise HTTPException(400, "O pedido ainda não foi produzido.")
         usuario = _nome_usuario(current_user)
         modo = (body.modo or "").strip().lower()
+        if modo in ("transportadora", "retirada") and _remessado_por_item(conn, id):
+            restante = sum(max(0, (r["quantidade"] or 0) - _remessado_por_item(conn, id).get(r["id"], 0))
+                           for r in conn.execute("SELECT id, quantidade FROM pedidos_itens WHERE pedido_id=?", (id,)).fetchall())
+            if restante <= 0:
+                raise HTTPException(400, "Todo o pedido já está em remessas parciais; não há saldo para enviar.")
         if modo in ("transportadora", "retirada") and ped["status"] == "produzido":
             if _revenda_pendente(conn, id) > 0:
                 raise HTTPException(400, "Este pedido tem itens de revenda ainda não separados. "
@@ -3318,6 +3360,13 @@ def deletar_pedido(id: int, current_user = Depends(get_current_user)):
         cur.execute("DELETE FROM pedidos_itens WHERE pedido_id=?", (id,))
         cur.execute("DELETE FROM pedidos_status_hist WHERE pedido_id=?", (id,))
         cur.execute("DELETE FROM pedidos_volumes WHERE pedido_id=?", (id,))
+        for _r in cur.execute("SELECT nf_arquivo FROM pedidos_remessas WHERE pedido_id=? AND nf_arquivo IS NOT NULL", (id,)).fetchall():
+            try:
+                os.remove(os.path.join(_pasta_nf(), os.path.basename(_r["nf_arquivo"])))
+            except OSError:
+                pass
+        cur.execute("DELETE FROM pedidos_remessa_itens WHERE remessa_id IN (SELECT id FROM pedidos_remessas WHERE pedido_id=?)", (id,))
+        cur.execute("DELETE FROM pedidos_remessas WHERE pedido_id=?", (id,))
         # Estoque do cliente: entrega excluída devolve o saldo; pedido de origem excluído tira a entrada
         if cur.execute("SELECT 1 FROM estoque_cliente_mov WHERE pedido_id=? AND tipo='entrada' LIMIT 1", (id,)).fetchone():
             neg = cur.execute("""
