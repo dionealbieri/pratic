@@ -4798,13 +4798,15 @@ async function loadTransportadora() {
     ? _remessasCache.filter(r => (String(r.numero_pedido) + ' ' + (r.cliente_nome || '') + ' ' + (r.vendedor_usuario_nome || r.vendedor || '') + ' ' + (r.nota_fiscal || '')).toLowerCase().includes(busca))
     : _remessasCache.filter(r => (mapaRem[filtro] || []).includes(r.status));
 
+  _expVerificarChegadas(rows, _remessasCache);
   const resumo = document.getElementById('ped-transp-resumo');
   if (resumo) {
     const n = s2 => rows.filter(p => st(p) === s2).length + _remessasCache.filter(r => r.status === s2).length;
     const chip = (txt, qtd, alvo, cor) => `<button type="button" onclick="document.getElementById('ped-transp-filtro').value='${alvo}';loadTransportadora()" style="background:var(--surface2);border:1px solid ${filtro === alvo ? 'var(--accent)' : 'var(--border)'};border-radius:8px;padding:8px 12px;font-size:13px;color:var(--text);cursor:pointer;white-space:nowrap">${txt} <strong style="color:${cor}">${qtd}</strong></button>`;
     resumo.innerHTML = chip('🧾 Aguardando NF', n('aguardando_nf'), 'aguardando_nf', 'var(--accent)')
       + chip('🙋 Aguardando retirada', n('aguardando_retirada'), 'aguardando_retirada', 'var(--accent)')
-      + (ehGestor ? chip('⏳ Aguardando vendedor', rows.filter(aguardVend).length, 'aguardando_vendedor', 'var(--danger)') : '');
+      + (ehGestor ? chip('⏳ Aguardando vendedor', rows.filter(aguardVend).length, 'aguardando_vendedor', 'var(--danger)') : '')
+      + `<button type="button" id="exp-som-btn" onclick="_expAlternarSom()" title="Tocar um som quando chegar pedido para NF/retirada" style="background:none;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;color:var(--muted);cursor:pointer;white-space:nowrap">${_expSomLigado() ? '🔔 Som ligado' : '🔕 Som desligado'}</button>`;
   }
 
   const tbody = document.getElementById('ped-transp-tbody');
@@ -4853,6 +4855,80 @@ async function loadTransportadora() {
   }).join('') + listaRem.map(r => _linhaRemessaExpedicao(r)).join('');
 }
 window.loadTransportadora = loadTransportadora;
+
+// ─── EXPEDIÇÃO: ATUALIZAÇÃO AUTOMÁTICA + AVISO DE CHEGADA ────────────────────
+// A cada 30 s, com a fila da Expedição na tela, recarrega a lista sozinha.
+// Se chegou pedido/remessa novo para NF ou retirada, toca um som e mostra um aviso.
+// Com uma janela aberta (despacho, detalhes...), só confere as chegadas, sem redesenhar.
+let _expConhecidas = null, _expAudio = null, _expAtualizando = false, _expNaoVistas = 0;
+const _expTituloOriginal = document.title;
+function _expSomLigado() { try { return localStorage.getItem('exp_som') !== '0'; } catch (e) { return true; } }
+function _expAlternarSom() {
+  const ligar = !_expSomLigado();
+  try { localStorage.setItem('exp_som', ligar ? '1' : '0'); } catch (e) {}
+  const b = document.getElementById('exp-som-btn');
+  if (b) b.textContent = ligar ? '🔔 Som ligado' : '🔕 Som desligado';
+  if (ligar) _expTocarSom();
+}
+window._expAlternarSom = _expAlternarSom;
+function _expTocarSom() {
+  try {
+    if (!_expAudio) _expAudio = new (window.AudioContext || window.webkitAudioContext)();
+    if (_expAudio.state === 'suspended') _expAudio.resume();
+    const t0 = _expAudio.currentTime;
+    [[880, 0], [1320, 0.18]].forEach(([f, d]) => {
+      const o = _expAudio.createOscillator(), g = _expAudio.createGain();
+      o.type = 'sine'; o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t0 + d);
+      g.gain.exponentialRampToValueAtTime(0.35, t0 + d + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + d + 0.45);
+      o.connect(g); g.connect(_expAudio.destination);
+      o.start(t0 + d); o.stop(t0 + d + 0.5);
+    });
+  } catch (e) {}
+}
+// O navegador só libera som depois do primeiro clique na página
+document.addEventListener('click', () => { try { if (!_expAudio) _expAudio = new (window.AudioContext || window.webkitAudioContext)(); if (_expAudio.state === 'suspended') _expAudio.resume(); } catch (e) {} }, { once: true });
+function _expVerificarChegadas(rows, rems) {
+  const pend = ['aguardando_nf', 'aguardando_retirada'];
+  const st = p => p.status_efetivo || p.status;
+  const mapa = new Map();
+  (rows || []).filter(p => pend.includes(st(p))).forEach(p => mapa.set('p' + p.id + st(p), `Pedido ${p.numero_pedido} — ${p.cliente_nome || ''} (${st(p) === 'aguardando_nf' ? 'aguardando NF' : 'aguardando retirada'})`));
+  (rems || []).filter(r => pend.includes(r.status)).forEach(r => mapa.set('r' + r.id + r.status, `Remessa ${r.numero_pedido}${r.numero ? '/' + r.numero : ''} — ${r.cliente_nome || ''}`));
+  if (_expConhecidas === null) { _expConhecidas = new Set(mapa.keys()); return; }   // 1ª carga: só memoriza
+  const novos = [...mapa.keys()].filter(k => !_expConhecidas.has(k));
+  _expConhecidas = new Set(mapa.keys());
+  if (!novos.length) return;
+  if (_expSomLigado()) _expTocarSom();
+  const linhas = novos.map(k => mapa.get(k));
+  showAlert('🔔 Chegou para a Expedição: ' + linhas.slice(0, 3).join(' · ') + (linhas.length > 3 ? ` (+${linhas.length - 3})` : ''));
+  if (document.hidden) { _expNaoVistas += novos.length; document.title = `(${_expNaoVistas}) 🔔 ${_expTituloOriginal}`; }
+}
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && _expNaoVistas) { _expNaoVistas = 0; document.title = _expTituloOriginal; }
+  if (!document.hidden) _expAtualizarFila();
+});
+async function _expAtualizarFila() {
+  const tb = document.getElementById('ped-transp-tbody');
+  if (!tb || !tb.offsetParent) return;          // fila da Expedição não está na tela
+  if (_expAtualizando || !window.usuarioLogado) return;
+  _expAtualizando = true;
+  try {
+    const modalAberto = !!document.querySelector('.modal-overlay.open');
+    const digitando = document.activeElement && document.activeElement.id === 'ped-transp-busca';
+    if (modalAberto || digitando) {
+      const rows = await api('/pedidos/');
+      let rems = []; try { rems = (await api('/remessas/fila')) || []; } catch (e) {}
+      _expVerificarChegadas(rows, rems);
+    } else {
+      const y = window.scrollY;
+      await loadTransportadora();
+      window.scrollTo(0, y);
+    }
+  } catch (e) {
+  } finally { _expAtualizando = false; }
+}
+setInterval(_expAtualizarFila, 30000);
 
 // ─── REMESSAS PARCIAIS (Expedição) ───────────────────────────────────────────
 let _remessasCache = [];
