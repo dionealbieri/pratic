@@ -4764,6 +4764,7 @@ async function loadTransportadora() {
   const busca = (document.getElementById('ped-transp-busca')?.value || '').trim().toLowerCase();
   await _carregarPrazosParados();
   let rows = await api('/pedidos/');
+  try { _remessasCache = (await api('/remessas/fila')) || []; } catch (e) { _remessasCache = []; }
   const st = p => p.status_efetivo || p.status;
   const mapa = {
     aguardando_nf: ['aguardando_nf'],
@@ -4790,9 +4791,16 @@ async function loadTransportadora() {
   if (['enviado', 'retirado', 'entregue', 'todos'].includes(filtro)) lista.sort((a, b) => String(b.status_desde || '').localeCompare(String(a.status_desde || '')));
   else lista.sort((a, b) => String(a.status_desde || '').localeCompare(String(b.status_desde || '')));
 
+  // Remessas parciais entram na mesma lista (linha própria, com a NF da remessa)
+  const mapaRem = { aguardando_nf: ['aguardando_nf'], aguardando_retirada: ['aguardando_retirada'], enviado: ['enviado'],
+                    retirado: ['retirado'], todos: ['enviado', 'retirado'] };
+  let listaRem = busca
+    ? _remessasCache.filter(r => (String(r.numero_pedido) + ' ' + (r.cliente_nome || '') + ' ' + (r.vendedor_usuario_nome || r.vendedor || '') + ' ' + (r.nota_fiscal || '')).toLowerCase().includes(busca))
+    : _remessasCache.filter(r => (mapaRem[filtro] || []).includes(r.status));
+
   const resumo = document.getElementById('ped-transp-resumo');
   if (resumo) {
-    const n = s2 => rows.filter(p => st(p) === s2).length;
+    const n = s2 => rows.filter(p => st(p) === s2).length + _remessasCache.filter(r => r.status === s2).length;
     const chip = (txt, qtd, alvo, cor) => `<button type="button" onclick="document.getElementById('ped-transp-filtro').value='${alvo}';loadTransportadora()" style="background:var(--surface2);border:1px solid ${filtro === alvo ? 'var(--accent)' : 'var(--border)'};border-radius:8px;padding:8px 12px;font-size:13px;color:var(--text);cursor:pointer;white-space:nowrap">${txt} <strong style="color:${cor}">${qtd}</strong></button>`;
     resumo.innerHTML = chip('🧾 Aguardando NF', n('aguardando_nf'), 'aguardando_nf', 'var(--accent)')
       + chip('🙋 Aguardando retirada', n('aguardando_retirada'), 'aguardando_retirada', 'var(--accent)')
@@ -4801,7 +4809,7 @@ async function loadTransportadora() {
 
   const tbody = document.getElementById('ped-transp-tbody');
   if (!tbody) return;
-  if (!lista.length) { tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:24px">Nenhum pedido nesta visão</td></tr>'; return; }
+  if (!lista.length && !listaRem.length) { tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:24px">Nenhum pedido nesta visão</td></tr>'; return; }
   const podeDespachar = temPermissao('expedicao', 'despachar');
   tbody.innerHTML = lista.map(p => {
     const s2 = st(p);
@@ -4842,9 +4850,128 @@ async function loadTransportadora() {
       <td><span class="pill ${s2 === 'produzido' ? 'pill-danger' : STATUS_PILL_PED[s2]}">${s2 === 'produzido' ? '⏳ Aguardando vendedor' : STATUS_LABEL_PED[s2]}</span></td>
       <td class="flex gap-2" style="flex-wrap:wrap">${acoes}</td>
     </tr>`;
-  }).join('');
+  }).join('') + listaRem.map(r => _linhaRemessaExpedicao(r)).join('');
 }
 window.loadTransportadora = loadTransportadora;
+
+// ─── REMESSAS PARCIAIS (Expedição) ───────────────────────────────────────────
+let _remessasCache = [];
+const _ST_REMESSA = { aguardando_nf: '🧾 Aguardando NF', aguardando_retirada: '🙋 Aguardando retirada', enviado: '🚚 Enviada', retirado: '✅ Retirada' };
+function _linhaRemessaExpedicao(r) {
+  const podeDesp = temPermissao('expedicao', 'despachar');
+  const podeDesf = temPermissao('expedicao', 'desfazer');
+  const pend = ['aguardando_nf', 'aguardando_retirada'].includes(r.status);
+  let acoes = '';
+  if (r.status === 'aguardando_nf' && podeDesp) acoes = `<button class="btn btn-sm btn-primary" onclick="abrirDespachoRemessa(${r.id})">📦 Lançar NF e despachar</button>`;
+  else if (r.status === 'aguardando_retirada' && podeDesp) acoes = `<button class="btn btn-sm btn-primary" onclick="abrirRetiradaRemessa(${r.id})">✅ Lançar NF e registrar retirada</button>`;
+  else if (r.status === 'enviado') acoes = (podeDesp ? `<button class="btn btn-sm btn-secondary" title="Editar o envio" onclick="abrirDespachoRemessa(${r.id})">✏️</button> ` : '') + (podeDesf ? `<button class="btn btn-sm btn-secondary" onclick="desfazerRemessa(${r.id})">↺ Desfazer</button>` : '');
+  else if (r.status === 'retirado' && podeDesf) acoes = `<button class="btn btn-sm btn-secondary" onclick="desfazerRemessa(${r.id})">↺ Desfazer</button>`;
+  const itens = (r.itens || []).map(i => `${fmtNum(i.quantidade)} ${_escHtml(i.descricao || '')}`).join('<br>');
+  const nfLink = r.nf_arquivo ? ` <a href="${API}/remessas/${r.id}/nf-arquivo" target="_blank" rel="noopener" title="Abrir o PDF da nota fiscal" style="text-decoration:none">📄</a>` : '';
+  const prev = r.modo === 'retirada' ? (r.retirada_prevista ? fmtDate(r.retirada_prevista) : '—') : (r.previsao_entrega ? fmtDate(r.previsao_entrega) : '—');
+  return `<tr style="background:rgba(59,130,246,.05)">
+    <td><strong>${_escHtml(r.numero_pedido)}</strong><div style="font-size:11px;color:var(--accent2,#3b82f6);font-weight:700">REMESSA ${r.numero} · parcial</div></td>
+    <td>${_escHtml(r.cliente_nome || '—')}<div style="font-size:11px;color:var(--muted)">${itens}</div>${r.obs_vendedor ? `<div style="font-size:11px;color:var(--muted)">💬 ${_escHtml(r.obs_vendedor)}</div>` : ''}</td>
+    <td>${_escHtml(r.vendedor_usuario_nome || r.vendedor || '—')}</td>
+    <td>${r.modo === 'retirada' ? '<span style="color:var(--muted)">Cliente retira</span>' : _escHtml(r.transportadora || '—')}</td>
+    <td>${r.modo === 'retirada' ? '—' : fmtBRL(r.frete || 0)}</td>
+    <td>${prev}</td>
+    <td style="white-space:nowrap">${_escHtml(r.nota_fiscal || '—')}${nfLink}</td>
+    <td>${pend ? _seloDiasEtapa(r.dias_na_etapa) : (r.data_despacho ? fmtDate(r.data_despacho) : '—')}</td>
+    <td><span class="pill ${pend ? 'pill-warn' : 'pill-success'}">${_ST_REMESSA[r.status] || r.status}</span></td>
+    <td class="flex gap-2" style="flex-wrap:wrap">${acoes}</td>
+  </tr>`;
+}
+
+function _cabecalhoRemessa(r) {
+  return `Pedido: <strong style="color:var(--accent); font-size:16px;">${_escHtml(r.numero_pedido)}</strong> · <strong style="color:var(--accent2,#3b82f6)">Remessa ${r.numero} (parcial)</strong> — Cliente: <strong>${_escHtml(r.cliente_nome || '')}</strong><br>
+    Vendedor: <strong>${_escHtml(r.vendedor_usuario_nome || r.vendedor || '—')}</strong>${r.obs_vendedor ? ' · 💬 ' + _escHtml(r.obs_vendedor) : ''}<br>
+    <span style="font-size:13px">Nesta remessa: ${(r.itens || []).map(i => `<strong>${fmtNum(i.quantidade)}</strong> ${_escHtml(i.descricao || '')}`).join(' · ')}</span>`;
+}
+
+async function _volumesRemessa(r) {
+  try {
+    const d = await api('/remessas/pedido/' + r.pedido_id + '/cotacao', 'POST', { itens: (r.itens || []).map(i => ({ pedido_item_id: i.pedido_item_id, quantidade: i.quantidade })) });
+    return d && d.totais ? d : null;
+  } catch (e) { return null; }
+}
+
+async function abrirDespachoRemessa(rid) {
+  const r = _remessasCache.find(x => x.id === rid);
+  if (!r) { showAlert('Remessa não encontrada — atualize a lista.', 'danger'); return; }
+  const p = await api('/pedidos/' + r.pedido_id);
+  document.getElementById('desp-pedido-id').value = r.pedido_id;
+  document.getElementById('desp-remessa-id').value = rid;
+  document.getElementById('desp-cabecalho').innerHTML = _cabecalhoRemessa(r);
+  await _preencherSelectTransp(document.getElementById('desp-transportadora'), r.transportadora || '');
+  document.getElementById('desp-nf').value = r.nota_fiscal || '';
+  document.getElementById('desp-rastreio').value = r.rastreio || '';
+  document.getElementById('desp-frete').value = r.frete || 0;
+  const dataDesp = r.data_despacho || new Date().toISOString().slice(0, 10);
+  document.getElementById('desp-data').value = dataDesp;
+  document.getElementById('desp-previsao').value = r.previsao_entrega || adicionarDiasUteis(dataDesp, 8);
+  document.getElementById('desp-obs').value = r.obs_envio || '';
+  const temEnd = !!(p.entrega_cep || p.entrega_logradouro || p.entrega_cidade);
+  const src = temEnd ? 'entrega_' : 'cliente_';
+  ['cep', 'logradouro', 'numero', 'complemento', 'bairro', 'cidade', 'uf'].forEach(c => { const el = document.getElementById('desp-end-' + c); if (el) el.value = p[src + c] || ''; });
+  const cepEl = document.getElementById('desp-end-cep'); if (cepEl) cepEl.value = _fmtCepDesp(cepEl.value);
+  const chk = document.getElementById('desp-end-atualizar-cad'); if (chk) chk.checked = false;
+  _nfPdfWidget('desp-nf-pdf', r.pedido_id, r, 'desp-nf', '/remessas/' + rid);
+  const resumo = document.getElementById('desp-volumes-resumo');
+  if (resumo) resumo.innerHTML = '';
+  document.getElementById('desp-volumes').value = r.volumes || 1;
+  openModal('modal-despacho');
+  const d = await _volumesRemessa(r);
+  if (resumo && d) resumo.innerHTML = `📦 <strong>${fmtNum(Math.ceil(d.totais.caixas))}</strong> volume(s) · <strong>${String(d.totais.peso_kg).replace('.', ',')}</strong> kg · ${String(d.totais.cubagem_m3).replace('.', ',')} m³ <span style="color:var(--muted)">(só desta remessa)</span>`;
+  if (d && !r.volumes && d.totais.caixas > 0) document.getElementById('desp-volumes').value = Math.ceil(d.totais.caixas);
+}
+window.abrirDespachoRemessa = abrirDespachoRemessa;
+
+async function abrirRetiradaRemessa(rid) {
+  const r = _remessasCache.find(x => x.id === rid);
+  if (!r) { showAlert('Remessa não encontrada — atualize a lista.', 'danger'); return; }
+  document.getElementById('ret-pedido-id').value = r.pedido_id;
+  document.getElementById('ret-remessa-id').value = rid;
+  document.getElementById('ret-cabecalho').innerHTML = _cabecalhoRemessa(r) + (r.retirada_prevista ? '<br>Previsão de retirada: <strong>' + fmtDate(r.retirada_prevista) + '</strong>' : '');
+  document.getElementById('ret-nf').value = '';
+  document.getElementById('ret-data').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('ret-volumes').value = 1;
+  document.getElementById('ret-obs').value = '';
+  _nfPdfWidget('ret-nf-pdf', r.pedido_id, r, 'ret-nf', '/remessas/' + rid);
+  openModal('modal-retirada');
+  const d = await _volumesRemessa(r);
+  if (d && d.totais.caixas > 0) document.getElementById('ret-volumes').value = Math.ceil(d.totais.caixas);
+}
+window.abrirRetiradaRemessa = abrirRetiradaRemessa;
+
+async function desfazerRemessa(rid) {
+  if (!confirm('Desfazer a conclusão desta remessa? Ela volta para a fila da Expedição e o número da NF é apagado.')) return;
+  try { const r = await api('/remessas/' + rid + '/desfazer', 'POST'); showAlert(r.mensagem); loadTransportadora(); }
+  catch (e) { showAlert(e.message, 'danger'); }
+}
+window.desfazerRemessa = desfazerRemessa;
+
+// Bloco "Envio parcial" no detalhe do pedido (painel)
+async function _carregarRemessasPedido(pedidoId) {
+  const cont = document.getElementById('modal-ped-det-content');
+  if (!cont) return;
+  let d;
+  try { d = await api('/remessas/pedido/' + pedidoId); } catch (e) { return; }
+  if (!d || !(d.remessas || []).length) return;
+  const pct = d.total_pedido ? Math.round(d.total_enviado / d.total_pedido * 100) : 0;
+  const div = document.createElement('div');
+  div.style.cssText = 'margin-top:12px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.35);border-radius:10px;padding:10px 14px;font-size:13px';
+  div.innerHTML = `<div style="font-weight:700;margin-bottom:6px">📦 Envio parcial — ${fmtNum(d.total_enviado)} de ${fmtNum(d.total_pedido)} já enviados (${pct}%)</div>
+    <div style="height:6px;background:var(--surface2);border-radius:3px;margin-bottom:8px"><div style="height:6px;width:${pct}%;background:var(--accent2,#3b82f6);border-radius:3px"></div></div>
+    ${d.remessas.map(r => `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding:4px 0;border-top:1px solid var(--border)">
+      <strong>Remessa ${r.numero}</strong> <span class="pill ${['enviado', 'retirado'].includes(r.status) ? 'pill-success' : 'pill-warn'}">${_ST_REMESSA[r.status] || r.status}</span>
+      <span style="color:var(--muted)">${(r.itens || []).map(i => fmtNum(i.quantidade) + ' ' + _escHtml(i.descricao || '')).join(' · ')}</span>
+      ${r.nota_fiscal ? `<span>NF ${_escHtml(r.nota_fiscal)}</span>` : ''}${r.nf_arquivo ? `<a href="${API}/remessas/${r.id}/nf-arquivo" target="_blank" rel="noopener" style="text-decoration:none">📄</a>` : ''}
+      ${r.data_despacho ? `<span style="color:var(--muted)">${fmtDate(r.data_despacho)}</span>` : ''}</div>`).join('')}`;
+  const ref = document.getElementById('ped-hist-producao-wrap');
+  if (ref) cont.insertBefore(div, ref); else cont.appendChild(div);
+}
+
 
 function adicionarDiasUteis(dataStr, dias) {
   if (!dataStr) return '';
@@ -4876,6 +5003,7 @@ window.atualizarPrevisaoEntrega = atualizarPrevisaoEntrega;
 async function abrirDespacho(id) {
   const p = await api('/pedidos/' + id);
   document.getElementById('desp-pedido-id').value = id;
+  document.getElementById('desp-remessa-id').value = '';
   
   // Cabeçalho destacado e legível
   document.getElementById('desp-cabecalho').innerHTML = `
@@ -4984,22 +5112,31 @@ async function salvarDespacho() {
   body.atualizar_cadastro_cliente = !!(chkCad && chkCad.checked);
   if (!body.transportadora) { showAlert('Informe a transportadora', 'danger'); return; }
   if (!body.nota_fiscal) { showAlert('Informe o número da nota fiscal', 'danger'); return; }
+  const remessaId = document.getElementById('desp-remessa-id').value;
   try {
-    await api('/pedidos/' + id + '/despachar', 'POST', body);
-    closeModal('modal-despacho');
-    showAlert('Pedido despachado!');
+    if (remessaId) {
+      const r = await api('/remessas/' + remessaId + '/despachar', 'POST', body);
+      closeModal('modal-despacho');
+      showAlert(r.mensagem || 'Remessa despachada!');
+    } else {
+      await api('/pedidos/' + id + '/despachar', 'POST', body);
+      closeModal('modal-despacho');
+      showAlert('Pedido despachado!');
+    }
     loadTransportadora();
   } catch(e) { showAlert(e.message, 'danger'); }
 }
 window.salvarDespacho = salvarDespacho;
 
 // ─── PDF DA NOTA FISCAL (Expedição anexa; vendedor e gestor abrem) ──────────
-function _nfPdfWidget(elId, pedidoId, p, inputNfId) {
+function _nfPdfWidget(elId, pedidoId, p, inputNfId, base) {
   const el = document.getElementById(elId);
   if (!el) return;
+  base = base || ('/pedidos/' + pedidoId);
+  el.dataset.base = base;
   const pode = temPermissao('expedicao', 'despachar') || (window.meuUsuario && window.meuUsuario.role === 'gestor') || localStorage.getItem('user_role') === 'gestor';
   const tem = !!(p && p.nf_arquivo);
-  const url = API + '/pedidos/' + pedidoId + '/nf-arquivo';
+  const url = API + base + '/nf-arquivo';
   let html = '';
   if (tem) {
     html = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:rgba(16,185,129,.08);border:1px solid rgba(16,185,129,.3);border-radius:8px;padding:8px 12px;font-size:13px">
@@ -5024,7 +5161,15 @@ function _nfPdfLink(p) {
 window._nfPdfLink = _nfPdfLink;
 
 async function _nfPdfRecarregar(elId, pedidoId, inputNfId) {
-  try { const p = await api('/pedidos/' + pedidoId); _nfPdfWidget(elId, pedidoId, p, inputNfId); } catch (e) {}
+  const base = (document.getElementById(elId) || {}).dataset?.base || ('/pedidos/' + pedidoId);
+  try {
+    if (base.startsWith('/remessas/')) {
+      const rid = parseInt(base.split('/')[2]);
+      const r = ((await api('/remessas/fila')) || []).find(x => x.id === rid);
+      _remessasCache = _remessasCache.filter(x => x.id !== rid).concat(r ? [r] : []);
+      _nfPdfWidget(elId, pedidoId, r, inputNfId, base);
+    } else { const p = await api('/pedidos/' + pedidoId); _nfPdfWidget(elId, pedidoId, p, inputNfId); }
+  } catch (e) {}
   if (typeof loadTransportadora === 'function' && document.getElementById('ped-transp-filtro')) { try { loadTransportadora(); } catch (e) {} }
 }
 
@@ -5035,7 +5180,8 @@ async function _nfPdfEnviar(input, elId, pedidoId, inputNfId) {
   if (el) el.innerHTML = '<span style="font-size:13px;color:var(--muted)">Enviando PDF...</span>';
   try {
     const fd = new FormData(); fd.append('arquivo', f);
-    const r = await fetch(API + '/pedidos/' + pedidoId + '/nf-arquivo', { method: 'POST', body: fd, credentials: 'same-origin' });
+    const base = (el && el.dataset.base) || ('/pedidos/' + pedidoId);
+    const r = await fetch(API + base + '/nf-arquivo', { method: 'POST', body: fd, credentials: 'same-origin' });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d.detail || 'Erro ao enviar o PDF');
     const nfEl = inputNfId ? document.getElementById(inputNfId) : null;
@@ -5050,7 +5196,8 @@ window._nfPdfEnviar = _nfPdfEnviar;
 
 async function _nfPdfRemover(elId, pedidoId, inputNfId) {
   if (!confirm('Remover o PDF da nota fiscal deste pedido?')) return;
-  try { await api('/pedidos/' + pedidoId + '/nf-arquivo', 'DELETE'); showAlert('PDF removido'); }
+  const base = (document.getElementById(elId) || {}).dataset?.base || ('/pedidos/' + pedidoId);
+  try { await api(base + '/nf-arquivo', 'DELETE'); showAlert('PDF removido'); }
   catch (e) { showAlert(e.message, 'danger'); }
   await _nfPdfRecarregar(elId, pedidoId, inputNfId);
 }
@@ -5060,6 +5207,7 @@ async function abrirRetirada(id) {
   let p;
   try { p = await api('/pedidos/' + id); } catch (e) { showAlert('Erro ao carregar pedido: ' + e.message, 'danger'); return; }
   document.getElementById('ret-pedido-id').value = id;
+  document.getElementById('ret-remessa-id').value = '';
   document.getElementById('ret-cabecalho').innerHTML = `
     Pedido: <strong style="color:var(--accent); font-size:16px;">${p.numero_pedido}</strong> — Cliente: <strong>${p.cliente_nome || ''}</strong><br>
     Vendedor: <strong>${p.vendedor || 'Não informado'}</strong>${p.retirada_prevista ? ' · Previsão de retirada: <strong>' + fmtDate(p.retirada_prevista) + '</strong>' : ''}
@@ -5082,10 +5230,16 @@ async function salvarRetirada() {
     obs: document.getElementById('ret-obs').value.trim()
   };
   if (!body.nota_fiscal) { showAlert('Informe o número da nota fiscal', 'danger'); return; }
+  const remessaId = document.getElementById('ret-remessa-id').value;
   try {
-    await api('/pedidos/' + id + '/retirar', 'POST', body);
+    if (remessaId) {
+      const r = await api('/remessas/' + remessaId + '/retirar', 'POST', body);
+      showAlert(r.mensagem || 'Retirada registrada!');
+    } else {
+      await api('/pedidos/' + id + '/retirar', 'POST', body);
+      showAlert('Retirada registrada!');
+    }
     closeModal('modal-retirada');
-    showAlert('Retirada registrada!');
     loadTransportadora();
   } catch (e) { showAlert(e.message, 'danger'); }
 }
@@ -6475,6 +6629,7 @@ async function verDetalhesPedido(id) {
     btnEnt.onclick = async () => { if (await marcarJaEntregue(p.id, p.numero_pedido)) { closeModal('modal-ped-detalhe'); if (typeof loadPedidos === 'function') loadPedidos(); } };
   }
   _carregarHistoricoProducaoPedido(id);
+  _carregarRemessasPedido(id);
 }
 
 // Produção lançada com um produto que não está mais no pedido (marca trocada depois):
