@@ -329,6 +329,9 @@ async function carregarAcessoPrincipal() {
   }
 
   montarMenuPrincipal();
+  // Perfil com uma página só (ex.: Expedição): a barra lateral não serve para nada — esconde
+  const paginasNoMenu = paginasLiberadas.filter(k => document.getElementById('page-' + k));
+  if (perfilAtual !== 'gestor' && paginasNoMenu.length <= 1) document.body.classList.add('sem-sidebar');
   iniciarPollComunicacao();
 }
 
@@ -7672,12 +7675,15 @@ window._impOcupado = false;
 function iniciarModoImportarVendedor(editarId) {
   window._modoImportarVendedor = true;
   const editando = !!editarId;
+  document.body.classList.add('sem-sidebar');
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   const pg = document.getElementById('page-pedidos');
   if (pg) {
     pg.classList.add('active');
     Array.from(pg.children).forEach(ch => { ch.style.display = 'none'; });
     const ban = document.createElement('div');
+    ban.id = 'vend-modo-cartao';
+    ban.style.display = 'none';   // só aparece se a tela não abrir sozinha
     ban.innerHTML = `<div class="card" style="max-width:640px;margin:40px auto;text-align:center">
       <div style="font-family:var(--font-head);font-weight:700;font-size:18px;margin-bottom:8px">${editando ? '✏️ Edição de pedido' : '📥 Importação de pedido'}</div>
       <div style="font-size:13px;color:var(--muted);margin-bottom:16px">Ao salvar ou cancelar, você volta para Meus Pedidos.</div>
@@ -7689,8 +7695,10 @@ function iniciarModoImportarVendedor(editarId) {
   }
   const titulo = document.getElementById('page-title');
   if (titulo) titulo.textContent = editando ? 'Editar Pedido' : 'Importar Pedido';
-  if (editando) editPedido(editarId).catch(e => { showAlert(e.message || 'Não foi possível abrir o pedido', 'danger'); });
-  else openModalImportarPedido();
+  const mostrarCartao = () => { const c = document.getElementById('vend-modo-cartao'); if (c) c.style.display = ''; };
+  if (editando) editPedido(editarId).catch(e => { showAlert(e.message || 'Não foi possível abrir o pedido', 'danger'); mostrarCartao(); });
+  else { try { openModalImportarPedido(); } catch (e) { mostrarCartao(); } }
+  setTimeout(() => { if (!document.querySelector('.modal-overlay.open')) mostrarCartao(); }, 2500);
   let vazios = 0, abriu = false;
   setInterval(() => {
     const aberto = document.querySelector('.modal-overlay.open') || document.getElementById('popup-overlay-dyn');
