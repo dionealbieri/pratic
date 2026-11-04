@@ -6122,9 +6122,11 @@ function toggleTodasFilas(expandir) {
 }
 
 async function avancarItemStatus(id,novoStatus,qtdTotal) {
-  const qtd=novoStatus==='produzido'||novoStatus==='entregue'?qtdTotal:0;
+  // Só muda a etapa: a quantidade produzida vem dos lançamentos da Produção.
+  // (Antes punha o total do item como produzido sem ter lançamento, e a conferência não batia.)
+  if (novoStatus==='produzido' && !confirm('Marcar este item como PRODUZIDO sem lançar a produção?\n\nA quantidade produzida continua sendo a dos lançamentos. Para registrar o que foi feito, use o lançamento de Produção.')) return;
   try {
-    await api('/pedidos/itens/'+id+'/status','PUT',{status:novoStatus,qtd_produzida:qtd});
+    await api('/pedidos/itens/'+id+'/status','PUT',{status:novoStatus});
     showAlert('Status atualizado!');
     loadFila();
     checkAlertasPedidos();
@@ -6780,7 +6782,17 @@ async function _carregarHistoricoProducaoPedido(id) {
           </tr>`).join('')}
         </tbody>
       </table>` : '';
+    // Progresso gravado no item diferente do que foi lançado (ex.: lançamento excluído/editado depois)
+    const diverg = hist.divergente ? resumo.filter(r => r.divergente) : [];
+    const avisoDiverg = diverg.length ? `
+      <div style="margin:10px 16px;padding:10px 12px;border:1px solid var(--warn);border-left:4px solid var(--warn);border-radius:8px;background:rgba(240,180,41,.08);font-size:13px;line-height:1.5">
+        <strong style="color:var(--warn)">⚠ O progresso do pedido não bate com o histórico de produção</strong><br>
+        ${diverg.map(r => `${_escHtml(r.produto_nome || '')}: o pedido marca <strong>${fmtNum(r.gravado)}</strong> produzido, mas os lançamentos somam <strong>${fmtNum(Math.min(r.produzido, r.pedido))}</strong>.`).join('<br>')}
+        <br><span style="color:var(--muted);font-size:12px">Acontece quando um lançamento foi excluído/editado depois, ou o item foi avançado na Fila sem lançar. Acertando, o pedido volta a aceitar o lançamento do que falta.</span>
+        ${podeCorrigir ? `<div style="margin-top:8px"><button class="btn btn-sm btn-primary" onclick="acertarProducaoPedido(${id})">⚙ Acertar pelo histórico</button></div>` : ''}
+      </div>` : '';
     wrap.innerHTML = `
+      ${avisoDiverg}
       ${resumoHtml}
       <div class="table-head"><span class="table-head-title">Histórico de Produção</span></div>
       <table>
@@ -6803,6 +6815,16 @@ async function _carregarHistoricoProducaoPedido(id) {
     wrap.innerHTML = `<div class="table-head"><span class="table-head-title">Histórico de Produção</span></div><div style="padding:12px;color:var(--danger);font-size:13px">${e.message}</div>`;
   }
 }
+
+async function acertarProducaoPedido(id) {
+  if (!confirm('Acertar o progresso deste pedido pelo histórico de produção?\n\nO "produzido" de cada item passa a ser a soma dos lançamentos. O que faltar volta a ficar liberado para lançar na Produção.')) return;
+  try {
+    const r = await api('/pedidos/' + id + '/sincronizar-producao', 'POST');
+    showAlert(r.mensagem + (r.itens && r.itens.length ? ' — ' + r.itens.map(i => `${i.descricao}: ${fmtNum(i.de)} → ${fmtNum(i.para)}`).join('; ') : ''));
+    if (typeof verDetalhesPedido === 'function') verDetalhesPedido(id);
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+window.acertarProducaoPedido = acertarProducaoPedido;
 
 async function deletarPedido(id) {
   if(!confirm('Remover pedido?')) return;
