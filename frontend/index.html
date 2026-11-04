@@ -772,6 +772,7 @@
       <div class="modal" style="max-width:640px;width:95vw;max-height:92vh;overflow-y:auto">
         <div class="modal-title">📦 Lançar NF e despachar</div>
         <input type="hidden" id="desp-pedido-id">
+        <input type="hidden" id="desp-remessa-id">
         <div id="desp-cabecalho" style="font-size:14px;color:var(--text);margin-bottom:10px;background:rgba(255,255,255,0.05);padding:10px 12px;border-radius:8px;border-left:4px solid var(--accent);line-height:1.6;"></div>
         <div id="desp-volumes-resumo" style="font-size:13px;margin-bottom:14px"></div>
         <div class="form-grid" style="margin-bottom:12px">
@@ -849,6 +850,7 @@
       <div class="modal" style="max-width:560px;width:95vw">
         <div class="modal-title">✅ Lançar NF e registrar retirada</div>
         <input type="hidden" id="ret-pedido-id">
+        <input type="hidden" id="ret-remessa-id">
         <div id="ret-cabecalho" style="font-size:14px;color:var(--text);margin-bottom:16px;background:rgba(255,255,255,0.05);padding:10px 12px;border-radius:8px;border-left:4px solid var(--success);line-height:1.6;"></div>
         <div class="form-grid" style="margin-bottom:12px">
           <div class="form-group"><label>Nota Fiscal (NF-e) *</label><input type="text" id="ret-nf"></div>
@@ -3171,7 +3173,7 @@
 
 <script src="js/cotacao.js?v=20261030-embalagem"></script>
 <script src="js/estoque-cliente.js?v=20261030-estcli"></script>
-<script src="js/app.js?v=20261104-fase3-14-telas"></script>
+<script src="js/app.js?v=20261104-fase4-remessas"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');
