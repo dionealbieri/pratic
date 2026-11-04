@@ -204,6 +204,15 @@ def _baixar_insumo_vinculado(c, prod_id: int, produto_id: int, quantidade: float
     else:
         c.execute("INSERT INTO estoque_saldo (produto_id, quantidade) VALUES (?, ?)", (insumo_id, novo_saldo))
 
+def _sincronizar_pedido(cur, *numeros):
+    """Acerta o progresso dos itens do(s) pedido(s) pelo histórico de produção."""
+    try:
+        from rotas.pedidos import sincronizar_progresso_por_numero
+    except Exception:
+        return
+    for n in {str(x).strip() for x in numeros if x and str(x).strip()}:
+        sincronizar_progresso_por_numero(cur, n)
+
 @router.get("/")
 def listar(mes: Optional[str] = None, colaborador_id: Optional[int] = None):
     conn = get_conn()
@@ -425,7 +434,7 @@ def atualizar(id: int, p: ProducaoIn, current_user = Depends(get_current_user)):
     conn = get_conn()
     try:
         cur = conn.cursor()
-        existe = cur.execute("SELECT id FROM producao_diaria WHERE id = ?", (id,)).fetchone()
+        existe = cur.execute("SELECT id, pedido_numero FROM producao_diaria WHERE id = ?", (id,)).fetchone()
         if not existe:
             raise HTTPException(404, "Registro de produção não encontrado")
 
@@ -498,6 +507,7 @@ def atualizar(id: int, p: ProducaoIn, current_user = Depends(get_current_user)):
                     cur.execute("UPDATE estoque_saldo SET quantidade=?, ultima_atualizacao=datetime('now') WHERE produto_id=?",
                                  (novo_saldo, primeiro_produto["id"]))
                                  
+        _sincronizar_pedido(cur, existe["pedido_numero"], p.pedido_numero)
         conn.commit()
         return {"mensagem": "Produção atualizada com sucesso"}
     except HTTPException:
@@ -514,7 +524,7 @@ def deletar(id: int):
     conn = get_conn()
     try:
         cur = conn.cursor()
-        existe = cur.execute("SELECT id FROM producao_diaria WHERE id = ?", (id,)).fetchone()
+        existe = cur.execute("SELECT id, pedido_numero FROM producao_diaria WHERE id = ?", (id,)).fetchone()
         if not existe:
             raise HTTPException(404, "Registro de produção não encontrado")
             
@@ -524,6 +534,8 @@ def deletar(id: int):
         # 2. Deletar registro de produção
         cur.execute("DELETE FROM producao_diaria_itens WHERE producao_diaria_id = ?", (id,))
         cur.execute("DELETE FROM producao_diaria WHERE id = ?", (id,))
+        # 3. O pedido volta a mostrar só o que ficou lançado (antes o "produzido" do item não baixava)
+        _sincronizar_pedido(cur, existe["pedido_numero"])
         conn.commit()
         return {"mensagem": "Registro removido com sucesso"}
     except HTTPException:

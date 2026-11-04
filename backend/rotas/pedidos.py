@@ -1207,6 +1207,74 @@ def deletar_cliente(id: int):
 
 # ─── PEDIDOS ──────────────────────────────────────────────────────────────────
 
+def _produzido_por_produto(cur, numero_pedido):
+    """Soma o que foi lançado na Produção para este pedido (pelo número), por produto."""
+    rows = cur.execute("""
+        SELECT COALESCE(pdi.produto_estoque_id, p.produto_estoque_id) AS produto_id,
+               SUM(CASE WHEN pdi.id IS NULL THEN p.producao ELSE pdi.quantidade END) AS qtd
+        FROM producao_diaria p
+        LEFT JOIN producao_diaria_itens pdi ON pdi.producao_diaria_id = p.id
+        WHERE p.pedido_numero = ?
+        GROUP BY COALESCE(pdi.produto_estoque_id, p.produto_estoque_id)
+    """, (str(numero_pedido),)).fetchall()
+    return {r["produto_id"]: (r["qtd"] or 0) for r in rows if r["produto_id"]}
+
+
+def _sincronizar_progresso_itens(cur, pedido_id):
+    """Acerta o 'produzido' de cada item (qtd_produzida) pelo HISTÓRICO de produção.
+    O progresso era um contador separado: excluir/editar um lançamento ou avançar o
+    item na Fila não mexia nele (ou punha o total), e o pedido ficava como produzido
+    sem ter sido. Só mexe em pedidos que ainda não saíram da produção.
+    Retorna a lista do que mudou."""
+    ped = cur.execute("SELECT numero_pedido, status FROM pedidos WHERE id=?", (pedido_id,)).fetchone()
+    if not ped or (ped["status"] or "aberto") not in ("aberto", "em_producao", "produzido"):
+        return []
+    feito = _produzido_por_produto(cur, ped["numero_pedido"])
+    itens = cur.execute("""
+        SELECT i.id, i.produto_id, i.descricao, i.quantidade, i.qtd_produzida, i.status
+        FROM pedidos_itens i
+        LEFT JOIN estoque_produtos ep ON ep.id = i.produto_id
+        LEFT JOIN estoque_categorias ec ON ec.id = ep.categoria_id
+        WHERE i.pedido_id = ? AND (ec.tipo IS NULL OR ec.tipo != 'revenda')
+        ORDER BY i.id
+    """, (pedido_id,)).fetchall()
+    mudou = []
+    for it in itens:
+        if not it["produto_id"]:
+            continue
+        qtd = it["quantidade"] or 0
+        disponivel = feito.get(it["produto_id"], 0)
+        novo_q = min(disponivel, qtd)
+        feito[it["produto_id"]] = disponivel - novo_q   # mesmo produto em 2 linhas: distribui na ordem
+        antigo_q = it["qtd_produzida"] or 0
+        st = it["status"] or "aberto"
+        if novo_q >= qtd and qtd > 0:
+            novo_st = "produzido"
+        elif novo_q <= 0:
+            novo_st = "aberto"
+        elif st == "produzido" and antigo_q < qtd:
+            novo_st = "produzido"     # marcado como concluído de propósito com menos (ex.: faltou copo)
+        else:
+            novo_st = "em_producao"
+        if st == "entregue":
+            novo_st = "entregue"
+        if novo_q != antigo_q or novo_st != st:
+            cur.execute("UPDATE pedidos_itens SET qtd_produzida=?, status=? WHERE id=?", (novo_q, novo_st, it["id"]))
+            mudou.append({"item_id": it["id"], "descricao": it["descricao"], "de": antigo_q, "para": novo_q,
+                          "status_de": st, "status_para": novo_st})
+    if mudou:
+        _recalc_status_pedido(cur, pedido_id)
+    return mudou
+
+
+def sincronizar_progresso_por_numero(cur, numero_pedido):
+    """Usado pela Produção depois de editar/excluir um lançamento."""
+    if not numero_pedido:
+        return
+    for r in cur.execute("SELECT id FROM pedidos WHERE numero_pedido=?", (str(numero_pedido),)).fetchall():
+        _sincronizar_progresso_itens(cur, r["id"])
+
+
 def _recalc_status_pedido(cur, pedido_id):
     """Recalcula o status do pedido a partir do progresso real dos itens (qtd_produzida)."""
     # Obter status atual para preservar 'enviado' se for o caso
@@ -2190,6 +2258,7 @@ def trocar_produto_producao(id: int, body: TrocarProdutoProducaoIn, current_user
                     (_nome_usuario(current_user), id,
                      f"Pedido {ped['numero_pedido']}: {alterados} lançamento(s) de produção trocados de produto",
                      prods[de]["nome"], prods[para]["nome"]))
+        _sincronizar_progresso_itens(cur, id)
         conn.commit()
         msg = f"{alterados} lançamento(s) passaram de {prods[de]['nome']} para {prods[para]['nome']}"
         if qtd_total:
@@ -2871,6 +2940,29 @@ def _tamanho_do_nome(nome: str) -> str:
     m = _RE_TAMANHO_COPO.search(nome or "")
     return f"{m.group(1)} {m.group(2).lower()}" if m else ""
 
+@router.post("/{id}/sincronizar-producao")
+def sincronizar_producao(id: int, current_user: dict = Depends(get_current_user)):
+    """Botão 'Acertar pelo histórico': o progresso dos itens passa a ser o que foi lançado na Produção."""
+    if current_user.get("role") == "comercial" or not (
+        verificar_permissao("producao", "editar", current_user) or verificar_permissao("pedidos", "editar", current_user)):
+        raise HTTPException(403, "Sem permissão para acertar a produção do pedido")
+    conn = get_conn()
+    cur = conn.cursor()
+    ped = cur.execute("SELECT status FROM pedidos WHERE id=?", (id,)).fetchone()
+    if not ped:
+        conn.close()
+        raise HTTPException(404, "Pedido não encontrado")
+    if (ped["status"] or "aberto") not in ("aberto", "em_producao", "produzido"):
+        conn.close()
+        raise HTTPException(400, "Este pedido já saiu da produção (frete/NF definidos) — não dá para acertar por aqui.")
+    mudou = _sincronizar_progresso_itens(cur, id)
+    novo = cur.execute("SELECT status FROM pedidos WHERE id=?", (id,)).fetchone()["status"]
+    conn.commit()
+    conn.close()
+    return {"mensagem": ("Progresso acertado pelo histórico de produção" if mudou else "Já estava certo"),
+            "itens": mudou, "status": novo}
+
+
 @router.get("/{id}/historico-producao")
 def historico_producao_pedido(id: int):
     """Lançamentos de produção vinculados a este pedido (pelo número), com
@@ -2943,8 +3035,30 @@ def historico_producao_pedido(id: int):
         resumo_lista.append(r)
 
     total_produzido = sum((l["producao"] or 0) for l in resultado)
+    # Progresso gravado nos itens x histórico: se não bate, a tela oferece "Acertar pelo histórico"
+    conn = get_conn()
+    prog = {r["produto_id"]: r for r in conn.execute("""
+        SELECT i.produto_id, SUM(COALESCE(i.qtd_produzida,0)) AS gravado
+        FROM pedidos_itens i
+        LEFT JOIN estoque_produtos ep ON ep.id = i.produto_id
+        LEFT JOIN estoque_categorias ec ON ec.id = ep.categoria_id
+        WHERE i.pedido_id = ? AND i.produto_id IS NOT NULL AND (ec.tipo IS NULL OR ec.tipo != 'revenda')
+        GROUP BY i.produto_id""", (id,)).fetchall()}
+    st_ped = (conn.execute("SELECT status FROM pedidos WHERE id=?", (id,)).fetchone() or {"status": ""})["status"]
+    conn.close()
+    divergente = False
+    for r in resumo_lista:
+        g = prog.get(r["produto_id"])
+        if g is None or r.get("revenda"):
+            continue
+        r["gravado"] = g["gravado"] or 0
+        esperado = min(r["produzido"], r["pedido"] or 0)
+        if r["gravado"] != esperado:
+            r["divergente"] = True
+            divergente = True
     return {"numero_pedido": pedido["numero_pedido"], "lancamentos": resultado,
-            "resumo": resumo_lista, "total_produzido": total_produzido}
+            "resumo": resumo_lista, "total_produzido": total_produzido,
+            "divergente": divergente and (st_ped or "aberto") in ("aberto", "em_producao", "produzido")}
 
 @router.post("/")
 def criar_pedido(p: PedidoIn, current_user: dict = Depends(get_current_user)):
