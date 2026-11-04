@@ -1528,8 +1528,45 @@ def init_db():
     _migrar_volumes(conn)
     _migrar_estoque_cliente(conn)
     _migrar_nf_arquivo(conn)
+    _migrar_remessas(conn)
     conn.commit()
     conn.close()
+
+
+def _migrar_remessas(conn):
+    """Envio parcial: um pedido pode sair em várias remessas, cada uma com seus itens/quantidades,
+    frete, NF e PDF da nota. O saldo que falta segue o fluxo normal do pedido."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS pedidos_remessas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            pedido_id INTEGER NOT NULL,
+            numero INTEGER NOT NULL,
+            modo TEXT NOT NULL,                 -- transportadora | retirada
+            status TEXT NOT NULL,               -- aguardando_nf | aguardando_retirada | enviado | retirado | cancelada
+            transportadora TEXT, frete REAL DEFAULT 0, previsao_entrega TEXT, retirada_prevista TEXT,
+            obs_vendedor TEXT, nota_fiscal TEXT, rastreio TEXT, volumes INTEGER DEFAULT 0,
+            data_despacho TEXT, obs_envio TEXT,
+            nf_arquivo TEXT, nf_arquivo_nome TEXT, nf_arquivo_em TEXT, nf_arquivo_por TEXT,
+            criado_por TEXT, criado_em TEXT DEFAULT (datetime('now','localtime')),
+            concluido_por TEXT, concluido_em TEXT,
+            status_desde TEXT DEFAULT (datetime('now','localtime'))
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS pedidos_remessa_itens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            remessa_id INTEGER NOT NULL,
+            pedido_item_id INTEGER NOT NULL,
+            quantidade REAL NOT NULL
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_remessas_pedido ON pedidos_remessas(pedido_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_remessas_status ON pedidos_remessas(status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_remessa_itens ON pedidos_remessa_itens(remessa_id)")
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(pedidos)").fetchall()]
+    if "concluido_por_remessas" not in cols:
+        conn.execute("ALTER TABLE pedidos ADD COLUMN concluido_por_remessas INTEGER DEFAULT 0")
+    conn.commit()
 
 
 def _migrar_nf_arquivo(conn):
