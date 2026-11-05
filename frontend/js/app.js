@@ -4759,14 +4759,15 @@ async function loadTransportadora() {
   // "Aguardando vendedor" só para o Gestor: a Expedição só vê o que o vendedor liberou
   const optVend = sel ? sel.querySelector('option[value="aguardando_vendedor"]') : null;
   if (optVend) optVend.hidden = !ehGestor;
-  let filtro = sel?.value || 'aguardando_nf';
-  if (filtro === 'aguardando_vendedor' && !ehGestor) { filtro = 'aguardando_nf'; if (sel) sel.value = filtro; }
+  let filtro = sel?.value || 'pendentes';
+  if (filtro === 'aguardando_vendedor' && !ehGestor) { filtro = 'pendentes'; if (sel) sel.value = filtro; }
   const busca = (document.getElementById('ped-transp-busca')?.value || '').trim().toLowerCase();
   await _carregarPrazosParados();
   let rows = await api('/pedidos/');
   try { _remessasCache = (await api('/remessas/fila')) || []; } catch (e) { _remessasCache = []; }
   const st = p => p.status_efetivo || p.status;
   const mapa = {
+    pendentes: ['aguardando_nf', 'aguardando_retirada'],
     aguardando_nf: ['aguardando_nf'],
     aguardando_retirada: ['aguardando_retirada'],
     aguardando_vendedor: ['produzido'],
@@ -4782,7 +4783,7 @@ async function loadTransportadora() {
   // Com algo digitado na busca, procura em TODOS os pedidos (qualquer status)
   let lista = busca ? rows.slice()
     : filtro === 'aguardando_vendedor' ? rows.filter(aguardVend)
-    : rows.filter(p => (mapa[filtro] || ['aguardando_nf']).includes(st(p)));
+    : rows.filter(p => (mapa[filtro] || mapa.pendentes).includes(st(p)));
   if (busca) lista = lista.filter(p =>
     String(p.numero_pedido || '').toLowerCase().includes(busca) ||
     String(p.cliente_nome || '').toLowerCase().includes(busca) ||
@@ -4792,7 +4793,7 @@ async function loadTransportadora() {
   else lista.sort((a, b) => String(a.status_desde || '').localeCompare(String(b.status_desde || '')));
 
   // Remessas parciais entram na mesma lista (linha própria, com a NF da remessa)
-  const mapaRem = { aguardando_vendedor: ['aguardando_cliente'], aguardando_nf: ['aguardando_nf'], aguardando_retirada: ['aguardando_retirada'], enviado: ['enviado'],
+  const mapaRem = { pendentes: ['aguardando_nf', 'aguardando_retirada'], aguardando_vendedor: ['aguardando_cliente'], aguardando_nf: ['aguardando_nf'], aguardando_retirada: ['aguardando_retirada'], enviado: ['enviado'],
                     retirado: ['retirado'], todos: ['enviado', 'retirado'] };
   let listaRem = busca
     ? _remessasCache.filter(r => (String(r.numero_pedido) + ' ' + (r.cliente_nome || '') + ' ' + (r.vendedor_usuario_nome || r.vendedor || '') + ' ' + (r.nota_fiscal || '')).toLowerCase().includes(busca))
@@ -4803,7 +4804,8 @@ async function loadTransportadora() {
   if (resumo) {
     const n = s2 => rows.filter(p => st(p) === s2).length + _remessasCache.filter(r => r.status === s2).length;
     const chip = (txt, qtd, alvo, cor) => `<button type="button" onclick="document.getElementById('ped-transp-filtro').value='${alvo}';loadTransportadora()" style="background:var(--surface2);border:1px solid ${filtro === alvo ? 'var(--accent)' : 'var(--border)'};border-radius:8px;padding:8px 12px;font-size:13px;color:var(--text);cursor:pointer;white-space:nowrap">${txt} <strong style="color:${cor}">${qtd}</strong></button>`;
-    resumo.innerHTML = chip('🧾 Aguardando NF', n('aguardando_nf'), 'aguardando_nf', 'var(--accent)')
+    resumo.innerHTML = chip('📋 Todos pendentes', n('aguardando_nf') + n('aguardando_retirada'), 'pendentes', 'var(--accent)')
+      + chip('🧾 Aguardando NF', n('aguardando_nf'), 'aguardando_nf', 'var(--accent)')
       + chip('🙋 Aguardando retirada', n('aguardando_retirada'), 'aguardando_retirada', 'var(--accent)')
       + (ehGestor ? chip('⏳ Aguardando vendedor/cliente', rows.filter(aguardVend).length + _remessasCache.filter(r => r.status === 'aguardando_cliente').length, 'aguardando_vendedor', 'var(--danger)') : '')
       + (ehGestor ? `<button type="button" onclick="abrirLimpezaPedidos()" title="Marcar em lote como entregues os pedidos antigos parados no meio do fluxo" style="background:none;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;color:var(--muted);cursor:pointer;white-space:nowrap">🧹 Limpeza</button>` : '')
@@ -7067,6 +7069,9 @@ async function importarPedidoArquivo() {
     }
     const data = await r.json();
     if (!r.ok) throw new Error(data.detail || 'Erro ao analisar arquivo');
+    // Guarda o arquivo original: ao salvar o pedido ele fica ligado ao pedido (botão PDF abre o original)
+    window._pedidoArquivoToken = data.arquivo_token || null;
+    window._pedidoArquivoNome = data.arquivo_nome || (pedidoArquivoSelecionado && pedidoArquivoSelecionado.name) || null;
     
     // Fechar modal de importação
     closeModal('modal-importar-pedido');
@@ -7205,6 +7210,7 @@ window.selecionarProdutoPedidoItem = selecionarProdutoPedidoItem;
 window.carregarProdutosEstoque = carregarProdutosEstoque;
 
 async function openModalPedido() {
+  window._pedidoArquivoToken = null; window._pedidoArquivoNome = null;
   pedidoItens=[];
   document.getElementById('ped-id').value='';
   document.getElementById('ped-numero').value='';
@@ -7572,7 +7578,9 @@ async function salvarPedido() {
         }
       }
     } else {
+      if (window._pedidoArquivoToken) { body.arquivo_token = window._pedidoArquivoToken; body.arquivo_nome = window._pedidoArquivoNome; }
       const resp = await api('/pedidos/','POST',body);
+      window._pedidoArquivoToken = null; window._pedidoArquivoNome = null;
       const alertas = (resp && resp.alertas_estoque) || [];
       if (alertas.length) {
         showAlert('Pedido salvo! ⚠️ Estoque insuficiente: '
@@ -9979,7 +9987,7 @@ async function carregarInfoBackup() {
   try {
     const d = await api('/backup/info');
     const mb = b => (b / 1048576).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' MB';
-    el.textContent = `Inclui ${d.notas_fiscais} PDF(s) de nota fiscal${d.outros_arquivos ? ' e ' + d.outros_arquivos + ' anexo(s)' : ''} · tamanho aproximado ${mb((d.tamanho_banco || 0) + (d.tamanho_arquivos || 0))}`;
+    el.textContent = `Inclui ${d.notas_fiscais} PDF(s) de nota fiscal${d.pedidos_originais ? ', ' + d.pedidos_originais + ' pedido(s) original(is)' : ''}${d.outros_arquivos ? ' e ' + d.outros_arquivos + ' anexo(s)' : ''} · tamanho aproximado ${mb((d.tamanho_banco || 0) + (d.tamanho_arquivos || 0))}`;
   } catch (e) { el.textContent = ''; }
 }
 window.carregarInfoBackup = carregarInfoBackup;
@@ -13034,6 +13042,8 @@ window.pdvToggleOcultarProd=pdvToggleOcultarProd; window.pdvFecharCliForm=pdvFec
 async function imprimirPedido(id) {
   try {
     const p = await api('/pedidos/' + id);
+    // Pedido importado: abre o arquivo ORIGINAL (cópia perfeita do sistema de vendas)
+    if (p.arquivo_original) { window.open(API + '/pedidos/' + id + '/arquivo-original', '_blank'); return; }
     let emp = window.empresaDados;
     if (!emp) {
       try {
