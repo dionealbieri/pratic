@@ -47,10 +47,12 @@
         </table></div>
         <div id="cot-somente-leitura" style="display:none;margin-top:12px;font-size:13px;color:var(--muted);background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:10px;padding:10px 12px"></div>
         <div id="cot-form" style="margin-top:12px;background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:10px;padding:12px">
-          <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Use quando a caixa for diferente da cadastrada no produto (ex.: caixa montada para caber o pedido todo) ou quando o produto não tem embalagem cadastrada. Se escolher um item, o lançamento <strong>substitui</strong> o cálculo automático dele. Lance uma linha para cada tamanho de caixa.</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Use quando a caixa for diferente da cadastrada no produto (ex.: caixa montada para caber o pedido todo) ou quando o produto não tem embalagem cadastrada.
+            <strong>Marque os itens que vão dentro desta caixa</strong> — pode marcar vários (ex.: 100 tampas de cada modelo numa caixa só). Os itens marcados deixam de ser calculados pelo cadastro. Sem nenhum item marcado, a caixa entra como volume extra. Lance uma linha para cada tamanho de caixa.</div>
           <div class="form-grid" style="grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;align-items:end">
-            <div class="form-group" style="grid-column:span 2;min-width:0"><label>Item</label><select id="cot-item" style="width:100%"></select></div>
-            <div class="form-group" style="grid-column:span 4;min-width:0"><label>Descrição <span style="color:var(--muted);font-weight:400">(opcional)</span></label><input id="cot-desc" placeholder="Ex.: caixa do fornecedor, fardo..." style="width:100%"></div>
+            <div class="form-group" style="grid-column:1/-1;min-width:0"><label>Itens nesta caixa</label>
+              <div id="cot-item" style="display:flex;flex-wrap:wrap;gap:6px"></div></div>
+            <div class="form-group" style="grid-column:1/-1;min-width:0"><label>Descrição <span style="color:var(--muted);font-weight:400">(opcional)</span></label><input id="cot-desc" placeholder="Ex.: caixa única com as tampas, caixa do fornecedor, fardo..." style="width:100%"></div>
             <div class="form-group" style="min-width:0"><label>Qtd. caixas</label><input type="number" id="cot-qtd" min="1" step="1" value="1" style="width:100%"></div>
             <div class="form-group" style="min-width:0"><label>Comp. (cm)</label><input type="number" id="cot-c" min="0" step="0.1" style="width:100%"></div>
             <div class="form-group" style="min-width:0"><label>Larg. (cm)</label><input type="number" id="cot-l" min="0" step="0.1" style="width:100%"></div>
@@ -94,8 +96,10 @@
     }).join('') || '<tr><td colspan="6" style="text-align:center;color:var(--muted)">Pedido sem itens</td></tr>';
     const nomeItem = {};
     (d.itens || []).forEach(it => { nomeItem[it.item_id] = it.descricao; });
+    const nomesDe = m => { const ids = (m.itens_ids && m.itens_ids.length) ? m.itens_ids : (m.pedido_item_id ? [m.pedido_item_id] : []);
+      return ids.length ? ids.map(i => e(nomeItem[i] || 'Item')).join('<br>') : '<span style="color:var(--muted)">(volume extra, sem item)</span>'; };
     document.getElementById('cot-manuais').innerHTML = (d.manuais || []).map(m => `<tr>
-        <td>${m.pedido_item_id ? e(nomeItem[m.pedido_item_id] || 'Item') : '<span style="color:var(--muted)">(sem item)</span>'}${m.descricao ? `<div style="font-size:11px;color:var(--muted)">${e(m.descricao)}</div>` : ''}</td>
+        <td>${nomesDe(m)}${m.descricao ? `<div style="font-size:11px;color:var(--muted)">${e(m.descricao)}</div>` : ''}</td>
         <td><strong>${n(m.qtd_caixas, 0)}</strong></td><td>${medidas(m.comprimento, m.largura, m.altura)}</td>
         <td>${n(m.peso_caixa)} kg</td><td>${n(m.peso_total)} kg</td><td>${n(m.cubagem_m3, 3)}</td>
         <td style="text-align:right"><button class="btn btn-sm btn-secondary cot-del" title="Excluir lançamento por ${e(m.usuario || '')}" onclick="cotExcluirVolume(${m.id})">🗑</button></td></tr>`).join('')
@@ -107,15 +111,17 @@
       ? '✅ Embalagem completa. As caixas são informadas pelo Estoque/Expedição.'
       : '⏳ A embalagem ainda está sendo informada pelo Estoque/Expedição. O pedido é liberado para o frete quando estiver completa.';
     document.querySelectorAll('#cot-manuais .cot-del').forEach(b => { b.style.display = podeEditar ? '' : 'none'; });
-    const sel = document.getElementById('cot-item');
-    const atual = sel.value;
-    sel.innerHTML = '<option value="">— Sem item (volume extra) —</option>' +
-      (d.itens || []).map(it => `<option value="${it.item_id}">${e(it.descricao)}${it.origem === 'sem_dados' ? ' ⚠' : ''}</option>`).join('');
-    if (atual) sel.value = atual;
-    else {
-      const semDados = (d.itens || []).find(it => it.origem === 'sem_dados');
-      if (semDados) sel.value = String(semDados.item_id);
-    }
+    // Itens da caixa: marcar um ou vários (mantém o que já estava marcado ao recarregar)
+    const box = document.getElementById('cot-item');
+    const marcados = new Set([...box.querySelectorAll('input:checked')].map(c => +c.value));
+    const primeiraVez = !box.dataset.pronto;
+    box.innerHTML = (d.itens || []).map(it => {
+      const ck = marcados.has(it.item_id) || (primeiraVez && !marcados.size && it.origem === 'sem_dados');
+      return `<label style="display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;cursor:pointer;background:var(--surface)">
+        <input type="checkbox" value="${it.item_id}" ${ck ? 'checked' : ''} style="width:15px;height:15px;accent-color:var(--accent)">
+        ${e(it.descricao)}${it.origem === 'sem_dados' ? ' <span style="color:var(--warn)">⚠</span>' : it.origem === 'manual' ? ' <span style="color:var(--muted)">(já tem caixa)</span>' : ''}</label>`;
+    }).join('') || '<span style="font-size:12px;color:var(--muted)">Pedido sem itens</span>';
+    box.dataset.pronto = '1';
   }
 
   async function recarregar() {
@@ -130,6 +136,7 @@
     ['cot-desc', 'cot-c', 'cot-l', 'cot-a', 'cot-p'].forEach(i => { document.getElementById(i).value = ''; });
     document.getElementById('cot-qtd').value = 1;
     document.getElementById('cot-item').innerHTML = '';
+    delete document.getElementById('cot-item').dataset.pronto;
     try {
       await recarregar();
       document.getElementById('modal-cotacao').classList.add('open');
@@ -139,7 +146,7 @@
   window.cotLancarVolume = async function () {
     const v = id => parseFloat(String(document.getElementById(id).value || '0').replace(',', '.')) || 0;
     const body = {
-      pedido_item_id: document.getElementById('cot-item').value ? +document.getElementById('cot-item').value : null,
+      pedido_itens_ids: [...document.querySelectorAll('#cot-item input:checked')].map(c => +c.value),
       descricao: document.getElementById('cot-desc').value.trim(),
       qtd_caixas: v('cot-qtd'), comprimento: v('cot-c'), largura: v('cot-l'), altura: v('cot-a'), peso_caixa: v('cot-p'),
     };
@@ -147,7 +154,7 @@
       await chamar(`/pedidos/${cotPedidoId}/volumes`, 'POST', body);
       ['cot-desc', 'cot-c', 'cot-l', 'cot-a', 'cot-p'].forEach(i => { document.getElementById(i).value = ''; });
       document.getElementById('cot-qtd').value = 1;
-      document.getElementById('cot-item').value = '';
+      document.querySelectorAll('#cot-item input').forEach(c => { c.checked = false; });
       await recarregar();
     } catch (err) { alert(err.message); }
   };
