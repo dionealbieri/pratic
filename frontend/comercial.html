@@ -1249,7 +1249,7 @@ window.addEventListener('resize', mpFecharMenu);
 function mpCelPedido(it) {
   if (it.t === 'r') { const r = it.o; return `<strong>${esc(r.numero_pedido)}</strong><div style="font-size:11px;color:var(--accent2);font-weight:700">REMESSA ${r.numero} · parcial</div>`; }
   const p = it.o;
-  return `<strong>${esc(p.numero_pedido)}</strong>${mpSeloNovo(p)}` + (Number(p.origem_estoque_cliente) ? `<div style="font-size:11px;color:var(--accent2)">🏷️ entrega do estoque do cliente</div>` : '')
+  return `<span style="white-space:nowrap"><strong>${esc(p.numero_pedido)}</strong>${mpSeloNovo(p)}</span>` + (Number(p.origem_estoque_cliente) ? `<div style="font-size:11px;color:var(--accent2)">🏷️ entrega do estoque do cliente</div>` : '')
     + (mpTemRemessa(p) && (mpDados.restante || {})[String(p.id)] !== undefined ? `<div style="font-size:11px;color:var(--muted)">falta enviar ${fmtNum((mpDados.restante || {})[String(p.id)])}</div>` : '');
 }
 const mpSeloNovo = p => Number(p.cliente_novo) ? ' <span class="mp-novo" title="Cliente novo: primeiro pedido dele">NOVO</span>' : '';
@@ -1507,7 +1507,7 @@ async function mpAbrirFicha(cid) {
     <div class="table-wrap"><div style="overflow-x:auto"><table>
       <thead><tr><th>Pedido</th><th>Lançado em</th><th>Etapa</th><th>NF</th><th>Valor</th><th></th></tr></thead>
       <tbody>${(mpFicha.pedidos || []).map(p => `<tr>
-        <td><strong>${esc(p.numero_pedido)}</strong>${mpSeloNovo(p)}${Number(p.origem_estoque_cliente) ? '<div style="font-size:11px;color:var(--accent2)">🏷️ entrega do estoque</div>' : ''}</td>
+        <td><span style="white-space:nowrap"><strong>${esc(p.numero_pedido)}</strong>${mpSeloNovo(p)}</span>${Number(p.origem_estoque_cliente) ? '<div style="font-size:11px;color:var(--accent2)">🏷️ entrega do estoque</div>' : ''}</td>
         <td>${fmtDate(String(p.created_at || '').slice(0, 10))}</td>
         <td><span class="pill ${STATUS_PILL_PEDIDO[p.status] || ''}">${STATUS_LABEL_PEDIDO[p.status] || esc(p.status)}</span></td>
         <td>${esc(p.nota_fiscal || '—')}</td><td>${fmtBRL(p.valor_total)}</td>
