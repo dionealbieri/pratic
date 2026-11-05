@@ -106,6 +106,17 @@ def _vendedor_desde(conn) -> str:
     return v if len(v) == 10 else ""
 
 
+# Cliente novo = este é o PRIMEIRO pedido do cliente no sistema (entregas do estoque do
+# cliente não contam). O selo aparece só nesse pedido; do segundo em diante, não.
+def _sql_cliente_novo(a: str = "p") -> str:
+    return f"""(CASE WHEN COALESCE({a}.origem_estoque_cliente,0) = 0 AND NOT EXISTS (
+        SELECT 1 FROM pedidos px WHERE px.cliente_id = {a}.cliente_id AND px.id != {a}.id
+          AND COALESCE(px.origem_estoque_cliente,0) = 0
+          AND (COALESCE(px.created_at,'') < COALESCE({a}.created_at,'')
+               OR (COALESCE(px.created_at,'') = COALESCE({a}.created_at,'') AND px.id < {a}.id))
+    ) THEN 1 ELSE 0 END)"""
+
+
 SQL_VALOR_PEDIDO = """(
     COALESCE((SELECT SUM(COALESCE(it.quantidade,0) * COALESCE(it.valor_unitario,0) - COALESCE(it.desconto,0))
               FROM pedidos_itens it WHERE it.pedido_id = p.id), 0)
@@ -1401,7 +1412,8 @@ def listar_pedidos(status: Optional[str] = None, cliente_id: Optional[int] = Non
                COUNT(CASE WHEN ec.tipo = 'revenda' AND (i.status IS NULL OR i.status != 'entregue') THEN 1 END) as revenda_pendentes,
                GROUP_CONCAT(DISTINCT pr.marca) as marcas,
                julianday(p.prazo_entrega) - julianday('now') as dias_restantes,
-               uv.nome as vendedor_usuario_nome
+               uv.nome as vendedor_usuario_nome,
+               """ + _sql_cliente_novo('p') + """ as cliente_novo
         FROM pedidos p
         JOIN pedidos_clientes c ON p.cliente_id = c.id
         LEFT JOIN usuarios uv ON uv.id = p.vendedor_usuario_id
@@ -1681,7 +1693,9 @@ def _prazos_parados(conn) -> dict:
     vermelho = ler("prazo_vermelho_dias", 4)
     if vermelho < amarelo:
         vermelho = amarelo
-    return {"amarelo": amarelo, "vermelho": vermelho}
+    return {"amarelo": amarelo, "vermelho": vermelho,
+            "cotacao_vencida": max(1, ler("cotacao_vencida_dias", 3)),
+            "retirada_alerta": max(1, ler("retirada_alerta_dias", 15))}
 
 
 @router.get("/prazos-parados")
@@ -2122,7 +2136,15 @@ def meus_pedidos(current_user: dict = Depends(get_current_user)):
         rows = conn.execute(f"""
             SELECT p.id, p.numero_pedido, p.status, p.status_desde, p.prazo_entrega,
                    p.transportadora, p.frete, p.previsao_entrega, p.retirada_prevista,
-                   p.cotacao_enviada_em, p.cotacao_enviada_por,
+                   p.cotacao_enviada_em, p.cotacao_enviada_por, p.cliente_id, p.created_at,
+                   COALESCE(p.para_estoque_cliente,0) AS para_estoque_cliente,
+                   {_sql_cliente_novo('p')} AS cliente_novo,
+                   (SELECT COUNT(*) FROM pedidos_itens i WHERE i.pedido_id = p.id) AS total_itens,
+                   (SELECT COUNT(*) FROM pedidos_itens i WHERE i.pedido_id = p.id AND i.status = 'entregue') AS itens_entregues,
+                   (SELECT COUNT(*) FROM pedidos_itens i LEFT JOIN estoque_produtos ep2 ON ep2.id = i.produto_id
+                      LEFT JOIN estoque_categorias ec2 ON ec2.id = ep2.categoria_id
+                     WHERE i.pedido_id = p.id AND (ec2.tipo IS NULL OR ec2.tipo != 'revenda')
+                       AND (i.qtd_produzida > 0 OR i.status IN ('em_producao','produzido','entregue'))) AS itens_iniciados,
                    p.obs_vendedor, p.nota_fiscal, p.data_despacho, p.data_entrega, p.envio_definido_em,
                    COALESCE(p.origem_estoque_cliente,0) AS origem_estoque_cliente,
                    CASE WHEN p.nf_arquivo IS NOT NULL AND p.nf_arquivo != '' THEN 1 ELSE 0 END AS tem_nf_pdf,
@@ -2170,6 +2192,301 @@ def meus_pedidos(current_user: dict = Depends(get_current_user)):
             "mostrar_desde": desde,
             "prazos": _prazos_parados(conn),
         }
+    finally:
+        conn.close()
+
+
+# ─── PORTAL DO VENDEDOR: histórico por mês, busca, "Meu mês", ficha do cliente ─
+# O que é TRABALHO (pendente) vem do /meus; o HISTÓRICO vem por mês e por página,
+# direto do servidor — a tela não precisa mais baixar todos os pedidos de uma vez.
+
+STATUS_CONCL_SQL = "('enviado','retirado','entregue')"
+SQL_DATA_CONCL = "COALESCE(NULLIF(p.data_entrega,''), NULLIF(p.data_despacho,''))"
+
+
+def _mes_ok(mes: str) -> str:
+    mes = (mes or "").strip()[:7]
+    if len(mes) == 7 and mes[4] == "-" and mes[:4].isdigit() and mes[5:].isdigit():
+        return mes
+    return datetime.date.today().strftime("%Y-%m")
+
+
+def _mes_anterior(mes: str) -> str:
+    a, m = int(mes[:4]), int(mes[5:7])
+    return f"{a - 1}-12" if m == 1 else f"{a}-{m - 1:02d}"
+
+
+def _mes_somar(mes: str, n: int) -> str:
+    a, m = int(mes[:4]), int(mes[5:7]) - 1 + n
+    return f"{a + m // 12}-{m % 12 + 1:02d}"
+
+
+def _campos_pedido_vendedor() -> str:
+    return f"""p.id, p.numero_pedido, p.status, p.status_desde, p.prazo_entrega, p.transportadora, p.frete,
+        p.previsao_entrega, p.retirada_prevista, p.cotacao_enviada_em, p.obs_vendedor, p.nota_fiscal,
+        p.data_despacho, p.data_entrega, p.created_at, p.cliente_id,
+        COALESCE(p.origem_estoque_cliente,0) AS origem_estoque_cliente,
+        COALESCE(p.para_estoque_cliente,0) AS para_estoque_cliente,
+        COALESCE(p.revenda_bloqueado,0) AS revenda_bloqueado,
+        CASE WHEN p.nf_arquivo IS NOT NULL AND p.nf_arquivo != '' THEN 1 ELSE 0 END AS tem_nf_pdf,
+        c.razao_social AS cliente_nome, c.nome_fantasia,
+        CAST(julianday('now','localtime') - julianday(p.status_desde) AS INTEGER) AS dias_na_etapa,
+        julianday(p.prazo_entrega) - julianday('now') AS dias_restantes,
+        {SQL_VALOR_PEDIDO} AS valor_total,
+        {_sql_cliente_novo('p')} AS cliente_novo,
+        (SELECT COUNT(*) FROM pedidos_itens i WHERE i.pedido_id = p.id) AS total_itens,
+        (SELECT COUNT(*) FROM pedidos_itens i WHERE i.pedido_id = p.id AND i.status = 'entregue') AS itens_entregues,
+        (SELECT COUNT(*) FROM pedidos_itens i WHERE i.pedido_id = p.id
+            AND (i.qtd_produzida > 0 OR i.status IN ('em_producao','produzido','entregue'))) AS itens_iniciados"""
+
+
+@router.get("/meus/historico")
+def meus_historico(modo: str = "todos", mes: str = "", status: str = "", pagina: int = 1, por_pagina: int = 15,
+                   current_user: dict = Depends(get_current_user)):
+    """modo=concluidos → concluídos no mês (data de saída/entrega);
+    modo=todos → lançados no mês, ou mes=3m: últimos 3 meses (com resumo por mês).
+    Pedidos mais antigos que isso ficam no 'arquivo': escolhendo o mês ou pela busca."""
+    uid = current_user["id"]
+    pagina = max(1, int(pagina or 1))
+    por_pagina = min(100, max(5, int(por_pagina or 15)))
+    conn = get_conn()
+    try:
+        if modo == "concluidos":
+            mes = _mes_ok(mes)
+            data_ref = SQL_DATA_CONCL
+            where = f"p.vendedor_usuario_id = ? AND p.status IN {STATUS_CONCL_SQL} AND substr({data_ref},1,7) = ?"
+            params = [uid, mes]
+        else:
+            data_ref = "date(p.created_at)"
+            if (mes or "3m") == "3m":
+                ini = _mes_somar(datetime.date.today().strftime("%Y-%m"), -2) + "-01"
+                where = "p.vendedor_usuario_id = ? AND date(p.created_at) >= ?"
+                params = [uid, ini]
+                mes = "3m"
+            else:
+                mes = _mes_ok(mes)
+                where = "p.vendedor_usuario_id = ? AND substr(p.created_at,1,7) = ?"
+                params = [uid, mes]
+            if status:
+                where += " AND COALESCE(p.status,'aberto') = ?"
+                params.append(status)
+        base = f"FROM pedidos p JOIN pedidos_clientes c ON c.id = p.cliente_id WHERE {where}"
+        grupos = [dict(r) for r in conn.execute(f"""
+            SELECT substr({data_ref},1,7) AS mes, COUNT(*) AS qtd, SUM({SQL_VALOR_PEDIDO}) AS valor
+            {base} GROUP BY substr({data_ref},1,7) ORDER BY 1 DESC""", params).fetchall()]
+        total = sum(g["qtd"] for g in grupos)
+        itens = [dict(r) for r in conn.execute(f"""
+            SELECT {_campos_pedido_vendedor()}, substr({data_ref},1,10) AS data_ref
+            {base} ORDER BY {data_ref} DESC, p.id DESC LIMIT ? OFFSET ?""",
+            params + [por_pagina, (pagina - 1) * por_pagina]).fetchall()]
+        remessas = []
+        if modo == "concluidos":
+            try:
+                from rotas.remessas import _listar_remessas
+                remessas = _listar_remessas(conn, """p.vendedor_usuario_id = ? AND r.status IN ('enviado','retirado')
+                    AND substr(COALESCE(r.data_despacho, r.concluido_em, r.criado_em),1,7) = ?""", (uid, mes))
+            except Exception:
+                remessas = []
+        return {"modo": modo, "mes": mes, "pagina": pagina, "por_pagina": por_pagina, "total": total,
+                "valor_total": sum((g["valor"] or 0) for g in grupos), "grupos": grupos,
+                "itens": itens, "remessas": remessas}
+    finally:
+        conn.close()
+
+
+@router.get("/meus/busca")
+def meus_busca(q: str = "", current_user: dict = Depends(get_current_user)):
+    """Busca do topo do portal: nº do pedido, cliente ou NF, em QUALQUER mês (inclusive o arquivo)."""
+    q = (q or "").strip()
+    if len(q) < 2:
+        return {"itens": [], "remessas": []}
+    uid = current_user["id"]
+    like = f"%{q}%"
+    conn = get_conn()
+    try:
+        itens = [dict(r) for r in conn.execute(f"""
+            SELECT {_campos_pedido_vendedor()}
+            FROM pedidos p JOIN pedidos_clientes c ON c.id = p.cliente_id
+            WHERE p.vendedor_usuario_id = ?
+              AND (p.numero_pedido LIKE ? OR c.razao_social LIKE ? OR c.nome_fantasia LIKE ? OR p.nota_fiscal LIKE ?)
+            ORDER BY p.id DESC LIMIT 60""", (uid, like, like, like, like)).fetchall()]
+        try:
+            from rotas.remessas import _listar_remessas
+            remessas = _listar_remessas(conn, """p.vendedor_usuario_id = ? AND r.status != 'cancelada'
+                AND (p.numero_pedido LIKE ? OR c.razao_social LIKE ? OR r.nota_fiscal LIKE ?)""", (uid, like, like, like))[:30]
+        except Exception:
+            remessas = []
+        return {"itens": itens, "remessas": remessas}
+    finally:
+        conn.close()
+
+
+def _numeros_mes(conn, uid, mes: str) -> dict:
+    """Vendido (lançado), produzido, faturado (saiu) e clientes novos de um vendedor no mês."""
+    v = conn.execute(f"""SELECT COUNT(*) AS qtd, COALESCE(SUM({SQL_VALOR_PEDIDO}),0) AS valor,
+                                COALESCE(SUM({_sql_cliente_novo('p')}),0) AS novos
+                         FROM pedidos p WHERE p.vendedor_usuario_id = ? AND COALESCE(p.origem_estoque_cliente,0) = 0
+                           AND substr(p.created_at,1,7) = ?""", (uid, mes)).fetchone()
+    pr = conn.execute(f"""SELECT COUNT(*) AS qtd, COALESCE(SUM({SQL_VALOR_PEDIDO}),0) AS valor FROM pedidos p
+                          WHERE p.vendedor_usuario_id = ? AND COALESCE(p.origem_estoque_cliente,0) = 0
+                            AND p.id IN (SELECT h.pedido_id FROM pedidos_status_hist h
+                                         WHERE h.status IN ('produzido','em_estoque') AND substr(h.em,1,7) = ?)""",
+                       (uid, mes)).fetchone()
+    f = conn.execute(f"""SELECT COUNT(*) AS qtd, COALESCE(SUM({SQL_VALOR_PEDIDO}),0) AS valor FROM pedidos p
+                         WHERE p.vendedor_usuario_id = ? AND p.status IN {STATUS_CONCL_SQL}
+                           AND substr({SQL_DATA_CONCL},1,7) = ?""", (uid, mes)).fetchone()
+    return {"mes": mes, "vendido": {"qtd": v["qtd"], "valor": v["valor"]}, "clientes_novos": v["novos"],
+            "produzido": {"qtd": pr["qtd"], "valor": pr["valor"]}, "faturado": {"qtd": f["qtd"], "valor": f["valor"]}}
+
+
+@router.get("/meus/mes")
+def meu_mes(mes: str = "", current_user: dict = Depends(get_current_user)):
+    """Card 'Meu mês' do vendedor: números do mês e do mês anterior, e os clientes novos."""
+    mes = _mes_ok(mes)
+    uid = current_user["id"]
+    conn = get_conn()
+    try:
+        novos = [dict(r) for r in conn.execute(f"""
+            SELECT p.id, p.numero_pedido, p.created_at, p.status, p.cliente_id, c.razao_social AS cliente_nome,
+                   {SQL_VALOR_PEDIDO} AS valor_total
+            FROM pedidos p JOIN pedidos_clientes c ON c.id = p.cliente_id
+            WHERE p.vendedor_usuario_id = ? AND substr(p.created_at,1,7) = ? AND {_sql_cliente_novo('p')} = 1
+            ORDER BY p.created_at DESC""", (uid, mes)).fetchall()]
+        return {"atual": _numeros_mes(conn, uid, mes), "anterior": _numeros_mes(conn, uid, _mes_anterior(mes)),
+                "novos": novos}
+    finally:
+        conn.close()
+
+
+@router.get("/clientes/{cid}/ficha")
+def ficha_cliente(cid: int, current_user: dict = Depends(get_current_user)):
+    """Histórico do cliente: pedidos, totais e o estoque guardado. O vendedor vê só os pedidos dele."""
+    conn = get_conn()
+    try:
+        cli = conn.execute("SELECT * FROM pedidos_clientes WHERE id=?", (cid,)).fetchone()
+        if not cli:
+            raise HTTPException(404, "Cliente não encontrado")
+        where, params = "p.cliente_id = ?", [cid]
+        if current_user.get("role") == "comercial":
+            where += " AND p.vendedor_usuario_id = ?"
+            params.append(current_user["id"])
+        peds = [dict(r) for r in conn.execute(f"""
+            SELECT {_campos_pedido_vendedor()}, uv.nome AS vendedor_nome
+            FROM pedidos p JOIN pedidos_clientes c ON c.id = p.cliente_id
+            LEFT JOIN usuarios uv ON uv.id = p.vendedor_usuario_id
+            WHERE {where} ORDER BY p.created_at DESC, p.id DESC LIMIT 300""", params).fetchall()]
+        vendas = [p for p in peds if not p["origem_estoque_cliente"]]
+        datas = sorted(str(p["created_at"] or "")[:10] for p in vendas if p["created_at"])
+        total = sum(p["valor_total"] or 0 for p in vendas)
+        estoque = []
+        try:
+            estoque = [dict(r) for r in conn.execute("""
+                SELECT descricao, produto_id, SUM(quantidade) AS saldo FROM estoque_cliente_mov
+                WHERE cliente_id = ? GROUP BY produto_id, descricao HAVING SUM(quantidade) > 0
+                ORDER BY descricao""", (cid,)).fetchall()]
+        except Exception:
+            pass
+        c = dict(cli)
+        return {"cliente": {k: c.get(k) for k in ("id", "razao_social", "nome_fantasia", "cnpj", "cidade", "uf",
+                                                    "telefone", "email", "contato")},
+                "resumo": {"pedidos": len(vendas), "valor_total": total, "ticket_medio": (total / len(vendas)) if vendas else 0,
+                           "primeiro": datas[0] if datas else None, "ultimo": datas[-1] if datas else None},
+                "pedidos": peds, "estoque": estoque}
+    finally:
+        conn.close()
+
+
+@router.get("/clientes-novos")
+def clientes_novos(mes: str = "", current_user: dict = Depends(get_current_user)):
+    """Painel do Gestor: clientes que fizeram o PRIMEIRO pedido no mês, por vendedor, e a série dos últimos 6 meses."""
+    if current_user.get("role") != "gestor" and not verificar_permissao("pedidos", "ver", current_user):
+        raise HTTPException(403, "Sem permissão")
+    mes = _mes_ok(mes)
+    so_meus = current_user.get("role") == "comercial"
+    filtro = " AND p.vendedor_usuario_id = ?" if so_meus else ""
+    extra = [current_user["id"]] if so_meus else []
+    conn = get_conn()
+    try:
+        lista = [dict(r) for r in conn.execute(f"""
+            SELECT p.id, p.numero_pedido, p.created_at, p.status, p.cliente_id, c.razao_social AS cliente_nome,
+                   c.cidade, c.uf, COALESCE(uv.nome, p.vendedor, '—') AS vendedor_nome, {SQL_VALOR_PEDIDO} AS valor_total
+            FROM pedidos p JOIN pedidos_clientes c ON c.id = p.cliente_id
+            LEFT JOIN usuarios uv ON uv.id = p.vendedor_usuario_id
+            WHERE substr(p.created_at,1,7) = ? AND {_sql_cliente_novo('p')} = 1 {filtro}
+            ORDER BY p.created_at DESC""", [mes] + extra).fetchall()]
+        por_vendedor = {}
+        for x in lista:
+            v = por_vendedor.setdefault(x["vendedor_nome"], {"vendedor": x["vendedor_nome"], "qtd": 0, "valor": 0})
+            v["qtd"] += 1
+            v["valor"] += x["valor_total"] or 0
+        ini = _mes_somar(mes, -5)
+        serie_rows = {r["mes"]: r["qtd"] for r in conn.execute(f"""
+            SELECT substr(p.created_at,1,7) AS mes, COUNT(*) AS qtd FROM pedidos p
+            WHERE substr(p.created_at,1,7) BETWEEN ? AND ? AND {_sql_cliente_novo('p')} = 1 {filtro}
+            GROUP BY 1""", [ini, mes] + extra).fetchall()}
+        serie = [{"mes": _mes_somar(ini, k), "qtd": serie_rows.get(_mes_somar(ini, k), 0)} for k in range(6)]
+        return {"mes": mes, "clientes": lista, "por_vendedor": sorted(por_vendedor.values(), key=lambda v: -v["qtd"]),
+                "serie": serie}
+    finally:
+        conn.close()
+
+
+# ─── LIMPEZA DE PEDIDOS ANTIGOS (Gestor) ─────────────────────────────────────
+# Pedidos de antes do sistema que ficaram parados no meio do fluxo: o Gestor marca em lote como entregues.
+
+class LimpezaIn(BaseModel):
+    ids: List[int]
+    data_entrega: Optional[str] = ""
+
+
+@router.get("/limpeza/candidatos")
+def limpeza_candidatos(antes: str = "", current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") != "gestor":
+        raise HTTPException(403, "Só o Gestor faz a limpeza de pedidos antigos")
+    conn = get_conn()
+    try:
+        antes = (antes or "").strip()[:10] or _vendedor_desde(conn) or datetime.date.today().isoformat()
+        rows = conn.execute(f"""
+            SELECT p.id, p.numero_pedido, p.status, p.created_at, p.status_desde, c.razao_social AS cliente_nome,
+                   COALESCE(uv.nome, p.vendedor, '—') AS vendedor_nome, {SQL_VALOR_PEDIDO} AS valor_total,
+                   CAST(julianday('now','localtime') - julianday(p.status_desde) AS INTEGER) AS dias_na_etapa
+            FROM pedidos p JOIN pedidos_clientes c ON c.id = p.cliente_id
+            LEFT JOIN usuarios uv ON uv.id = p.vendedor_usuario_id
+            WHERE COALESCE(p.status,'aberto') NOT IN ('enviado','retirado','entregue','em_estoque')
+              AND date(p.created_at) < ?
+            ORDER BY p.created_at ASC LIMIT 1000""", (antes,)).fetchall()
+        return {"antes": antes, "pedidos": [dict(r) for r in rows]}
+    finally:
+        conn.close()
+
+
+@router.post("/limpeza/marcar-entregue")
+def limpeza_marcar_entregue(body: LimpezaIn, current_user: dict = Depends(get_current_user)):
+    if current_user.get("role") != "gestor":
+        raise HTTPException(403, "Só o Gestor faz a limpeza de pedidos antigos")
+    data_ent = (body.data_entrega or "").strip()[:10] or datetime.date.today().isoformat()
+    conn = get_conn()
+    try:
+        feitos = 0
+        for pid in body.ids[:1000]:
+            ped = conn.execute("SELECT status FROM pedidos WHERE id=?", (pid,)).fetchone()
+            if not ped or (ped["status"] or "aberto") in ("enviado", "retirado", "entregue", "em_estoque"):
+                continue
+            conn.execute("UPDATE pedidos SET status='entregue', data_entrega=? WHERE id=?", (data_ent, pid))
+            _marcar_usuario_hist(conn, pid, current_user)
+            conn.execute("UPDATE pedidos_itens SET status='entregue' WHERE pedido_id=?", (pid,))
+            try:
+                conn.execute("""UPDATE pedidos_remessas SET status='cancelada', status_desde=datetime('now','localtime')
+                                WHERE pedido_id=? AND status IN ('aguardando_cliente','aguardando_nf','aguardando_retirada')""", (pid,))
+            except Exception:
+                pass
+            feitos += 1
+        if feitos:
+            conn.execute("""INSERT INTO auditoria (usuario, acao, entidade, entidade_id, descricao, valor_anterior, valor_novo)
+                            VALUES (?, 'limpeza_pedidos', 'pedidos', NULL, ?, '', 'entregue')""",
+                         (_nome_usuario(current_user), f"{feitos} pedido(s) antigo(s) marcados como entregues na limpeza"))
+        conn.commit()
+        return {"mensagem": f"{feitos} pedido(s) marcados como entregues.", "feitos": feitos}
     finally:
         conn.close()
 
