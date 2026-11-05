@@ -39,6 +39,7 @@ class RemessaIn(BaseModel):
     previsao_entrega: Optional[str] = ""
     retirada_prevista: Optional[str] = ""
     obs_vendedor: Optional[str] = ""
+    cotacao_numero: Optional[str] = ""     # nº da cotação da transportadora
 
 
 class CotacaoRemessaIn(BaseModel):
@@ -311,6 +312,8 @@ def criar_remessa(pid: int, body: RemessaIn, current_user: dict = Depends(get_cu
                      (body.retirada_prevista or "").strip() if modo == "retirada" else None,
                      (body.obs_vendedor or "").strip(), _nome_usuario(current_user)))
         rid = cur.lastrowid
+        if modo == "transportadora" and (body.cotacao_numero or "").strip():
+            cur.execute("UPDATE pedidos_remessas SET cotacao_numero=? WHERE id=?", (body.cotacao_numero.strip()[:60], rid))
         for it in itens:
             cur.execute("INSERT INTO pedidos_remessa_itens (remessa_id, pedido_item_id, quantidade) VALUES (?,?,?)",
                         (rid, it.pedido_item_id, it.quantidade))

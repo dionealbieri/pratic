@@ -1623,6 +1623,7 @@ class DefinirEnvioIn(BaseModel):
     previsao_entrega: Optional[str] = ""
     retirada_prevista: Optional[str] = ""
     obs_vendedor: Optional[str] = ""
+    cotacao_numero: Optional[str] = None   # nº da cotação da transportadora
 
 
 class RetiradaIn(BaseModel):
@@ -2207,7 +2208,7 @@ def meus_pedidos(current_user: dict = Depends(get_current_user)):
         rows = conn.execute(f"""
             SELECT p.id, p.numero_pedido, p.status, p.status_desde, p.prazo_entrega,
                    p.transportadora, p.frete, p.previsao_entrega, p.retirada_prevista,
-                   p.cotacao_enviada_em, p.cotacao_enviada_por, p.cliente_id, p.created_at,
+                   p.cotacao_enviada_em, p.cotacao_enviada_por, p.cotacao_numero, p.cliente_id, p.created_at,
                    COALESCE(p.para_estoque_cliente,0) AS para_estoque_cliente,
                    {_sql_cliente_novo('p')} AS cliente_novo,
                    (SELECT COUNT(*) FROM pedidos_itens i WHERE i.pedido_id = p.id) AS total_itens,
@@ -2295,7 +2296,7 @@ def _mes_somar(mes: str, n: int) -> str:
 
 def _campos_pedido_vendedor() -> str:
     return f"""p.id, p.numero_pedido, p.status, p.status_desde, p.prazo_entrega, p.transportadora, p.frete,
-        p.previsao_entrega, p.retirada_prevista, p.cotacao_enviada_em, p.obs_vendedor, p.nota_fiscal,
+        p.previsao_entrega, p.retirada_prevista, p.cotacao_enviada_em, p.cotacao_numero, p.obs_vendedor, p.nota_fiscal,
         p.data_despacho, p.data_entrega, p.created_at, p.cliente_id,
         COALESCE(p.origem_estoque_cliente,0) AS origem_estoque_cliente,
         COALESCE(p.para_estoque_cliente,0) AS para_estoque_cliente,
@@ -3108,6 +3109,8 @@ def _definir_envio(id: int, body: DefinirEnvioIn, current_user: dict, _autorizan
                             WHERE id=?""",
                          (transp, float(body.frete or 0), (body.previsao_entrega or "").strip(),
                           (body.obs_vendedor or "").strip(), usuario, id))
+            if body.cotacao_numero is not None:
+                conn.execute("UPDATE pedidos SET cotacao_numero=? WHERE id=?", ((body.cotacao_numero or "").strip()[:60], id))
             novo = "aguardando_nf"
         elif modo == "retirada":
             conn.execute("""UPDATE pedidos SET status='aguardando_retirada', transportadora=NULL, frete=0,
@@ -3172,10 +3175,11 @@ def enviar_cotacao(id: int, body: DefinirEnvioIn, current_user: dict = Depends(g
         if not cad:
             raise HTTPException(400, "Escolha uma transportadora cadastrada.")
         conn.execute("""UPDATE pedidos SET transportadora=?, frete=?, previsao_entrega=?, retirada_prevista=NULL, obs_vendedor=?,
-                        cotacao_enviada_em=datetime('now','localtime'), cotacao_enviada_por=?,
+                        cotacao_numero=?, cotacao_enviada_em=datetime('now','localtime'), cotacao_enviada_por=?,
                         cotacao_autorizada_em=NULL, cotacao_autorizada_por=NULL WHERE id=?""",
                      (cad["nome"], float(body.frete or 0), (body.previsao_entrega or "").strip(),
-                      (body.obs_vendedor or "").strip(), _nome_usuario(current_user), id))
+                      (body.obs_vendedor or "").strip(), (body.cotacao_numero or "").strip()[:60] or None,
+                      _nome_usuario(current_user), id))
         conn.commit()
         return {"mensagem": "Cotação registrada. Quando o cliente autorizar, clique em 'Cliente autorizou' para ir à Expedição."}
     finally:
@@ -3190,7 +3194,8 @@ def autorizar_cotacao(id: int, current_user: dict = Depends(get_current_user)):
         if not ped["cotacao_enviada_em"] or not ped["transportadora"]:
             raise HTTPException(400, "Este pedido não tem cotação enviada ao cliente.")
         body = DefinirEnvioIn(modo="transportadora", transportadora=ped["transportadora"], frete=ped["frete"] or 0,
-                              previsao_entrega=ped["previsao_entrega"] or "", obs_vendedor=ped["obs_vendedor"] or "")
+                              previsao_entrega=ped["previsao_entrega"] or "", obs_vendedor=ped["obs_vendedor"] or "",
+                              cotacao_numero=ped["cotacao_numero"])
     finally:
         conn.close()
     r = _definir_envio(id, body, current_user, True)
@@ -3209,7 +3214,7 @@ def cancelar_cotacao(id: int, current_user: dict = Depends(get_current_user)):
     conn = get_conn()
     try:
         _ped_para_cotacao(conn, id, current_user)
-        conn.execute("""UPDATE pedidos SET transportadora=NULL, frete=0, previsao_entrega=NULL,
+        conn.execute("""UPDATE pedidos SET transportadora=NULL, frete=0, previsao_entrega=NULL, cotacao_numero=NULL,
                         cotacao_enviada_em=NULL, cotacao_enviada_por=NULL WHERE id=?""", (id,))
         conn.commit()
         return {"mensagem": "Cotação cancelada; o pedido voltou para 'Aguardando você'."}
