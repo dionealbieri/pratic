@@ -1530,6 +1530,7 @@ def init_db():
     _migrar_nf_arquivo(conn)
     _migrar_remessas(conn)
     _migrar_autorizacao_frete(conn)
+    _corrigir_revenda_marcada_entregue(conn)
     conn.commit()
     conn.close()
 
@@ -2029,3 +2030,29 @@ def seed_data():
 
     conn.commit()
     conn.close()
+
+
+def _corrigir_revenda_marcada_entregue(conn):
+    """Correção (uma vez): pedido só de revenda que foi para 'Entregue' sozinho ao separar as tampas
+    (a separação marca o item como 'entregue' e o recálculo achava que o pedido tinha sido entregue).
+    Volta para 'Produzido' os que não têm saída registrada (sem NF, sem data de despacho/entrega)."""
+    if conn.execute("SELECT 1 FROM configuracoes WHERE chave='fix_revenda_entregue_v1'").fetchone():
+        return
+    try:
+        ids = [r[0] for r in conn.execute("""
+            SELECT p.id FROM pedidos p
+            WHERE p.status = 'entregue'
+              AND COALESCE(p.nota_fiscal,'') = '' AND COALESCE(p.data_despacho,'') = '' AND COALESCE(p.data_entrega,'') = ''
+              AND EXISTS (SELECT 1 FROM pedidos_itens i WHERE i.pedido_id = p.id)
+              AND NOT EXISTS (SELECT 1 FROM pedidos_itens i
+                              LEFT JOIN estoque_produtos ep ON ep.id = i.produto_id
+                              LEFT JOIN estoque_categorias ec ON ec.id = ep.categoria_id
+                              WHERE i.pedido_id = p.id AND (ec.tipo IS NULL OR ec.tipo != 'revenda'))
+        """).fetchall()]
+        for pid in ids:
+            conn.execute("UPDATE pedidos SET status='produzido' WHERE id=?", (pid,))
+        conn.execute("INSERT OR REPLACE INTO configuracoes (chave, valor, descricao) VALUES ('fix_revenda_entregue_v1', ?, 'Correção aplicada: pedidos só de revenda que viraram Entregue ao separar')",
+                     (str(len(ids)),))
+        conn.commit()
+    except Exception:
+        pass
