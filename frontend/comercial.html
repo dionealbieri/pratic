@@ -1164,7 +1164,7 @@ function renderCardsMeus() {
   const ret = ps.filter(p => p.status === 'aguardando_retirada').length + (mpDados.remessas || []).filter(r => r.status === 'aguardando_retirada').length;
   const hc = mpHist.concluidos, ht = mpHist.todos, mm = mpMesDados && mpMesDados.atual;
   const card = (a, rotulo, qtd, sub, cor, pend, valorTxt) => `<button type="button" class="mp-card${a === atual && !mpBuscando() ? ' ativo' : ''}${pend ? ' pend' : ''}" onclick="mpEscolherAba('${a}')">
-      <div class="l">${rotulo}</div><div class="v" style="color:${qtd ? cor : 'var(--muted)'}${valorTxt ? ';font-size:22px' : ''}">${valorTxt || qtd}</div><div class="s">${sub}</div></button>`;
+      <div class="l">${rotulo}</div><div class="v" style="color:${qtd ? cor : 'var(--muted)'}${valorTxt ? ';font-size:20px;white-space:nowrap' : ''}">${valorTxt || qtd}</div><div class="s">${sub}</div></button>`;
   el.className = 'mp-cards' + (mpBuscando() ? ' buscando' : '');
   el.innerHTML =
     card('voce', '⏳ Aguardando você', n('voce'), 'enviar cotação ou retirada', 'var(--danger)', n('voce') > 0) +

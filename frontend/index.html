@@ -1051,11 +1051,14 @@
 
         <div class="card">
           <div class="section-title" style="margin-top:0">💾 Fazer Backup</div>
-          <p style="font-size:13px;color:var(--muted);margin-bottom:20px;line-height:1.6">
-            Gera um arquivo <strong style="color:var(--text)">.db</strong> com todos os dados do sistema.
-            Guarde em local seguro — armazena clientes, pedidos, produção, estoque e configurações.
+          <p style="font-size:13px;color:var(--muted);margin-bottom:16px;line-height:1.6">
+            O <strong style="color:var(--text)">backup completo</strong> gera um arquivo <strong style="color:var(--text)">.zip</strong> com o banco de dados
+            (clientes, pedidos, produção, estoque e configurações) <strong style="color:var(--text)">e os PDFs das notas fiscais</strong> e anexos.
+            Guarde em local seguro.
           </p>
-          <button class="btn btn-primary" onclick="fazerBackup()" style="width:100%">⬇ Baixar Backup Agora</button>
+          <button class="btn btn-primary" onclick="fazerBackup('completo')" style="width:100%">⬇ Baixar Backup Completo (banco + notas fiscais)</button>
+          <div id="backup-info" style="margin-top:8px;font-size:12px;color:var(--muted)"></div>
+          <button class="btn btn-secondary btn-sm" onclick="fazerBackup('banco')" style="width:100%;margin-top:10px" title="Arquivo .db menor, sem os PDFs das notas fiscais">Só o banco de dados (.db, sem os PDFs)</button>
           <div style="margin-top:12px;font-size:12px;color:var(--muted)">
             💡 Recomendado: faça backup diariamente ou antes de grandes atualizações.
           </div>
@@ -1064,7 +1067,7 @@
         <div class="card">
           <div class="section-title" style="margin-top:0">📂 Restaurar Backup</div>
           <p style="font-size:13px;color:var(--muted);margin-bottom:20px;line-height:1.6">
-            Restaura o banco de dados a partir de um arquivo <strong style="color:var(--text)">.db</strong> de backup.
+            Restaura a partir do backup completo <strong style="color:var(--text)">.zip</strong> (banco + PDFs das notas) ou de um <strong style="color:var(--text)">.db</strong> (só o banco).
             <strong style="color:var(--danger)">Atenção:</strong> os dados atuais serão substituídos.
           </p>
           <div style="border:2px dashed var(--border);border-radius:10px;padding:24px;text-align:center;cursor:pointer;margin-bottom:12px"
@@ -1073,8 +1076,8 @@
                ondragleave="this.style.borderColor='var(--border)'"
                ondrop="handleRestoreDrop(event)">
             <div style="font-size:28px;margin-bottom:8px">📁</div>
-            <div style="font-size:13px;color:var(--muted)">Arraste o arquivo .db ou clique para selecionar</div>
-            <input type="file" id="restore-file" accept=".db" style="display:none" onchange="confirmarRestore(this.files[0])">
+            <div style="font-size:13px;color:var(--muted)">Arraste o arquivo .zip ou .db, ou clique para selecionar</div>
+            <input type="file" id="restore-file" accept=".zip,.db" style="display:none" onchange="confirmarRestore(this.files[0])">
           </div>
           <div id="backup-alert"></div>
         </div>
@@ -3184,7 +3187,7 @@
 
 <script src="js/cotacao.js?v=20261030-embalagem"></script>
 <script src="js/estoque-cliente.js?v=20261030-estcli"></script>
-<script src="js/app.js?v=20261105-clientesnovos"></script>
+<script src="js/app.js?v=20261105-backupnf"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');
