@@ -1650,6 +1650,14 @@ def _migrar_volumes(conn):
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pedidos_volumes_pedido ON pedidos_volumes(pedido_id)")
+    # Uma caixa lançada à mão pode levar VÁRIOS itens juntos (ex.: 100 tampas de cada modelo numa caixa só)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS pedidos_volume_itens (
+            volume_id INTEGER NOT NULL,
+            pedido_item_id INTEGER NOT NULL,
+            PRIMARY KEY (volume_id, pedido_item_id)
+        )
+    """)
     # Pedido produzido mas com revenda ainda por separar: fica bloqueado para o vendedor.
     # A flag marca o bloqueio para gerar o aviso "liberado" quando a revenda for separada.
     cols_ped = [r[1] for r in conn.execute("PRAGMA table_info(pedidos)").fetchall()]
