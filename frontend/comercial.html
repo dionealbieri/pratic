@@ -30,13 +30,30 @@
   /* cards fixos logo abaixo da barra do topo: só a lista de pedidos rola */
   .mp-cards{position:sticky;top:var(--mp-topo,70px);z-index:40;background:var(--bg);padding:10px 0;margin-top:-10px;box-shadow:0 10px 12px -10px rgba(0,0,0,.55)}
   @media (max-width:700px){.mp-cards{position:static;box-shadow:none;padding:0;margin-top:0}}
-  .mp-card{text-align:left;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px;color:var(--text);cursor:pointer;font-family:inherit;transition:border-color .15s,opacity .15s}
-  .mp-card:hover{border-color:var(--accent)}
-  .mp-card.ativo{border:2px solid var(--accent);background:rgba(240,180,41,.08);padding:11px 13px}
-  .mp-card .l{font-size:11px;letter-spacing:.8px;font-weight:700;color:var(--muted);text-transform:uppercase}
-  .mp-card.pend .l{color:var(--accent)}
-  .mp-card .v{font-family:Syne,sans-serif;font-size:28px;font-weight:800;line-height:1.2}
-  .mp-card .s{font-size:12px;color:var(--muted)}
+  /* cada card tem a sua cor (--c = R,G,B) */
+  .mp-card{position:relative;overflow:hidden;text-align:left;color:var(--text);cursor:pointer;font-family:inherit;border-radius:14px;padding:14px 16px 12px;
+    background:linear-gradient(160deg,rgba(var(--c),.16),rgba(var(--c),.03) 65%),var(--surface);border:1px solid rgba(var(--c),.35);
+    transition:transform .15s,border-color .15s,box-shadow .15s,opacity .15s}
+  .mp-card::before{content:'';position:absolute;left:0;right:0;top:0;height:3px;background:rgb(var(--c))}
+  .mp-card:hover{transform:translateY(-2px);border-color:rgba(var(--c),.8);box-shadow:0 10px 22px -14px rgba(var(--c),.9)}
+  .mp-card.ativo{border:2px solid rgb(var(--c));padding:13px 15px 11px;
+    background:linear-gradient(160deg,rgba(var(--c),.30),rgba(var(--c),.08) 70%),var(--surface);
+    box-shadow:0 0 0 3px rgba(var(--c),.18),0 12px 26px -12px rgba(var(--c),.8)}
+  .mp-card.zero{background:var(--surface);border-color:var(--border)}
+  .mp-card.zero::before{opacity:.45}
+  .mp-card.zero.ativo{border-color:rgb(var(--c))}
+  .mp-card .topo{display:flex;align-items:center;gap:8px}
+  .mp-card .ic{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;background:rgba(var(--c),.2);font-size:15px;flex:none}
+  .mp-card .l{font-size:11px;letter-spacing:.7px;font-weight:800;color:rgb(var(--c));text-transform:uppercase;line-height:1.25}
+  .mp-card.zero .l{color:var(--muted)}
+  .mp-card .v{font-family:inherit;font-size:30px;font-weight:800;line-height:1.15;margin-top:8px;color:rgb(var(--c));font-variant-numeric:tabular-nums;white-space:nowrap}
+  .mp-card .v.dinheiro{font-size:22px;margin-top:12px}
+  .mp-card.zero .v{color:var(--muted)}
+  .mp-card .s{font-size:12px;color:var(--muted);margin-top:2px;line-height:1.35}
+  .mp-card.pend::after{content:'';position:absolute;top:14px;right:14px;width:9px;height:9px;border-radius:50%;background:rgb(var(--c));animation:mpPulso 1.8s ease-out infinite}
+  @keyframes mpPulso{0%{box-shadow:0 0 0 0 rgba(var(--c),.7)}70%{box-shadow:0 0 0 9px rgba(var(--c),0)}100%{box-shadow:0 0 0 0 rgba(var(--c),0)}}
+  @media (prefers-reduced-motion: reduce){.mp-card.pend::after{animation:none}.mp-card:hover{transform:none}}
+  [data-theme="light"] .mp-card .l,[data-theme="light"] .mp-card .v{filter:brightness(.68) saturate(1.3)}
   .mp-cards.buscando .mp-card{opacity:.45}
   .mp-acoes{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
   .mp-ico{padding-left:10px!important;padding-right:10px!important;font-weight:700}
@@ -1163,18 +1180,21 @@ function renderCardsMeus() {
   const nf = ps.filter(p => p.status === 'aguardando_nf').length + (mpDados.remessas || []).filter(r => r.status === 'aguardando_nf').length;
   const ret = ps.filter(p => p.status === 'aguardando_retirada').length + (mpDados.remessas || []).filter(r => r.status === 'aguardando_retirada').length;
   const hc = mpHist.concluidos, ht = mpHist.todos, mm = mpMesDados && mpMesDados.atual;
-  const card = (a, rotulo, qtd, sub, cor, pend, valorTxt) => `<button type="button" class="mp-card${a === atual && !mpBuscando() ? ' ativo' : ''}${pend ? ' pend' : ''}" onclick="mpEscolherAba('${a}')">
-      <div class="l">${rotulo}</div><div class="v" style="color:${qtd ? cor : 'var(--muted)'}${valorTxt ? ';font-size:20px;white-space:nowrap' : ''}">${valorTxt || qtd}</div><div class="s">${sub}</div></button>`;
+  // card(aba, ícone, rótulo, quantidade, texto de baixo, cor R,G,B, piscando?, valor em R$)
+  const card = (a, ic, rotulo, qtd, sub, rgb, pend, valorTxt) => `<button type="button" style="--c:${rgb}"
+      class="mp-card${a === atual && !mpBuscando() ? ' ativo' : ''}${pend ? ' pend' : ''}${!qtd && !valorTxt ? ' zero' : ''}" onclick="mpEscolherAba('${a}')">
+      <div class="topo"><span class="ic" aria-hidden="true">${ic}</span><span class="l">${rotulo}</span></div>
+      <div class="v${valorTxt ? ' dinheiro' : ''}">${valorTxt || qtd}</div><div class="s">${sub}</div></button>`;
   el.className = 'mp-cards' + (mpBuscando() ? ' buscando' : '');
   el.innerHTML =
-    card('voce', '⏳ Aguardando você', n('voce'), 'enviar cotação ou retirada', 'var(--danger)', n('voce') > 0) +
-    card('cliente', '📨 Aguardando cliente', n('cliente'), cotVenc ? `<span style="color:var(--danger);font-weight:700">${cotVenc} vencida(s) · cobrar o cliente</span>` : 'cotação enviada', cotVenc ? 'var(--danger)' : 'var(--accent)', cotVenc > 0) +
-    card('separacao', '📦 Separação', n('separacao'), 'revenda / embalagem', 'var(--text)', false) +
-    card('producao', '🏭 Em produção', n('producao'), 'abertos e em produção', 'var(--text)', false) +
-    card('expedicao', '🧾 Com a Expedição', n('expedicao'), retAtras ? `<span style="color:var(--danger);font-weight:700">${retAtras} retirada(s) atrasada(s)</span>` : `${nf} aguardando NF · ${ret} retirada`, 'var(--accent2)', retAtras > 0) +
-    card('concluidos', '✅ Concluídos', hc ? (hc.total + (hc.remessas || []).length) : 0, 'em ' + mpNomeMes(mpConclMes || mpHoje()), 'var(--success)', false) +
-    card('todos', '📋 Todos', ht ? ht.total : 0, mpTodosMes === '3m' ? 'últimos 3 meses' : mpNomeMes(mpTodosMes), 'var(--text)', false) +
-    card('mes', '📈 Meu mês', mm ? mm.vendido.qtd : 0, mm ? `${mm.vendido.qtd} pedido(s) · ${mm.clientes_novos} cliente(s) novo(s)` : 'resumo do mês', 'var(--accent)', false, mm ? mpBRLCurto(mm.vendido.valor) : '—');
+    card('voce', '⏳', 'Aguardando você', n('voce'), 'enviar cotação ou retirada', '239,68,68', n('voce') > 0) +
+    card('cliente', '📨', 'Aguardando cliente', n('cliente'), cotVenc ? `<strong style="color:rgb(239,68,68)">${cotVenc} vencida(s) · cobrar</strong>` : 'cotação enviada', cotVenc ? '239,68,68' : '240,180,41', cotVenc > 0) +
+    card('separacao', '📦', 'Separação', n('separacao'), 'revenda / embalagem', '251,146,60', false) +
+    card('producao', '🏭', 'Em produção', n('producao'), 'abertos e em produção', '167,139,250', false) +
+    card('expedicao', '🧾', 'Com a Expedição', n('expedicao'), retAtras ? `<strong style="color:rgb(239,68,68)">${retAtras} retirada(s) atrasada(s)</strong>` : `${nf} aguardando NF · ${ret} retirada`, '96,165,250', retAtras > 0) +
+    card('concluidos', '✅', 'Concluídos', hc ? (hc.total + (hc.remessas || []).length) : 0, 'em ' + mpNomeMes(mpConclMes || mpHoje()), '52,211,153', false) +
+    card('todos', '📋', 'Todos', ht ? ht.total : 0, mpTodosMes === '3m' ? 'últimos 3 meses' : mpNomeMes(mpTodosMes), '148,163,184', false) +
+    card('mes', '📈', 'Meu mês', mm ? mm.vendido.qtd : 0, mm ? `${mm.vendido.qtd} pedido(s) · ${mm.clientes_novos} cliente(s) novo(s)` : 'resumo do mês', '45,212,191', false, mm ? mpBRLCurto(mm.vendido.valor) : '—');
 }
 
 // ── botões e menu ⋯
