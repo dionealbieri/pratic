@@ -13,7 +13,7 @@
   })();
 </script>
 <link rel="stylesheet" href="css/common.css?v=3">
-<script src="/js/cotacao.js?v=20261030-embalagem"></script>
+<script src="/js/cotacao.js?v=20261105-cotacaounica"></script>
 <script src="/js/estoque-cliente.js?v=20261030-estcli"></script>
 <style>
   body {
@@ -266,7 +266,7 @@
 
 <div class="modal-overlay" id="modal-mp-envio">
   <div class="modal" style="max-width:600px">
-    <div class="modal-title">Como este pedido vai sair?</div>
+    <div class="modal-title" id="mp-envio-titulo">Como este pedido vai sair?</div>
     <input type="hidden" id="mp-envio-id">
     <div id="mp-envio-cab" style="font-size:14px;margin-bottom:10px;background:rgba(255,255,255,0.05);padding:10px 12px;border-radius:8px;border-left:4px solid var(--accent);line-height:1.6"></div>
     <div id="mp-envio-volumes" style="font-size:13px;margin-bottom:14px"></div>
@@ -1301,10 +1301,9 @@ function mpAcoesLinha(it) {
   const p = it.o, et = mpEtapaPedido(p);
   if (et === 'voce') return mpAcoes(
     mpBtnPdf(p.id) +
-    `<button class="btn btn-sm mp-b-cot" title="Caixas, peso e cubagem para cotar o frete" onclick="abrirCotacaoPedido(${p.id})">📦 Cotação</button>` +
     `<button class="btn btn-sm mp-b-parcial" title="Enviar agora só uma parte (o resto sai depois)" onclick="mpAbrirRemessa(${p.id})">✂️ Envio parcial</button>` +
     `<button class="btn btn-sm mp-b-retira" title="O cliente vai buscar: vai direto para a Expedição" onclick="mpAbrirEnvio(${p.id},'retirada')">🙋 Cliente retira</button>` +
-    `<button class="btn btn-sm btn-primary" title="Registra a cotação do frete; o pedido espera o cliente autorizar" onclick="mpAbrirEnvio(${p.id},'transportadora')">📨 ${mpTemRemessa(p) ? 'Cotação do restante' : 'Enviar cotação'}</button>`);
+    `<button class="btn btn-sm btn-primary" title="Caixas, peso e cubagem para cotar + transportadora e valor do frete — o pedido espera o cliente autorizar" onclick="mpAbrirEnvio(${p.id},'transportadora')">📨 ${mpTemRemessa(p) ? 'Cotação do restante' : 'Cotação de frete'}</button>`);
   if (et === 'cliente') return mpAcoes(`<button class="btn btn-sm btn-primary" title="O cliente aprovou o frete: o pedido vai para a Expedição" onclick="mpAutorizarCotacao(${p.id}, '${esc(p.numero_pedido)}')">✅ Cliente autorizou</button>` + mpBtnMais('p', p.id));
   if (et === 'producao') return mpAcoes(`<button class="btn btn-sm btn-secondary" onclick="verDetalhe(${p.id})">Ver</button>` + mpBtnMais('p', p.id));
   return mpAcoes(mpBtnNf(p) + mpBtnMais('p', p.id));
@@ -1668,6 +1667,12 @@ function mpEscolherModo(modo) {
     : 'O pedido passa para <strong style="color:var(--accent)">Aguardando retirada</strong>. A Expedição lança a NF quando o cliente vier.';
   const bs = document.getElementById('mp-btn-salvar-envio');
   if (bs) bs.textContent = cotar ? '📨 Registrar cotação (aguardar cliente)' : 'Enviar para a Expedição';
+  const tt = document.getElementById('mp-envio-titulo');
+  if (tt) tt.textContent = cotar ? '📨 Cotação de frete' : modo === 'retirada' ? '🙋 Cliente retira' : 'Frete do pedido';
+  const lt = document.querySelector('#mp-campos-transportadora');
+  if (lt && !document.getElementById('mp-passo2')) lt.insertAdjacentHTML('beforebegin', '<div id="mp-passo2" style="font-weight:700;color:var(--accent);margin:4px 0 8px">② Transportadora escolhida e valor combinado</div>');
+  const p2 = document.getElementById('mp-passo2'); if (p2) p2.style.display = modo === 'transportadora' ? '' : 'none';
+  mpAtualizarPainelCot();
 }
 let mpEnvioStatus = '';
 function mpDiasDesde(dt) {
@@ -1712,9 +1717,18 @@ async function mpAbrirEnvio(id, modo) {
   document.getElementById('mp-retirada-prevista').value = p.retirada_prevista || '';
   document.getElementById('mp-obs').value = p.obs_vendedor || '';
   document.getElementById('mp-btn-voltar').style.display = ['aguardando_nf', 'aguardando_retirada'].includes(p.status) ? '' : 'none';
+  mpEnvioPainelId = id;
   mpEscolherModo(modo);
   openModal('modal-mp-envio');
-  if (typeof resumoCotacaoHTML === 'function') resumoCotacaoHTML(id, document.getElementById('mp-envio-volumes'));
+}
+// Na transportadora: painel completo (caixas, peso, cubagem e "copiar para a transportadora").
+// Na retirada: só o resumo de uma linha.
+let mpEnvioPainelId = null;
+function mpAtualizarPainelCot() {
+  const el = document.getElementById('mp-envio-volumes');
+  if (!el || !mpEnvioPainelId) return;
+  if (mpModo === 'transportadora' && typeof cotPainelEnvio === 'function') cotPainelEnvio(mpEnvioPainelId, el);
+  else if (typeof resumoCotacaoHTML === 'function') resumoCotacaoHTML(mpEnvioPainelId, el);
 }
 
 async function mpSalvarEnvio() {
