@@ -27,6 +27,9 @@
   .mp-busca input{background:transparent!important;border:0!important;color:var(--text);padding:10px 0!important;width:100%;font-size:14px;outline:none;box-shadow:none!important}
   .mp-busca button{background:none;border:0;color:var(--muted);font-size:18px;cursor:pointer;padding:4px 8px}
   .mp-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px}
+  /* cards fixos logo abaixo da barra do topo: só a lista de pedidos rola */
+  .mp-cards{position:sticky;top:var(--mp-topo,70px);z-index:40;background:var(--bg);padding:10px 0;margin-top:-10px;box-shadow:0 10px 12px -10px rgba(0,0,0,.55)}
+  @media (max-width:700px){.mp-cards{position:static;box-shadow:none;padding:0;margin-top:0}}
   .mp-card{text-align:left;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px;color:var(--text);cursor:pointer;font-family:inherit;transition:border-color .15s,opacity .15s}
   .mp-card:hover{border-color:var(--accent)}
   .mp-card.ativo{border:2px solid var(--accent);background:rgba(240,180,41,.08);padding:11px 13px}
@@ -1057,7 +1060,23 @@ function mpEscolherAba(a) {
   mpBusca = '';
   const b = document.getElementById('mp-busca'); if (b) b.value = '';
   renderCardsMeus(); renderSecoesMeus();
+  mpRolarParaLista();
 }
+// Com os cards fixos: ao trocar de card, volta para o começo da lista (logo abaixo dos cards)
+function mpRolarParaLista() {
+  const cards = document.getElementById('com-cards'), lista = document.getElementById('mp-secoes');
+  if (!cards || !lista || getComputedStyle(cards).position !== 'sticky') return;
+  const limite = cards.getBoundingClientRect().bottom + 6;
+  if (lista.getBoundingClientRect().top < limite) window.scrollBy({ top: lista.getBoundingClientRect().top - limite, behavior: 'smooth' });
+}
+// Altura da barra do topo (ela também é fixa e muda de altura conforme a largura da tela)
+function mpAjustarTopo() {
+  const t = document.querySelector('.topbar');
+  document.documentElement.style.setProperty('--mp-topo', (t ? Math.ceil(t.getBoundingClientRect().height) : 0) + 'px');
+}
+window.addEventListener('resize', mpAjustarTopo);
+document.addEventListener('DOMContentLoaded', mpAjustarTopo);
+setTimeout(mpAjustarTopo, 800);
 function mpBuscar(v) {
   mpBusca = (v || '').trim();
   mpPag.busca = 1;
@@ -1210,7 +1229,7 @@ function mpPaginar(chave, itens) {
       <button class="btn btn-sm btn-secondary" ${pg >= total ? 'disabled' : ''} onclick="mpIrPag('${chave}',1)">Próxima →</button></span>` : ''}</div>` : '';
   return { fatia, rodape };
 }
-function mpIrPag(chave, d) { mpPag[chave] = (mpPag[chave] || 1) + d; renderSecoesMeus(); }
+function mpIrPag(chave, d) { mpPag[chave] = (mpPag[chave] || 1) + d; renderSecoesMeus(); mpRolarParaLista(); }
 
 function mpTabela(titulo, sub, cab, linhas, vazio, rodape, extraTopo) {
   return `<div class="table-wrap" style="margin-bottom:18px">
