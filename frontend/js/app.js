@@ -4806,6 +4806,7 @@ async function loadTransportadora() {
     resumo.innerHTML = chip('🧾 Aguardando NF', n('aguardando_nf'), 'aguardando_nf', 'var(--accent)')
       + chip('🙋 Aguardando retirada', n('aguardando_retirada'), 'aguardando_retirada', 'var(--accent)')
       + (ehGestor ? chip('⏳ Aguardando vendedor/cliente', rows.filter(aguardVend).length + _remessasCache.filter(r => r.status === 'aguardando_cliente').length, 'aguardando_vendedor', 'var(--danger)') : '')
+      + (ehGestor ? `<button type="button" onclick="abrirLimpezaPedidos()" title="Marcar em lote como entregues os pedidos antigos parados no meio do fluxo" style="background:none;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;color:var(--muted);cursor:pointer;white-space:nowrap">🧹 Limpeza</button>` : '')
       + `<button type="button" id="exp-som-btn" onclick="_expAlternarSom()" title="Tocar um som quando chegar pedido para NF/retirada" style="background:none;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;color:var(--muted);cursor:pointer;white-space:nowrap">${_expSomLigado() ? '🔔 Som ligado' : '🔕 Som desligado'}</button>`;
   }
 
@@ -4843,7 +4844,7 @@ async function loadTransportadora() {
     else if (p.previsao_entrega) previsao = fmtDate(p.previsao_entrega);
     const obsV = p.obs_vendedor ? `<div style="font-size:11px;color:var(--muted);max-width:240px" title="Observação do vendedor">💬 ${_escHtml(p.obs_vendedor)}</div>` : '';
     return `<tr>
-      <td><strong>${p.numero_pedido}</strong></td>
+      <td><strong>${p.numero_pedido}</strong>${_seloNovo(p)}</td>
       <td>${p.cliente_nome||'—'}${obsV}</td>
       <td>${_escHtml(p.vendedor_usuario_nome || p.vendedor || '—')}</td>
       <td>${s2 === 'aguardando_retirada' ? '<span style="color:var(--muted)">Cliente retira</span>' : _escHtml(p.transportadora || '—')}</td>
@@ -4851,12 +4852,24 @@ async function loadTransportadora() {
       <td>${previsao}</td>
       <td style="white-space:nowrap">${p.nota_fiscal||'—'}${_nfPdfLink(p)}</td>
       <td>${pendente ? _seloDiasEtapa(_diasDesde(p.status_desde)) : (p.data_despacho ? fmtDate(p.data_despacho) : '—')}</td>
-      <td><span class="pill ${s2 === 'produzido' ? (p.cotacao_enviada_em ? 'pill-warn' : 'pill-danger') : STATUS_PILL_PED[s2]}">${s2 === 'produzido' ? (p.cotacao_enviada_em ? '📨 Cotação enviada · aguardando cliente' : '⏳ Aguardando vendedor') : STATUS_LABEL_PED[s2]}</span></td>
+      <td>${(() => {
+        if (s2 !== 'produzido') return `<span class="pill ${STATUS_PILL_PED[s2]}">${STATUS_LABEL_PED[s2]}</span>`;
+        if (!p.cotacao_enviada_em) return '<span class="pill pill-danger">⏳ Aguardando vendedor</span>';
+        const dc = _diasDesde(p.cotacao_enviada_em), lim = Number((_prazosParados || {}).cotacao_vencida) || 3;
+        return dc >= lim ? `<span class="pill pill-danger" title="Cotação enviada há ${dc} dias sem o cliente autorizar">📨 Cotação vencida · ${dc} dias</span>`
+                         : '<span class="pill pill-warn">📨 Cotação enviada · aguardando cliente</span>';
+      })()}</td>
       <td class="flex gap-2" style="flex-wrap:wrap">${acoes}</td>
     </tr>`;
   }).join('') + listaRem.map(r => _linhaRemessaExpedicao(r)).join('');
 }
 window.loadTransportadora = loadTransportadora;
+
+// Selo "NOVO": primeiro pedido do cliente no sistema (some a partir do segundo pedido)
+function _seloNovo(p) {
+  return Number(p && p.cliente_novo) ? ' <span title="Cliente novo: primeiro pedido dele" style="display:inline-block;margin-left:4px;background:#14b8a6;color:#04201d;font-size:10px;font-weight:800;letter-spacing:.6px;border-radius:6px;padding:2px 6px;vertical-align:middle;line-height:1.3">NOVO</span>' : '';
+}
+window._seloNovo = _seloNovo;
 
 // Gestor autoriza o frete no lugar do vendedor (ex.: cliente ligou direto na empresa)
 async function autorizarFreteGestor(tipo, id, rotulo) {
@@ -6258,7 +6271,7 @@ async function loadPedidos() {
         : ` <span title="Itens de revenda já separados" style="display:inline-block;font-size:10px;font-weight:600;background:var(--surface2);color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:1px 6px;margin-left:4px;white-space:nowrap">📦 revenda ✓</span>`;
     }
     return `<tr>
-      <td><strong>${p.numero_pedido}</strong></td>
+      <td><strong>${p.numero_pedido}</strong>${_seloNovo(p)}</td>
       <td>${p.cliente_nome}${revBadge}</td>
       <td>${p.vendedor || '—'}</td>
       <td>${fmtDate(p.prazo_entrega)}</td>
@@ -7595,6 +7608,7 @@ async function salvarPedido() {
 }
 
 async function loadClientes() {
+  loadClientesNovos();
   const busca=document.getElementById('ped-busca-cliente')?.value||'';
   let url='/pedidos/clientes';if(busca) url+='?busca='+encodeURIComponent(busca);
   const rows=await api(url);
@@ -7612,6 +7626,115 @@ async function loadClientes() {
     </td>
   </tr>`).join('');
 }
+
+// ─── CLIENTES NOVOS (primeiro pedido no mês) ────────────────────────────────
+const _MESES_PT = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+const _nomeMes = m => m ? `${_MESES_PT[+m.slice(5, 7) - 1]} ${m.slice(0, 4)}` : '';
+const _mesSomar = (m, n) => { let a = +m.slice(0, 4), k = +m.slice(5, 7) - 1 + n; a += Math.floor(k / 12); k = ((k % 12) + 12) % 12; return `${a}-${String(k + 1).padStart(2, '0')}`; };
+let _cliNovosMes = null, _cliNovosAberto = true;
+async function loadClientesNovos(nav) {
+  const el = document.getElementById('ped-clientes-novos');
+  if (!el) return;
+  const hoje = new Date().toISOString().slice(0, 7);
+  _cliNovosMes = nav ? _mesSomar(_cliNovosMes || hoje, nav) : (_cliNovosMes || hoje);
+  let d;
+  try { d = await api('/pedidos/clientes-novos?mes=' + _cliNovosMes); } catch (e) { el.innerHTML = ''; return; }
+  const max = Math.max(1, ...d.serie.map(x => x.qtd));
+  const barras = d.serie.map(x => `<div title="${_nomeMes(x.mes)}: ${x.qtd}" style="display:flex;flex-direction:column;align-items:center;gap:4px;flex:1;min-width:34px">
+      <span style="font-size:11px;font-weight:700">${x.qtd}</span>
+      <div style="width:100%;max-width:34px;height:${Math.round(6 + 54 * x.qtd / max)}px;background:${x.mes === _cliNovosMes ? 'var(--accent)' : 'rgba(20,184,166,.55)'};border-radius:4px 4px 0 0"></div>
+      <span style="font-size:10px;color:var(--muted);text-transform:capitalize">${_MESES_PT[+x.mes.slice(5, 7) - 1].slice(0, 3)}</span></div>`).join('');
+  const porVend = d.por_vendedor.map(v => `<tr><td>${_escHtml(v.vendedor)}</td><td style="text-align:right;font-weight:700">${v.qtd}</td><td style="text-align:right">${fmtBRL(v.valor)}</td></tr>`).join('')
+    || '<tr><td colspan="3" style="color:var(--muted);text-align:center;padding:12px">—</td></tr>';
+  const lista = d.clientes.map(c => `<tr>
+      <td><strong>${_escHtml(c.cliente_nome)}</strong>${_seloNovo({ cliente_novo: 1 })}<div style="font-size:11px;color:var(--muted)">${_escHtml([c.cidade, c.uf].filter(Boolean).join('/'))}</div></td>
+      <td>${_escHtml(c.numero_pedido)}</td><td>${_escHtml(c.vendedor_nome)}</td><td>${fmtDate(String(c.created_at || '').slice(0, 10))}</td>
+      <td style="text-align:right">${fmtBRL(c.valor_total)}</td><td><span class="pill ${STATUS_PILL_PED[c.status] || ''}">${STATUS_LABEL_PED[c.status] || _escHtml(c.status)}</span></td></tr>`).join('')
+    || '<tr><td colspan="6" style="color:var(--muted);text-align:center;padding:16px">Nenhum cliente novo neste mês</td></tr>';
+  const atual = _cliNovosMes >= hoje;
+  el.innerHTML = `<div class="table-wrap" style="margin-bottom:18px">
+    <div class="table-head" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <div><span class="table-head-title">🆕 Clientes novos — ${d.clientes.length} em <span style="text-transform:capitalize">${_nomeMes(_cliNovosMes)}</span></span>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px">Clientes que fizeram o primeiro pedido no mês (entregas do estoque do cliente não contam)</div></div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button class="btn btn-sm btn-secondary" aria-label="Mês anterior" onclick="loadClientesNovos(-1)">◀</button>
+        <button class="btn btn-sm btn-secondary" aria-label="Próximo mês" ${atual ? 'disabled' : ''} onclick="loadClientesNovos(1)">▶</button>
+        <button class="btn btn-sm btn-secondary" onclick="_cliNovosAberto=!_cliNovosAberto;loadClientesNovos()">${_cliNovosAberto ? 'Ocultar' : 'Mostrar'}</button>
+      </div>
+    </div>
+    ${_cliNovosAberto ? `<div style="display:grid;grid-template-columns:minmax(220px,1fr) minmax(240px,1.2fr);gap:16px;padding:14px 16px;align-items:end">
+      <div><div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.8px;margin-bottom:8px">ÚLTIMOS 6 MESES</div><div style="display:flex;gap:8px;align-items:flex-end;height:96px">${barras}</div></div>
+      <div><div style="font-size:11px;font-weight:700;color:var(--muted);letter-spacing:.8px;margin-bottom:6px">POR VENDEDOR</div>
+        <table><thead><tr><th style="position:static">Vendedor</th><th style="position:static;text-align:right">Clientes</th><th style="position:static;text-align:right">Valor</th></tr></thead><tbody>${porVend}</tbody></table></div>
+    </div>
+    <div style="overflow-x:auto"><table><thead><tr><th style="position:static">Cliente</th><th style="position:static">1º pedido</th><th style="position:static">Vendedor</th><th style="position:static">Data</th><th style="position:static;text-align:right">Valor</th><th style="position:static">Etapa</th></tr></thead><tbody>${lista}</tbody></table></div>` : ''}
+  </div>`;
+}
+window.loadClientesNovos = loadClientesNovos;
+
+// ─── LIMPEZA DE PEDIDOS ANTIGOS (Gestor) ────────────────────────────────────
+let _limpezaLista = [];
+async function abrirLimpezaPedidos() {
+  let m = document.getElementById('modal-limpeza');
+  if (!m) {
+    m = document.createElement('div'); m.className = 'modal-overlay'; m.id = 'modal-limpeza';
+    m.innerHTML = `<div class="modal" style="max-width:980px;width:96vw;max-height:92vh;overflow-y:auto">
+      <div class="modal-title">🧹 Limpeza de pedidos antigos</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:12px;line-height:1.5">Pedidos lançados <strong>antes da data</strong> que ainda estão no meio do fluxo (aberto, em produção, produzido, aguardando NF/retirada).
+        Os que já saíram por fora do sistema podem ser marcados de uma vez como <strong>entregues</strong>. Nada é apagado; fica registrado na auditoria.</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+        <label for="limp-antes" style="font-size:13px">Lançados antes de</label><input type="date" id="limp-antes" style="max-width:170px">
+        <button class="btn btn-sm btn-secondary" onclick="carregarLimpeza()">🔍 Buscar</button>
+        <label style="font-size:13px;margin-left:auto;display:flex;gap:6px;align-items:center"><input type="checkbox" id="limp-todos" onchange="document.querySelectorAll('.limp-ck').forEach(c=>c.checked=this.checked);_limpezaContar()"> Selecionar todos</label>
+      </div>
+      <div id="limp-lista" style="max-height:52vh;overflow:auto"></div>
+      <div class="modal-footer" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
+        <span id="limp-contagem" style="font-size:13px;color:var(--muted)"></span>
+        <div style="display:flex;gap:8px"><button class="btn btn-secondary" onclick="closeModal('modal-limpeza')">Cancelar</button>
+        <button class="btn btn-primary" onclick="confirmarLimpeza()">✓ Marcar selecionados como entregues</button></div>
+      </div></div>`;
+    document.body.appendChild(m);
+  }
+  document.getElementById('limp-antes').value = (_prazosParados && _prazosParados.mostrar_desde) || new Date().toISOString().slice(0, 10);
+  openModal('modal-limpeza');
+  carregarLimpeza();
+}
+window.abrirLimpezaPedidos = abrirLimpezaPedidos;
+async function carregarLimpeza() {
+  const el = document.getElementById('limp-lista');
+  el.innerHTML = '<p style="color:var(--muted)">Carregando...</p>';
+  let d;
+  try { d = await api('/pedidos/limpeza/candidatos?antes=' + encodeURIComponent(document.getElementById('limp-antes').value || '')); }
+  catch (e) { el.innerHTML = `<p style="color:var(--danger)">${_escHtml(e.message)}</p>`; return; }
+  _limpezaLista = d.pedidos || [];
+  document.getElementById('limp-todos').checked = false;
+  el.innerHTML = _limpezaLista.length ? `<table><thead><tr><th></th><th>Pedido</th><th>Cliente</th><th>Vendedor</th><th>Lançado</th><th>Etapa</th><th>Parado</th><th style="text-align:right">Valor</th></tr></thead><tbody>
+    ${_limpezaLista.map(p => `<tr><td><input type="checkbox" class="limp-ck" value="${p.id}" aria-label="Selecionar pedido ${_escHtml(p.numero_pedido)}" onchange="_limpezaContar()"></td>
+      <td><strong>${_escHtml(p.numero_pedido)}</strong></td><td>${_escHtml(p.cliente_nome)}</td><td>${_escHtml(p.vendedor_nome)}</td>
+      <td>${fmtDate(String(p.created_at || '').slice(0, 10))}</td><td><span class="pill ${STATUS_PILL_PED[p.status] || ''}">${STATUS_LABEL_PED[p.status] || _escHtml(p.status || 'aberto')}</span></td>
+      <td>${_seloDiasEtapa(p.dias_na_etapa)}</td><td style="text-align:right">${fmtBRL(p.valor_total)}</td></tr>`).join('')}</tbody></table>`
+    : '<p style="color:var(--muted);padding:12px">✅ Nenhum pedido antigo parado no fluxo antes dessa data.</p>';
+  _limpezaContar();
+}
+window.carregarLimpeza = carregarLimpeza;
+function _limpezaContar() {
+  const n = document.querySelectorAll('.limp-ck:checked').length;
+  const el = document.getElementById('limp-contagem');
+  if (el) el.textContent = `${n} de ${_limpezaLista.length} selecionado(s)`;
+}
+window._limpezaContar = _limpezaContar;
+async function confirmarLimpeza() {
+  const ids = [...document.querySelectorAll('.limp-ck:checked')].map(c => +c.value);
+  if (!ids.length) { showAlert('Selecione pelo menos um pedido', 'danger'); return; }
+  if (!confirm(`Marcar ${ids.length} pedido(s) como ENTREGUE(S)?\n\nUse só para pedidos que já saíram por fora do sistema.`)) return;
+  try {
+    const r = await api('/pedidos/limpeza/marcar-entregue', 'POST', { ids });
+    showAlert(r.mensagem);
+    carregarLimpeza();
+    if (document.getElementById('ped-transp-filtro')) loadTransportadora();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+window.confirmarLimpeza = confirmarLimpeza;
 
 function openModalCliente(){
   ['cnpj','razao','fantasia','ie','email','telefone','cep','numero','logradouro','bairro','complemento','cidade','uf','obs'].forEach(f=>{const el=document.getElementById('cli-'+f);if(el)el.value='';});
@@ -10213,7 +10336,23 @@ async function carregarVendedorDesde() {
   const a = document.getElementById('cfg-prazo-amarelo'), v = document.getElementById('cfg-prazo-vermelho');
   if (a) a.value = pz.amarelo;
   if (v) v.value = pz.vermelho;
+  const cv = document.getElementById('cfg-cotacao-vencida'), ra = document.getElementById('cfg-retirada-alerta');
+  if (cv) cv.value = pz.cotacao_vencida || 3;
+  if (ra) ra.value = pz.retirada_alerta || 15;
 }
+
+async function salvarPrazosAlerta() {
+  const cv = parseInt(document.getElementById('cfg-cotacao-vencida').value, 10);
+  const ra = parseInt(document.getElementById('cfg-retirada-alerta').value, 10);
+  if (isNaN(cv) || isNaN(ra) || cv < 1 || ra < 1) { showAlert('Informe os dias (números inteiros a partir de 1)', 'danger'); return; }
+  try {
+    await api('/configuracoes/cotacao_vencida_dias', 'PUT', { valor: String(cv) });
+    await api('/configuracoes/retirada_alerta_dias', 'PUT', { valor: String(ra) });
+    showAlert(`Alertas salvos: cotação vencida após ${cv} dia(s); retirada atrasada após ${ra} dia(s)`);
+    _carregarPrazosParados();
+  } catch (e) { showAlert('Erro: ' + e.message, 'danger'); }
+}
+window.salvarPrazosAlerta = salvarPrazosAlerta;
 
 async function salvarPrazosParados() {
   const a = parseInt(document.getElementById('cfg-prazo-amarelo').value, 10);
