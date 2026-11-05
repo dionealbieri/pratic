@@ -2,7 +2,7 @@ from fastapi import FastAPI, UploadFile, File, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse
-import os, shutil, tempfile, datetime, base64, sqlite3
+import os, shutil, tempfile, datetime, base64, sqlite3, zipfile
 
 from database import init_db, seed_data, get_conn, DB_PATH
 from auth_utils import get_current_user, validar_sessao_db
@@ -150,19 +150,140 @@ def fazer_backup():
     
     return FileResponse(path=backup_path, filename=backup_name, media_type="application/octet-stream")
 
+# ─── BACKUP COMPLETO: banco + arquivos (PDFs das notas fiscais e anexos do chat) ───
+# Os PDFs ficam em pastas ao lado do banco (banco/notas_fiscais, banco/uploads/...),
+# por isso o backup só do .db não levava as notas. O completo é um .zip com tudo.
+PASTAS_ARQUIVOS = ("notas_fiscais", "uploads")
+
+
+def _pasta_banco() -> str:
+    return os.path.dirname(os.path.abspath(DB_PATH))
+
+
+def _arquivos_do_backup():
+    base = _pasta_banco()
+    for pasta in PASTAS_ARQUIVOS:
+        raiz = os.path.join(base, pasta)
+        if not os.path.isdir(raiz):
+            continue
+        for dirpath, _dirs, nomes in os.walk(raiz):
+            for nome in nomes:
+                caminho = os.path.join(dirpath, nome)
+                yield caminho, os.path.relpath(caminho, base).replace(os.sep, "/")
+
+
+@app.get("/api/backup/info", dependencies=[Depends(_so_gestor_ou_pagina("backup"))])
+def info_backup():
+    qtd_nf, qtd_outros, tamanho = 0, 0, 0
+    for caminho, rel in _arquivos_do_backup():
+        try:
+            tamanho += os.path.getsize(caminho)
+        except OSError:
+            continue
+        if rel.startswith("notas_fiscais/"):
+            qtd_nf += 1
+        else:
+            qtd_outros += 1
+    try:
+        tam_db = os.path.getsize(DB_PATH)
+    except OSError:
+        tam_db = 0
+    return {"notas_fiscais": qtd_nf, "outros_arquivos": qtd_outros,
+            "tamanho_arquivos": tamanho, "tamanho_banco": tam_db}
+
+
+@app.get("/api/backup/completo", dependencies=[Depends(_so_gestor_ou_pagina("backup"))])
+def fazer_backup_completo():
+    from starlette.background import BackgroundTask
+    now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    tmp_db = os.path.join(tempfile.gettempdir(), f"pratic_bk_{now}.db")
+    zip_name = f"pratic_backup_completo_{now}.zip"
+    zip_path = os.path.join(tempfile.gettempdir(), zip_name)
+    src = get_conn()
+    dst = sqlite3.connect(tmp_db)
+    try:
+        with dst:
+            src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
+    try:
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+            z.write(tmp_db, "pratic.db")
+            for caminho, rel in _arquivos_do_backup():
+                try:
+                    # PDF já é comprimido: guarda sem recomprimir (mais rápido)
+                    z.write(caminho, rel, compress_type=zipfile.ZIP_STORED if rel.lower().endswith(".pdf") else zipfile.ZIP_DEFLATED)
+                except OSError:
+                    pass
+            z.writestr("LEIA-ME.txt", "Backup completo do PRATIC\n"
+                       "- pratic.db: banco de dados\n- notas_fiscais/: PDFs das notas fiscais\n- uploads/: anexos\n"
+                       "Para restaurar: Backup > Restaurar Backup, escolhendo este arquivo .zip.\n")
+    finally:
+        if os.path.exists(tmp_db):
+            os.remove(tmp_db)
+    return FileResponse(path=zip_path, filename=zip_name, media_type="application/zip",
+                        background=BackgroundTask(lambda: os.path.exists(zip_path) and os.remove(zip_path)))
+
+
 @app.post("/api/restore", dependencies=[Depends(_so_gestor_ou_pagina())])
 async def restaurar_backup(file: UploadFile = File(...)):
     db_path = DB_PATH
     now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    
+
+    # Salva o arquivo enviado em disco (sem carregar tudo na memória: o .zip com PDFs pode ser grande)
+    nome_env = (file.filename or "").lower()
+    temp_up = os.path.join(tempfile.gettempdir(), f"restore_up_{now}")
+    with open(temp_up, "wb") as f:
+        shutil.copyfileobj(file.file, f, 1024 * 1024)
+    temp_db_path = os.path.join(tempfile.gettempdir(), f"restore_{now}.db")
+    restaurados = 0
+    try:
+        if nome_env.endswith(".zip") or zipfile.is_zipfile(temp_up):
+            from fastapi import HTTPException
+            base = _pasta_banco()
+            with zipfile.ZipFile(temp_up) as z:
+                nomes = z.namelist()
+                db_nome = "pratic.db" if "pratic.db" in nomes else next((n for n in nomes if n.lower().endswith(".db") and "/" not in n), None)
+                if not db_nome:
+                    raise HTTPException(400, "Este .zip não tem o banco (pratic.db).")
+                with z.open(db_nome) as zsrc, open(temp_db_path, "wb") as out:
+                    shutil.copyfileobj(zsrc, out, 1024 * 1024)
+                # Valida o banco antes de mexer em qualquer coisa
+                try:
+                    t = sqlite3.connect(temp_db_path); t.execute("SELECT name FROM sqlite_master LIMIT 1"); t.close()
+                except sqlite3.DatabaseError:
+                    raise HTTPException(400, "O banco dentro do .zip não é válido.")
+                # Arquivos (PDFs das notas, anexos): só dentro das pastas conhecidas, sem sair da pasta do banco
+                for info in z.infolist():
+                    rel = info.filename.replace("\\", "/")
+                    if info.is_dir() or not any(rel.startswith(p + "/") for p in PASTAS_ARQUIVOS):
+                        continue
+                    destino = os.path.normpath(os.path.join(base, rel))
+                    if not destino.startswith(os.path.join(base, "")):
+                        continue
+                    os.makedirs(os.path.dirname(destino), exist_ok=True)
+                    with z.open(info) as zsrc, open(destino, "wb") as out:
+                        shutil.copyfileobj(zsrc, out, 1024 * 1024)
+                    restaurados += 1
+        else:
+            shutil.move(temp_up, temp_db_path)
+            try:
+                t = sqlite3.connect(temp_db_path); t.execute("SELECT name FROM sqlite_master LIMIT 1"); t.close()
+            except sqlite3.DatabaseError:
+                from fastapi import HTTPException
+                raise HTTPException(400, "O arquivo enviado não é um banco .db válido.")
+    except Exception:
+        for tmp in (temp_up, temp_db_path):
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        raise
+    finally:
+        if os.path.exists(temp_up):
+            os.remove(temp_up)
+
     # Salva uma cópia física de segurança (backup anterior)
     shutil.copy2(db_path, db_path + f".bak_{now}")
-    
-    # Salva o arquivo de restore temporariamente
-    contents = await file.read()
-    temp_db_path = os.path.join(tempfile.gettempdir(), f"restore_{now}.db")
-    with open(temp_db_path, "wb") as f:
-        f.write(contents)
         
     # Restaura o banco de dados via API oficial do sqlite3 (mantém os handles do servidor seguros)
     try:
@@ -183,7 +304,10 @@ async def restaurar_backup(file: UploadFile = File(...)):
     # ficaria sem colunas adicionadas depois, até o próximo restart manual.
     init_db()
 
-    return {"mensagem": "Banco de dados restaurado com sucesso!"}
+    msg = "Banco de dados restaurado com sucesso!"
+    if restaurados:
+        msg += f" {restaurados} arquivo(s) (PDFs das notas e anexos) restaurados."
+    return {"mensagem": msg, "arquivos": restaurados}
 
 @app.post("/api/empresa/logo", dependencies=[Depends(_so_gestor_ou_pagina("empresa"))])
 async def upload_logo(file: UploadFile = File(...)):
