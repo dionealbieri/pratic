@@ -654,6 +654,7 @@
               <input type="text" id="ped-transp-busca" placeholder="Buscar por nº do pedido..." oninput="loadTransportadora()" style="max-width:190px; height:32px; font-size:12px; padding:4px 8px;">
               <label style="font-size:13px; color:var(--muted)">Mostrar:</label>
               <select id="ped-transp-filtro" onchange="loadTransportadora()" style="min-width:190px; height:32px; font-size:12px; padding:4px 8px;">
+                <option value="pendentes" selected>📋 Pendentes (NF + retirada)</option>
                 <option value="aguardando_nf">🧾 Aguardando NF</option>
                 <option value="aguardando_retirada">🙋 Aguardando retirada</option>
                 <option value="aguardando_vendedor">⏳ Aguardando vendedor (produzidos)</option>
@@ -3187,7 +3188,7 @@
 
 <script src="js/cotacao.js?v=20261105-caixamulti"></script>
 <script src="js/estoque-cliente.js?v=20261030-estcli"></script>
-<script src="js/app.js?v=20261105-novoalinhado"></script>
+<script src="js/app.js?v=20261105-pdforiginal"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');

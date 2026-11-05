@@ -502,8 +502,12 @@ document.querySelectorAll('.modal-overlay').forEach(m => {
 
 // ── PDF DO PEDIDO (mesmo layout do botão 🖨️ do painel do Gestor) — só leitura, para conferência
 async function imprimirPedidoVendedor(id) {
+  // Pedido importado: abre o arquivo ORIGINAL (cópia perfeita do sistema de vendas)
+  const loc = (typeof mpPedidoPorId === 'function') ? mpPedidoPorId(id) : null;
+  if (loc && Number(loc.tem_original)) { window.open(API + '/pedidos/' + id + '/arquivo-original', '_blank'); return; }
   try {
     const p = await req('/pedidos/' + id);
+    if (p.arquivo_original) { window.open(API + '/pedidos/' + id + '/arquivo-original', '_blank'); return; }
     let emp = window.empresaDados;
     if (!emp) {
       try {
@@ -1233,6 +1237,7 @@ function mpMenuItens(t, id) {
   if (p.status === 'aguardando_nf') it.push({ txt: '✏️ Alterar frete', fn: () => mpAbrirEnvio(p.id, 'transportadora') });
   if (p.status === 'aguardando_retirada') it.push({ txt: '✏️ Alterar retirada', fn: () => mpAbrirEnvio(p.id, 'retirada') });
   if (mpBtnNf(p)) it.push({ txt: '🧾 Nota fiscal', fn: () => window.open(`${API}/pedidos/${p.id}/nf-arquivo`, '_blank') });
+  it.push({ txt: Number(p.tem_original) ? '📎 Trocar o PDF original do pedido' : '📎 Anexar o PDF original do pedido', fn: () => mpAnexarOriginal(p.id, p.numero_pedido) });
   if (mpPodeEditar(p)) {
     it.push({ txt: '✏️ Editar pedido', fn: () => { window.location.href = '/?editar=' + p.id; } });
     it.push({ txt: '🗑 Excluir pedido', perigo: true, fn: () => excluirPedidoVendedor(p.id) });
@@ -1493,6 +1498,24 @@ function mpRenderMes() {
     </div>${metricas}</div>` +
     mpTabela(`🆕 Clientes novos em ${mpNomeMes(mes)}`, 'Clientes que fizeram o primeiro pedido com você neste mês', ['Pedido', 'Cliente', 'Lançado em', 'Valor', 'Etapa'],
       novos, 'Nenhum cliente novo neste mês', '');
+}
+
+// ── PDF original do pedido (para pedidos importados antes de o sistema guardar o arquivo)
+function mpAnexarOriginal(id, num) {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.pdf,application/pdf,.png,.jpg,.jpeg,.xlsx,.xls';
+  inp.onchange = async () => {
+    const f = inp.files && inp.files[0]; if (!f) return;
+    const fd = new FormData(); fd.append('arquivo', f);
+    try {
+      const r = await fetch(API + '/pedidos/' + id + '/arquivo-original', { method: 'POST', body: fd, credentials: 'same-origin' });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.detail || 'Erro ao anexar');
+      showAlert('✅ Pedido ' + num + ': ' + d.mensagem);
+      loadMeusPedidos(); loadPedidosCom();
+    } catch (e) { showAlert(e.message, 'danger'); }
+  };
+  inp.click();
 }
 
 // ── Ficha do cliente (clique no nome)
