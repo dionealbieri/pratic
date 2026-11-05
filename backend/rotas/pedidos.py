@@ -170,6 +170,8 @@ class PedidoIn(BaseModel):
     desconto_global: Optional[float] = None
     parcelas: Optional[List[ParcelaPedidoIn]] = None
     precisa_pintura: Optional[bool] = False
+    arquivo_token: Optional[str] = None     # arquivo original analisado na importação
+    arquivo_nome: Optional[str] = None
 
 class StatusItemIn(BaseModel):
     status: str
@@ -993,6 +995,10 @@ async def importar_pedidos_lote(files: List[UploadFile] = File(...), current_use
                         VALUES (?,?,?,?,?,?,?,0,'aberto')""",
                         (pedido_id, None, it["descricao"], it["quantidade"], it.get("unidade") or "unidade",
                          it.get("valor_unitario") or 0, it.get("desconto") or 0))
+                try:
+                    _vincular_original(conn, pedido_id, tmp_path, nome, eh_token=False)
+                except Exception:
+                    pass
                 conn.commit()
                 criados += 1
                 criados_ids.append(pedido_id)
@@ -1032,6 +1038,62 @@ async def importar_pedidos_lote(files: List[UploadFile] = File(...), current_use
 @router.post("/importar-arquivo")
 async def importar_pedido_arquivo(file: UploadFile = File(...)):
     return await _processar_arquivo_pedido(file)
+
+# ─── ARQUIVO ORIGINAL DO PEDIDO IMPORTADO ────────────────────────────────────
+# O PDF/planilha importado fica guardado em banco/pedidos_originais. O botão "PDF" abre o original
+# (cópia perfeita do sistema de vendas); só pedidos sem original usam o PDF montado pelo sistema.
+def _pasta_originais() -> str:
+    pasta = os.path.join(os.path.dirname(os.path.abspath(_database.DB_PATH)), "pedidos_originais")
+    os.makedirs(pasta, exist_ok=True)
+    return pasta
+
+
+def _guardar_original_tmp(caminho: str, nome: str) -> str:
+    """Copia o arquivo analisado para a pasta com um nome provisório (token). Ao criar o pedido,
+    o token vira o arquivo definitivo. Provisórios com mais de 2 dias são apagados."""
+    import uuid, shutil, time
+    pasta = _pasta_originais()
+    agora = time.time()
+    for n in os.listdir(pasta):
+        if n.startswith("tmp_"):
+            try:
+                if agora - os.path.getmtime(os.path.join(pasta, n)) > 2 * 86400:
+                    os.remove(os.path.join(pasta, n))
+            except OSError:
+                pass
+    ext = (os.path.splitext(nome or "")[1] or ".pdf").lower()[:8]
+    token = f"tmp_{uuid.uuid4().hex}{ext}"
+    shutil.copyfile(caminho, os.path.join(pasta, token))
+    return token
+
+
+def _vincular_original(conn, pedido_id: int, origem: str, nome: str, eh_token: bool = True):
+    """Grava o original no pedido. origem = token provisório (eh_token) ou caminho de um arquivo."""
+    import shutil
+    pasta = _pasta_originais()
+    if eh_token:
+        origem = os.path.basename(origem or "")
+        if not origem.startswith("tmp_"):
+            return False
+        origem = os.path.join(pasta, origem)
+    if not origem or not os.path.exists(origem):
+        return False
+    ext = (os.path.splitext(origem)[1] or ".pdf").lower()[:8]
+    final = f"pedido_{pedido_id}_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}{ext}"
+    antigo = conn.execute("SELECT arquivo_original FROM pedidos WHERE id=?", (pedido_id,)).fetchone()
+    if eh_token:
+        shutil.move(origem, os.path.join(pasta, final))
+    else:
+        shutil.copyfile(origem, os.path.join(pasta, final))
+    conn.execute("UPDATE pedidos SET arquivo_original=?, arquivo_original_nome=? WHERE id=?",
+                 (final, (nome or final)[:200], pedido_id))
+    if antigo and antigo["arquivo_original"] and antigo["arquivo_original"] != final:
+        try:
+            os.remove(os.path.join(pasta, os.path.basename(antigo["arquivo_original"])))
+        except OSError:
+            pass
+    return True
+
 
 async def _processar_arquivo_pedido(file: UploadFile):
     """Lógica de importação reutilizável — analisa o arquivo e retorna os dados para revisão."""
@@ -1080,9 +1142,15 @@ async def _processar_arquivo_pedido(file: UploadFile):
         finally:
             conn.close()
         
+        try:
+            token = _guardar_original_tmp(tmp_path, file.filename)
+        except Exception:
+            token = None
         return {
             "cliente_id": cliente_id,
-            "dados_extraidos": parsed
+            "dados_extraidos": parsed,
+            "arquivo_token": token,
+            "arquivo_nome": file.filename,
         }
     finally:
         try:
@@ -2151,6 +2219,7 @@ def meus_pedidos(current_user: dict = Depends(get_current_user)):
                    p.obs_vendedor, p.nota_fiscal, p.data_despacho, p.data_entrega, p.envio_definido_em,
                    COALESCE(p.origem_estoque_cliente,0) AS origem_estoque_cliente,
                    CASE WHEN p.nf_arquivo IS NOT NULL AND p.nf_arquivo != '' THEN 1 ELSE 0 END AS tem_nf_pdf,
+                   CASE WHEN p.arquivo_original IS NOT NULL AND p.arquivo_original != '' THEN 1 ELSE 0 END AS tem_original,
                    c.razao_social AS cliente_nome, c.nome_fantasia,
                    CAST(julianday('now','localtime') - julianday(p.status_desde) AS INTEGER) AS dias_na_etapa,
                    julianday(p.prazo_entrega) - julianday('now') AS dias_restantes,
@@ -2232,6 +2301,7 @@ def _campos_pedido_vendedor() -> str:
         COALESCE(p.para_estoque_cliente,0) AS para_estoque_cliente,
         COALESCE(p.revenda_bloqueado,0) AS revenda_bloqueado,
         CASE WHEN p.nf_arquivo IS NOT NULL AND p.nf_arquivo != '' THEN 1 ELSE 0 END AS tem_nf_pdf,
+        CASE WHEN p.arquivo_original IS NOT NULL AND p.arquivo_original != '' THEN 1 ELSE 0 END AS tem_original,
         c.razao_social AS cliente_nome, c.nome_fantasia,
         CAST(julianday('now','localtime') - julianday(p.status_desde) AS INTEGER) AS dias_na_etapa,
         julianday(p.prazo_entrega) - julianday('now') AS dias_restantes,
@@ -2490,6 +2560,68 @@ def limpeza_marcar_entregue(body: LimpezaIn, current_user: dict = Depends(get_cu
                          (_nome_usuario(current_user), f"{feitos} pedido(s) antigo(s) marcados como entregues na limpeza"))
         conn.commit()
         return {"mensagem": f"{feitos} pedido(s) marcados como entregues.", "feitos": feitos}
+    finally:
+        conn.close()
+
+
+@router.get("/{id}/arquivo-original")
+def ver_arquivo_original(id: int, current_user: dict = Depends(get_current_user)):
+    """Abre o arquivo original importado (cópia perfeita do pedido do sistema de vendas)."""
+    conn = get_conn()
+    try:
+        ped = conn.execute("SELECT arquivo_original, arquivo_original_nome, numero_pedido, vendedor_usuario_id FROM pedidos WHERE id=?", (id,)).fetchone()
+    finally:
+        conn.close()
+    if not ped:
+        raise HTTPException(404, "Pedido não encontrado")
+    if current_user.get("role") == "comercial" and ped["vendedor_usuario_id"] != current_user["id"]:
+        raise HTTPException(403, "Pedido de outro vendedor")
+    caminho = os.path.join(_pasta_originais(), os.path.basename(ped["arquivo_original"] or ""))
+    if not ped["arquivo_original"] or not os.path.exists(caminho):
+        raise HTTPException(404, "Este pedido não tem o arquivo original guardado")
+    ext = os.path.splitext(caminho)[1].lower()
+    tipos = {".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+             ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".xls": "application/vnd.ms-excel",
+             ".csv": "text/csv", ".txt": "text/plain"}
+    nome = ped["arquivo_original_nome"] or f"Pedido_{ped['numero_pedido']}{ext}"
+    return FileResponse(caminho, media_type=tipos.get(ext, "application/octet-stream"),
+                        headers={"Content-Disposition": f'inline; filename="{os.path.basename(nome)}"'})
+
+
+@router.post("/{id}/arquivo-original")
+async def anexar_arquivo_original(id: int, arquivo: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+    """Anexa (ou troca) o PDF original de um pedido — para pedidos importados antes de o sistema guardar o arquivo."""
+    conn = get_conn()
+    try:
+        ped = conn.execute("SELECT id, vendedor_usuario_id FROM pedidos WHERE id=?", (id,)).fetchone()
+        if not ped:
+            raise HTTPException(404, "Pedido não encontrado")
+        role = current_user.get("role")
+        if role == "comercial":
+            if ped["vendedor_usuario_id"] != current_user["id"]:
+                raise HTTPException(403, "Pedido de outro vendedor")
+        elif role != "gestor" and not verificar_permissao("pedidos", "editar", current_user):
+            raise HTTPException(403, "Sem permissão")
+        dados = await arquivo.read()
+        if not dados:
+            raise HTTPException(400, "Arquivo vazio")
+        if len(dados) > 25 * 1024 * 1024:
+            raise HTTPException(400, "Arquivo muito grande (máx. 25 MB)")
+        ext = (os.path.splitext(arquivo.filename or "")[1] or ".pdf").lower()
+        if ext not in (".pdf", ".png", ".jpg", ".jpeg", ".xlsx", ".xls", ".csv", ".txt"):
+            raise HTTPException(400, "Envie o pedido em PDF (ou imagem/planilha)")
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
+            tmp.write(dados)
+            tmp_path = tmp.name
+        try:
+            _vincular_original(conn, id, tmp_path, arquivo.filename, eh_token=False)
+        finally:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+        conn.commit()
+        return {"mensagem": "Pedido original anexado. O botão PDF agora abre este arquivo."}
     finally:
         conn.close()
 
@@ -3525,6 +3657,11 @@ def criar_pedido(p: PedidoIn, current_user: dict = Depends(get_current_user)):
                 (pedido_id, (parc.forma_pagamento or ""), (parc.vencimento or ""), parc.valor or 0))
     _auto_vincular_itens(conn)
     alertas = _alertas_estoque_para_pedidos(cur, [pedido_id])
+    if p.arquivo_token:
+        try:
+            _vincular_original(conn, pedido_id, p.arquivo_token, p.arquivo_nome)
+        except Exception:
+            pass
     conn.commit()
     conn.close()
     return {"id": pedido_id, "mensagem": "Pedido criado", "alertas_estoque": alertas}
@@ -3900,6 +4037,12 @@ def deletar_pedido(id: int, current_user = Depends(get_current_user)):
         cur.execute("DELETE FROM pedidos_status_hist WHERE pedido_id=?", (id,))
         cur.execute("DELETE FROM pedidos_volume_itens WHERE volume_id IN (SELECT id FROM pedidos_volumes WHERE pedido_id=?)", (id,))
         cur.execute("DELETE FROM pedidos_volumes WHERE pedido_id=?", (id,))
+        _orig = cur.execute("SELECT arquivo_original FROM pedidos WHERE id=?", (id,)).fetchone()
+        if _orig and _orig["arquivo_original"]:
+            try:
+                os.remove(os.path.join(_pasta_originais(), os.path.basename(_orig["arquivo_original"])))
+            except OSError:
+                pass
         for _r in cur.execute("SELECT nf_arquivo FROM pedidos_remessas WHERE pedido_id=? AND nf_arquivo IS NOT NULL", (id,)).fetchall():
             try:
                 os.remove(os.path.join(_pasta_nf(), os.path.basename(_r["nf_arquivo"])))
