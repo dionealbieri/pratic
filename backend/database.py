@@ -1531,6 +1531,7 @@ def init_db():
     _migrar_remessas(conn)
     _migrar_autorizacao_frete(conn)
     _corrigir_revenda_marcada_entregue(conn)
+    _migrar_arquivo_original(conn)
     conn.commit()
     conn.close()
 
@@ -2056,3 +2057,13 @@ def _corrigir_revenda_marcada_entregue(conn):
         conn.commit()
     except Exception:
         pass
+
+
+def _migrar_arquivo_original(conn):
+    """Arquivo ORIGINAL do pedido importado (o PDF do sistema de vendas): o botão PDF abre ele,
+    cópia perfeita, em vez de remontar o pedido com os dados do cadastro."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(pedidos)").fetchall()]
+    for col in ("arquivo_original", "arquivo_original_nome"):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE pedidos ADD COLUMN {col} TEXT")
+    conn.commit()

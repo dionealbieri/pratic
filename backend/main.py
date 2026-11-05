@@ -153,7 +153,7 @@ def fazer_backup():
 # ─── BACKUP COMPLETO: banco + arquivos (PDFs das notas fiscais e anexos do chat) ───
 # Os PDFs ficam em pastas ao lado do banco (banco/notas_fiscais, banco/uploads/...),
 # por isso o backup só do .db não levava as notas. O completo é um .zip com tudo.
-PASTAS_ARQUIVOS = ("notas_fiscais", "uploads")
+PASTAS_ARQUIVOS = ("notas_fiscais", "uploads", "pedidos_originais")
 
 
 def _pasta_banco() -> str:
@@ -174,7 +174,7 @@ def _arquivos_do_backup():
 
 @app.get("/api/backup/info", dependencies=[Depends(_so_gestor_ou_pagina("backup"))])
 def info_backup():
-    qtd_nf, qtd_outros, tamanho = 0, 0, 0
+    qtd_nf, qtd_outros, qtd_orig, tamanho = 0, 0, 0, 0
     for caminho, rel in _arquivos_do_backup():
         try:
             tamanho += os.path.getsize(caminho)
@@ -182,13 +182,15 @@ def info_backup():
             continue
         if rel.startswith("notas_fiscais/"):
             qtd_nf += 1
+        elif rel.startswith("pedidos_originais/"):
+            qtd_orig += 1
         else:
             qtd_outros += 1
     try:
         tam_db = os.path.getsize(DB_PATH)
     except OSError:
         tam_db = 0
-    return {"notas_fiscais": qtd_nf, "outros_arquivos": qtd_outros,
+    return {"notas_fiscais": qtd_nf, "pedidos_originais": qtd_orig, "outros_arquivos": qtd_outros,
             "tamanho_arquivos": tamanho, "tamanho_banco": tam_db}
 
 
@@ -217,7 +219,7 @@ def fazer_backup_completo():
                 except OSError:
                     pass
             z.writestr("LEIA-ME.txt", "Backup completo do PRATIC\n"
-                       "- pratic.db: banco de dados\n- notas_fiscais/: PDFs das notas fiscais\n- uploads/: anexos\n"
+                       "- pratic.db: banco de dados\n- notas_fiscais/: PDFs das notas fiscais\n- pedidos_originais/: PDFs dos pedidos importados\n- uploads/: anexos\n"
                        "Para restaurar: Backup > Restaurar Backup, escolhendo este arquivo .zip.\n")
     finally:
         if os.path.exists(tmp_db):
