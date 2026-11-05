@@ -1313,7 +1313,9 @@ def _recalc_status_pedido(cur, pedido_id):
 
     if total == 0:
         novo = 'aberto'
-    elif entregues == total:
+    elif entregues == total and total_prod > 0:
+        # Todos os itens 'entregue' (fluxo antigo). Pedido SÓ de revenda não entra aqui: no item de
+        # revenda, 'entregue' quer dizer SEPARADO — o pedido segue para o vendedor (Produzido).
         novo = 'entregue'
     elif current_status == 'entregue':
         novo = 'entregue'
