@@ -400,7 +400,7 @@ function showPage(name) {
     'consumo-medio': loadConsumoMedio,
     'gerencial': loadGerencial,
     pedidos: loadPedidos_init,
-    backup: () => {},
+    backup: () => { if (typeof carregarInfoBackup === 'function') carregarInfoBackup(); },
     epi: loadEPI,
     comunicacao: loadComunicacao,
     empresa: loadEmpresa,
@@ -4844,7 +4844,7 @@ async function loadTransportadora() {
     else if (p.previsao_entrega) previsao = fmtDate(p.previsao_entrega);
     const obsV = p.obs_vendedor ? `<div style="font-size:11px;color:var(--muted);max-width:240px" title="Observação do vendedor">💬 ${_escHtml(p.obs_vendedor)}</div>` : '';
     return `<tr>
-      <td><strong>${p.numero_pedido}</strong>${_seloNovo(p)}</td>
+      <td style="white-space:nowrap"><strong>${p.numero_pedido}</strong>${_seloNovo(p)}</td>
       <td>${p.cliente_nome||'—'}${obsV}</td>
       <td>${_escHtml(p.vendedor_usuario_nome || p.vendedor || '—')}</td>
       <td>${s2 === 'aguardando_retirada' ? '<span style="color:var(--muted)">Cliente retira</span>' : _escHtml(p.transportadora || '—')}</td>
@@ -6271,7 +6271,7 @@ async function loadPedidos() {
         : ` <span title="Itens de revenda já separados" style="display:inline-block;font-size:10px;font-weight:600;background:var(--surface2);color:var(--muted);border:1px solid var(--border);border-radius:6px;padding:1px 6px;margin-left:4px;white-space:nowrap">📦 revenda ✓</span>`;
     }
     return `<tr>
-      <td><strong>${p.numero_pedido}</strong>${_seloNovo(p)}</td>
+      <td style="white-space:nowrap"><strong>${p.numero_pedido}</strong>${_seloNovo(p)}</td>
       <td>${p.cliente_nome}${revBadge}</td>
       <td>${p.vendedor || '—'}</td>
       <td>${fmtDate(p.prazo_entrega)}</td>
@@ -9973,12 +9973,25 @@ async function buscarCEPEmpresa() {
   return buscarCEPEmp();
 }
 
-async function fazerBackup() {
+async function carregarInfoBackup() {
+  const el = document.getElementById('backup-info');
+  if (!el) return;
   try {
-    const r = await fetch(API + '/backup');
+    const d = await api('/backup/info');
+    const mb = b => (b / 1048576).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' MB';
+    el.textContent = `Inclui ${d.notas_fiscais} PDF(s) de nota fiscal${d.outros_arquivos ? ' e ' + d.outros_arquivos + ' anexo(s)' : ''} · tamanho aproximado ${mb((d.tamanho_banco || 0) + (d.tamanho_arquivos || 0))}`;
+  } catch (e) { el.textContent = ''; }
+}
+window.carregarInfoBackup = carregarInfoBackup;
+
+async function fazerBackup(tipo) {
+  const completo = tipo !== 'banco';
+  try {
+    if (completo) _showLocalAlert('backup-alert', 'Gerando o backup completo... pode levar alguns segundos se houver muitas notas.');
+    const r = await fetch(API + (completo ? '/backup/completo' : '/backup'));
     if (!r.ok) throw new Error('Não foi possível gerar o backup');
     const blob = await r.blob();
-    let filename = 'pratic_backup.db';
+    let filename = completo ? 'pratic_backup_completo.zip' : 'pratic_backup.db';
     const disp = r.headers.get('content-disposition') || '';
     const match = disp.match(/filename="?([^";]+)"?/i);
     if (match) filename = match[1];
@@ -10005,11 +10018,15 @@ function handleRestoreDrop(event) {
 
 async function confirmarRestore(file) {
   if (!file) return;
-  if (!file.name.toLowerCase().endsWith('.db')) {
-    _showLocalAlert('backup-alert', 'Selecione um arquivo .db válido.', 'danger');
+  const nome = file.name.toLowerCase();
+  if (!nome.endsWith('.db') && !nome.endsWith('.zip')) {
+    _showLocalAlert('backup-alert', 'Selecione o backup completo (.zip) ou um banco (.db).', 'danger');
     return;
   }
-  if (!confirm('Restaurar este backup? Os dados atuais serão substituídos.')) return;
+  if (!confirm(nome.endsWith('.zip')
+      ? 'Restaurar este backup completo? O banco atual será substituído e os PDFs das notas do backup voltam para o sistema.'
+      : 'Restaurar este backup? Os dados atuais serão substituídos (os PDFs das notas não mudam).')) return;
+  _showLocalAlert('backup-alert', 'Restaurando... aguarde.');
   const form = new FormData();
   form.append('file', file);
   try {
