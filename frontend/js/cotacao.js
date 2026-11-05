@@ -179,6 +179,45 @@
     catch (_) { prompt('Copie o resumo:', txt); }
   };
 
+  /* Painel completo para a janela de cotação do frete do vendedor: totais, caixas por item
+     e o botão para copiar e mandar para a transportadora (une "Cotação" + "Enviar cotação"). */
+  let painelDados = null;
+  window.cotPainelEnvio = async function (id, el) {
+    if (!el) return null;
+    el.innerHTML = '<span style="color:var(--muted)">Carregando caixas, peso e cubagem...</span>';
+    let d;
+    try { d = await chamar(`/pedidos/${id}/cotacao`); }
+    catch (err) { el.innerHTML = '<span style="color:var(--muted)">Dados de embalagem indisponíveis</span>'; return null; }
+    painelDados = d;
+    const t = d.totais || {};
+    const mini = (rot, val) => `<div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:8px 10px">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.7px;color:var(--muted);text-transform:uppercase">${rot}</div>
+        <div style="font-size:20px;font-weight:800;color:var(--accent)">${val}</div></div>`;
+    const linhas = (d.itens || []).filter(it => it.origem === 'cadastro').map(it =>
+        `<li>${e(it.descricao)}: <strong>${n(it.caixas, 0)} cx</strong> de ${medidas(it.comprimento, it.largura, it.altura)} · ${n(it.peso_caixa)} kg/cx</li>`)
+      .concat((d.manuais || []).map(m => `<li>${e(m.descricao || 'Caixas avulsas')}: <strong>${n(m.qtd_caixas, 0)} cx</strong> de ${medidas(m.comprimento, m.largura, m.altura)} · ${n(m.peso_caixa)} kg/cx</li>`));
+    el.dataset.pedidoId = id;
+    el.innerHTML = `<div style="border:1px solid rgba(96,165,250,.45);background:rgba(96,165,250,.07);border-radius:12px;padding:12px 14px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+        <strong style="color:#8fb8ff">① Dados para cotar com a transportadora</strong>
+        <span style="display:flex;gap:6px;flex-wrap:wrap">
+          <button type="button" class="btn btn-sm btn-primary" onclick="cotCopiarPainel()">📋 Copiar para a transportadora</button>
+          <button type="button" class="btn btn-sm btn-secondary" onclick="abrirCotacaoPedido(${id})">${d.pode_editar ? 'Ver / lançar caixas' : 'Ver caixas'}</button>
+        </span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px">${mini('Volumes', n(t.caixas, 0) + ' cx')}${mini('Peso', n(t.peso_kg) + ' kg')}${mini('Cubagem', n(t.cubagem_m3, 3) + ' m³')}</div>
+      ${linhas.length ? `<ul style="margin:8px 0 0 18px;padding:0;font-size:12px;color:var(--muted);line-height:1.6">${linhas.join('')}</ul>` : ''}
+      ${(d.avisos || []).length ? `<div style="margin-top:8px;font-size:12px;color:var(--warn)">⚠ ${d.avisos.length} item(ns) sem dados de embalagem — não somados nos totais</div>` : ''}
+    </div>`;
+    return d;
+  };
+  window.cotCopiarPainel = async function () {
+    if (!painelDados) return;
+    const txt = textoResumo(painelDados);
+    try { await navigator.clipboard.writeText(txt); alert('Copiado! Cole na cotação da transportadora (WhatsApp, e-mail ou site).'); }
+    catch (_) { prompt('Copie o resumo:', txt); }
+  };
+
   /* Resumo curto (uma linha) para colocar em outras telas, ex.: modal de despacho. */
   window.resumoCotacaoHTML = async function (id, el) {
     if (!el) return;
