@@ -622,6 +622,7 @@
 
       <!-- CLIENTES -->
       <div id="ped-tab-clientes" style="display:none">
+        <div id="ped-clientes-novos"></div>
         <div class="flex items-center justify-between mb-4">
           <input type="text" id="ped-busca-cliente" placeholder="Buscar por nome ou CNPJ..." onkeyup="loadClientes()" style="max-width:300px">
           <div style="display:flex;gap:8px"><button class="btn btn-secondary" onclick="openModalImportarClientes()" data-perm-criar="pedidos">📥 Importar Clientes</button><button class="btn btn-primary" onclick="openModalCliente()" data-perm-criar="pedidos">+ Novo Cliente</button></div>
@@ -1399,6 +1400,16 @@
                 <label for="cfg-prazo-vermelho" style="font-size:13px;margin-left:10px">🔴 Vermelho a partir de</label>
                 <input type="number" id="cfg-prazo-vermelho" min="0" step="1" style="max-width:80px"> <span style="font-size:13px">dias</span>
                 <button class="btn btn-sm btn-primary" onclick="salvarPrazosParados()">💾 Salvar prazos</button>
+              </div>
+            </div>
+            <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:12px">
+              <div style="font-size:13px;color:var(--muted);margin-bottom:10px">Alertas para o vendedor e o Gestor: cotação de frete sem resposta do cliente e retirada que não acontece.</div>
+              <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+                <label for="cfg-cotacao-vencida" style="font-size:13px">📨 Cotação vencida após</label>
+                <input type="number" id="cfg-cotacao-vencida" min="1" step="1" style="max-width:80px"> <span style="font-size:13px">dias</span>
+                <label for="cfg-retirada-alerta" style="font-size:13px;margin-left:10px">🙋 Retirada atrasada após</label>
+                <input type="number" id="cfg-retirada-alerta" min="1" step="1" style="max-width:80px"> <span style="font-size:13px">dias</span>
+                <button class="btn btn-sm btn-primary" onclick="salvarPrazosAlerta()">💾 Salvar alertas</button>
               </div>
             </div>
           </div>
@@ -3173,7 +3184,7 @@
 
 <script src="js/cotacao.js?v=20261030-embalagem"></script>
 <script src="js/estoque-cliente.js?v=20261030-estcli"></script>
-<script src="js/app.js?v=20261105-autorizafrete"></script>
+<script src="js/app.js?v=20261105-clientesnovos"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');

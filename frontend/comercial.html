@@ -47,6 +47,20 @@
   .mp-menu button:hover,.mp-menu button:focus{background:rgba(255,255,255,.07);outline:none}
   .mp-menu button.perigo{color:var(--danger)}
   .mp-menu-sep{height:1px;background:var(--border);margin:4px 6px}
+  .mp-novo{display:inline-block;margin-left:6px;background:#14b8a6;color:#04201d;font-size:10px;font-weight:800;letter-spacing:.6px;border-radius:6px;padding:2px 6px;vertical-align:middle;line-height:1.3}
+  .mp-cli{background:none;border:0;padding:0;color:inherit;font:inherit;text-align:left;cursor:pointer;text-decoration:underline dotted;text-decoration-color:var(--muted);text-underline-offset:3px}
+  .mp-cli:hover,.mp-cli:focus{color:var(--accent);text-decoration-color:var(--accent);outline:none}
+  .mp-grupo td{background:var(--surface2);font-weight:800;font-size:13px;color:var(--accent);text-transform:capitalize;padding-top:8px!important;padding-bottom:8px!important}
+  .mp-grupo td span{color:var(--muted);font-weight:500;text-transform:none}
+  .mp-alerta{border:1px solid var(--danger);background:rgba(239,68,68,.08);border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:13px;line-height:1.5}
+  .mp-mes-nav{display:flex;align-items:center;gap:8px;text-transform:capitalize}
+  .mp-mes-nav strong{min-width:130px;text-align:center}
+  .mp-metricas{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;padding:16px}
+  .mp-metrica{background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:12px 14px}
+  .mp-metrica .l{font-size:11px;letter-spacing:.8px;font-weight:700;color:var(--muted);text-transform:uppercase}
+  .mp-metrica .v{font-family:Syne,sans-serif;font-size:24px;font-weight:800;margin:4px 0}
+  .mp-metrica .s{font-size:12px;color:var(--muted)}
+  .mp-delta{font-weight:700}.mp-delta.sobe{color:var(--success)}.mp-delta.desce{color:var(--danger)}
   .mp-nov{background:rgba(240,180,41,.13);border:1px solid var(--accent);border-left:6px solid var(--accent);border-radius:10px;padding:10px 14px;margin-bottom:14px;box-shadow:0 0 0 3px rgba(240,180,41,.08)}
   .mp-nov-barra{display:flex;align-items:center;gap:12px;font-size:14px;flex-wrap:wrap}
   .mp-nov-txt{flex:1;min-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -958,8 +972,18 @@ let mpNovAberto = false;
 let mpTodosStatus = '';
 const mpPag = {};
 const MP_POR_PAG = 15;
+// Histórico (Concluídos / Todos), "Meu mês" e busca vêm do servidor, por mês e por página
+const MP_MESES = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto','setembro','outubro','novembro','dezembro'];
+const mpHoje = () => hojeISO().slice(0, 7);
+const mpMesSomar = (m, n) => { let a = +m.slice(0, 4), k = +m.slice(5, 7) - 1 + n; a += Math.floor(k / 12); k = ((k % 12) + 12) % 12; return `${a}-${String(k + 1).padStart(2, '0')}`; };
+const mpNomeMes = m => m ? `${MP_MESES[+m.slice(5, 7) - 1]} ${m.slice(0, 4)}` : '';
+const mpBRLCurto = v => { v = Number(v) || 0; return v >= 1e6 ? 'R$ ' + (v / 1e6).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' mi' : v >= 1e4 ? 'R$ ' + (v / 1e3).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + ' mil' : fmtBRL(v); };
+let mpConclMes = null, mpTodosMes = '3m', mpMesSel = null;
+const mpHist = { concluidos: null, todos: null };
+let mpMesDados = null, mpBuscaRes = null, mpBuscaTimer = null, mpFicha = null;
+const mpPrazo = k => Number(((mpDados && mpDados.prazos) || {})[k]) || ({ cotacao_vencida: 3, retirada_alerta: 15 })[k];
 const MP_ETAPA_LABEL = { voce: 'Aguardando você', cliente: 'Aguardando cliente', separacao: 'Separação / embalagem',
-  producao: 'Em produção', expedicao: 'Com a Expedição', concluidos: 'Concluído', estoque: 'No estoque do cliente' };
+  producao: 'Em produção', expedicao: 'Com a Expedição', concluidos: 'Concluído', estoque: 'No estoque do cliente', mes: 'Meu mês' };
 
 function renderNovidades() {
   const el = document.getElementById('mp-novidades');
@@ -1019,35 +1043,69 @@ function mpEtapaRemessa(r) {
 function mpPedidosMeus() { return mpDados.pedidos || []; }
 function mpPedidosTodos() {
   const m = new Map();
-  (window._comLista || []).forEach(p => m.set(p.id, p));
-  mpPedidosMeus().forEach(p => m.set(p.id, Object.assign({}, m.get(p.id) || {}, p)));
+  const add = arr => (arr || []).forEach(p => m.set(p.id, Object.assign({}, m.get(p.id) || {}, p)));
+  add(mpHist.todos && mpHist.todos.itens); add(mpHist.concluidos && mpHist.concluidos.itens);
+  add(mpBuscaRes && mpBuscaRes.itens); add(mpFicha && mpFicha.pedidos);
+  add(mpPedidosMeus());
   return [...m.values()];
 }
 function mpPedidoPorId(id) { return mpPedidosTodos().find(p => p.id === id); }
-function mpRemessaPorId(id) { return (mpDados.remessas || []).find(r => r.id === id); }
+function mpRemessaPorId(id) {
+  return [].concat(mpDados.remessas || [], (mpHist.concluidos && mpHist.concluidos.remessas) || [], (mpBuscaRes && mpBuscaRes.remessas) || [])
+    .find(r => r.id === id);
+}
 const mpDataConcl = p => (p.status === 'entregue' ? (p.data_entrega || p.data_despacho) : p.data_despacho) || '';
 
 function mpItensAba(aba) {
-  const rs = mpDados.remessas || [];
-  if (aba === 'todos') {
-    let ps = mpPedidosTodos();
-    if (mpTodosStatus) ps = ps.filter(p => (p.status || 'aberto') === mpTodosStatus);
-    return ps.sort((a, b) => b.id - a.id).map(p => ({ t: 'p', o: p }));
-  }
-  const fonte = aba === 'producao' ? (window._comLista || []).map(p => Object.assign({}, p, mpPedidosMeus().find(x => x.id === p.id) || {}))
-                                   : mpPedidosMeus();
-  let itens = fonte.filter(p => mpEtapaPedido(p) === aba).map(p => ({ t: 'p', o: p }))
-    .concat(rs.filter(r => mpEtapaRemessa(r) === aba).map(r => ({ t: 'r', o: r })));
   if (aba === 'concluidos') {
-    const d = it => it.t === 'p' ? mpDataConcl(it.o) : (it.o.data_despacho || it.o.concluido_em || '');
-    itens.sort((a, b) => String(d(b)).localeCompare(String(d(a))));
-  } else if (aba === 'producao') {
+    const h = mpHist.concluidos; if (!h) return [];
+    return ((h.pagina || 1) === 1 ? (h.remessas || []).map(r => ({ t: 'r', o: r })) : []).concat((h.itens || []).map(p => ({ t: 'p', o: p })));
+  }
+  if (aba === 'todos') return ((mpHist.todos && mpHist.todos.itens) || []).map(p => ({ t: 'p', o: p }));
+  if (aba === 'mes') return [];
+  const rs = mpDados.remessas || [];
+  const itens = mpPedidosMeus().filter(p => mpEtapaPedido(p) === aba).map(p => ({ t: 'p', o: p }))
+    .concat(rs.filter(r => mpEtapaRemessa(r) === aba).map(r => ({ t: 'r', o: r })));
+  if (aba === 'producao') {
     itens.sort((a, b) => String(a.o.prazo_entrega || '').localeCompare(String(b.o.prazo_entrega || '')));
   } else {
     const d = it => it.t === 'p' ? (aba === 'cliente' ? it.o.cotacao_enviada_em : it.o.status_desde) : (it.o.status_desde || it.o.criado_em);
     itens.sort((a, b) => String(d(a) || '').localeCompare(String(d(b) || '')));   // parado há mais tempo primeiro
   }
   return itens;
+}
+const mpCotDias = it => mpDiasDesde(it.t === 'p' ? it.o.cotacao_enviada_em : it.o.criado_em);
+const mpCotVencida = it => mpCotDias(it) >= mpPrazo('cotacao_vencida');
+const mpRetAtrasada = it => it.o.status === 'aguardando_retirada' && (Number(it.o.dias_na_etapa) || 0) >= mpPrazo('retirada_alerta');
+
+// ── carga do histórico / Meu mês / busca (servidor)
+async function mpCarregarHist(qual) {
+  if (qual === 'concluidos') {
+    mpConclMes = mpConclMes || mpHoje();
+    mpHist.concluidos = await req(`/pedidos/meus/historico?modo=concluidos&mes=${mpConclMes}&pagina=${mpPag.concluidos || 1}&por_pagina=${MP_POR_PAG}`);
+  } else if (qual === 'todos') {
+    mpHist.todos = await req(`/pedidos/meus/historico?modo=todos&mes=${encodeURIComponent(mpTodosMes)}&status=${encodeURIComponent(mpTodosStatus)}&pagina=${mpPag.todos || 1}&por_pagina=${MP_POR_PAG}`);
+  } else if (qual === 'mes') {
+    mpMesSel = mpMesSel || mpHoje();
+    mpMesDados = await req('/pedidos/meus/mes?mes=' + mpMesSel);
+  }
+}
+async function mpRecarregar(qual, rolar) {
+  try { await mpCarregarHist(qual); } catch (e) { showAlert(e.message, 'danger'); }
+  window._comLista = mpPedidosTodos();
+  renderCardsMeus(); renderSecoesMeus();
+  if (rolar) mpRolarParaLista();
+}
+function mpConclNav(d) { mpConclMes = mpMesSomar(mpConclMes || mpHoje(), d); mpPag.concluidos = 1; mpRecarregar('concluidos'); }
+function mpMesNav(d) { mpMesSel = mpMesSomar(mpMesSel || mpHoje(), d); mpRecarregar('mes'); }
+function mpTodosPeriodo(v) { mpTodosMes = v; mpPag.todos = 1; mpRecarregar('todos'); }
+function mpTodosFiltro(v) { mpTodosStatus = v; mpPag.todos = 1; mpRecarregar('todos'); }
+function mpNavMes(mes, fn, extra) {
+  const atual = mes >= mpHoje();
+  return `<div class="mp-mes-nav">
+    <button type="button" class="btn btn-sm btn-secondary" aria-label="Mês anterior" onclick="${fn}(-1)">◀</button>
+    <strong>${mpNomeMes(mes)}</strong>
+    <button type="button" class="btn btn-sm btn-secondary" aria-label="Próximo mês" ${atual ? 'disabled' : ''} onclick="${fn}(1)">▶</button>${extra || ''}</div>`;
 }
 
 function mpAbaAtual() {
@@ -1080,8 +1138,19 @@ setTimeout(mpAjustarTopo, 800);
 function mpBuscar(v) {
   mpBusca = (v || '').trim();
   mpPag.busca = 1;
+  clearTimeout(mpBuscaTimer);
+  mpBuscaRes = null;
   renderCardsMeus(); renderSecoesMeus();
+  if (mpBusca.length < 2) return;
+  mpBuscaTimer = setTimeout(async () => {
+    const q = mpBusca;
+    try {
+      const r = await req('/pedidos/meus/busca?q=' + encodeURIComponent(q));
+      if (q === mpBusca) { mpBuscaRes = r; renderSecoesMeus(); }
+    } catch (e) { if (q === mpBusca) { mpBuscaRes = { itens: [], remessas: [], erro: e.message }; renderSecoesMeus(); } }
+  }, 300);
 }
+const mpBuscando = () => mpBusca.length >= 2;
 
 function renderCardsMeus() {
   const el = document.getElementById('com-cards');
@@ -1089,20 +1158,23 @@ function renderCardsMeus() {
   const atual = mpAbaAtual();
   const n = a => mpItensAba(a).length;
   const ps = mpPedidosMeus();
-  const aguardCliVelho = mpItensAba('cliente').filter(it => mpDiasDesde(it.t === 'p' ? it.o.cotacao_enviada_em : it.o.criado_em) >= 3).length;
+  const cotVenc = mpItensAba('cliente').filter(mpCotVencida).length;
+  const retAtras = mpItensAba('expedicao').filter(mpRetAtrasada).length;
   const nf = ps.filter(p => p.status === 'aguardando_nf').length + (mpDados.remessas || []).filter(r => r.status === 'aguardando_nf').length;
   const ret = ps.filter(p => p.status === 'aguardando_retirada').length + (mpDados.remessas || []).filter(r => r.status === 'aguardando_retirada').length;
-  const card = (a, rotulo, qtd, sub, cor, pend) => `<button type="button" class="mp-card${a === atual && !mpBusca ? ' ativo' : ''}${pend && qtd ? ' pend' : ''}" onclick="mpEscolherAba('${a}')">
-      <div class="l">${rotulo}</div><div class="v" style="color:${qtd ? cor : 'var(--muted)'}">${qtd}</div><div class="s">${sub}</div></button>`;
-  el.className = 'mp-cards' + (mpBusca ? ' buscando' : '');
+  const hc = mpHist.concluidos, ht = mpHist.todos, mm = mpMesDados && mpMesDados.atual;
+  const card = (a, rotulo, qtd, sub, cor, pend, valorTxt) => `<button type="button" class="mp-card${a === atual && !mpBuscando() ? ' ativo' : ''}${pend ? ' pend' : ''}" onclick="mpEscolherAba('${a}')">
+      <div class="l">${rotulo}</div><div class="v" style="color:${qtd ? cor : 'var(--muted)'}${valorTxt ? ';font-size:22px' : ''}">${valorTxt || qtd}</div><div class="s">${sub}</div></button>`;
+  el.className = 'mp-cards' + (mpBuscando() ? ' buscando' : '');
   el.innerHTML =
-    card('voce', '⏳ Aguardando você', n('voce'), 'enviar cotação ou retirada', 'var(--danger)', true) +
-    card('cliente', '📨 Aguardando cliente', n('cliente'), aguardCliVelho ? `${aguardCliVelho} há 3+ dias` : 'cotação enviada', 'var(--accent)', true) +
+    card('voce', '⏳ Aguardando você', n('voce'), 'enviar cotação ou retirada', 'var(--danger)', n('voce') > 0) +
+    card('cliente', '📨 Aguardando cliente', n('cliente'), cotVenc ? `<span style="color:var(--danger);font-weight:700">${cotVenc} vencida(s) · cobrar o cliente</span>` : 'cotação enviada', cotVenc ? 'var(--danger)' : 'var(--accent)', cotVenc > 0) +
     card('separacao', '📦 Separação', n('separacao'), 'revenda / embalagem', 'var(--text)', false) +
     card('producao', '🏭 Em produção', n('producao'), 'abertos e em produção', 'var(--text)', false) +
-    card('expedicao', '🧾 Com a Expedição', n('expedicao'), `${nf} aguardando NF · ${ret} retirada`, 'var(--accent2)', false) +
-    card('concluidos', '✅ Concluídos', n('concluidos'), 'últimos 15 dias', 'var(--success)', false) +
-    card('todos', '📋 Todos', mpPedidosTodos().length, 'histórico com filtros', 'var(--text)', false);
+    card('expedicao', '🧾 Com a Expedição', n('expedicao'), retAtras ? `<span style="color:var(--danger);font-weight:700">${retAtras} retirada(s) atrasada(s)</span>` : `${nf} aguardando NF · ${ret} retirada`, 'var(--accent2)', retAtras > 0) +
+    card('concluidos', '✅ Concluídos', hc ? (hc.total + (hc.remessas || []).length) : 0, 'em ' + mpNomeMes(mpConclMes || mpHoje()), 'var(--success)', false) +
+    card('todos', '📋 Todos', ht ? ht.total : 0, mpTodosMes === '3m' ? 'últimos 3 meses' : mpNomeMes(mpTodosMes), 'var(--text)', false) +
+    card('mes', '📈 Meu mês', mm ? mm.vendido.qtd : 0, mm ? `${mm.vendido.qtd} pedido(s) · ${mm.clientes_novos} cliente(s) novo(s)` : 'resumo do mês', 'var(--accent)', false, mm ? mpBRLCurto(mm.vendido.valor) : '—');
 }
 
 // ── botões e menu ⋯
@@ -1177,13 +1249,15 @@ window.addEventListener('resize', mpFecharMenu);
 function mpCelPedido(it) {
   if (it.t === 'r') { const r = it.o; return `<strong>${esc(r.numero_pedido)}</strong><div style="font-size:11px;color:var(--accent2);font-weight:700">REMESSA ${r.numero} · parcial</div>`; }
   const p = it.o;
-  return `<strong>${esc(p.numero_pedido)}</strong>` + (Number(p.origem_estoque_cliente) ? `<div style="font-size:11px;color:var(--accent2)">🏷️ entrega do estoque do cliente</div>` : '')
+  return `<strong>${esc(p.numero_pedido)}</strong>${mpSeloNovo(p)}` + (Number(p.origem_estoque_cliente) ? `<div style="font-size:11px;color:var(--accent2)">🏷️ entrega do estoque do cliente</div>` : '')
     + (mpTemRemessa(p) && (mpDados.restante || {})[String(p.id)] !== undefined ? `<div style="font-size:11px;color:var(--muted)">falta enviar ${fmtNum((mpDados.restante || {})[String(p.id)])}</div>` : '');
 }
+const mpSeloNovo = p => Number(p.cliente_novo) ? ' <span class="mp-novo" title="Cliente novo: primeiro pedido dele">NOVO</span>' : '';
+const mpNomeCli = o => o && o.cliente_id ? `<button type="button" class="mp-cli" title="Ver a ficha do cliente" onclick="mpAbrirFicha(${o.cliente_id})">${esc(o.cliente_nome)}</button>` : esc((o && o.cliente_nome) || '—');
 function mpCelCliente(it) {
-  if (it.t === 'r') return `${esc(it.o.cliente_nome)}<div style="font-size:11px;color:var(--muted)">${(it.o.itens || []).map(i => fmtNum(i.quantidade) + ' ' + esc(i.descricao || '')).join('<br>')}</div>`;
+  if (it.t === 'r') return `${mpNomeCli(it.o)}<div style="font-size:11px;color:var(--muted)">${(it.o.itens || []).map(i => fmtNum(i.quantidade) + ' ' + esc(i.descricao || '')).join('<br>')}</div>`;
   const p = it.o;
-  return esc(p.cliente_nome) + ((p.revenda_pendentes || 0) > 0 ? `<div style="font-size:11px;color:var(--warn)">⚠ ${p.revenda_pendentes} item(ns) de revenda a separar</div>` : '')
+  return mpNomeCli(p) + ((p.revenda_pendentes || 0) > 0 ? `<div style="font-size:11px;color:var(--warn)">⚠ ${p.revenda_pendentes} item(ns) de revenda a separar</div>` : '')
     + (p.status === 'produzido' && (p.embalagem_pendentes || 0) > 0 ? `<div style="font-size:11px;color:var(--warn)">⚠ embalagem de ${p.embalagem_pendentes} item(ns) ainda não informada</div>` : '');
 }
 function mpCelSaida(it) {
@@ -1229,7 +1303,20 @@ function mpPaginar(chave, itens) {
       <button class="btn btn-sm btn-secondary" ${pg >= total ? 'disabled' : ''} onclick="mpIrPag('${chave}',1)">Próxima →</button></span>` : ''}</div>` : '';
   return { fatia, rodape };
 }
-function mpIrPag(chave, d) { mpPag[chave] = (mpPag[chave] || 1) + d; renderSecoesMeus(); mpRolarParaLista(); }
+function mpIrPag(chave, d) {
+  mpPag[chave] = (mpPag[chave] || 1) + d;
+  if (chave === 'concluidos' || chave === 'todos') { mpRecarregar(chave, true); return; }
+  renderSecoesMeus(); mpRolarParaLista();
+}
+// Paginação feita pelo servidor (Concluídos / Todos)
+function mpRodapeServ(chave, h, qtdNaPagina) {
+  if (!h || !h.total) return '';
+  const total = Math.max(1, Math.ceil(h.total / h.por_pagina)), pg = h.pagina || 1, ini = (pg - 1) * h.por_pagina;
+  return `<div class="mp-rodape"><span>${ini + 1}–${ini + qtdNaPagina} de ${h.total}</span>${total > 1 ? `<span style="display:flex;gap:6px;align-items:center">
+      <button class="btn btn-sm btn-secondary" ${pg <= 1 ? 'disabled' : ''} onclick="mpIrPag('${chave}',-1)">← Anterior</button>
+      <span>Página ${pg} de ${total}</span>
+      <button class="btn btn-sm btn-secondary" ${pg >= total ? 'disabled' : ''} onclick="mpIrPag('${chave}',1)">Próxima →</button></span>` : ''}</div>`;
+}
 
 function mpTabela(titulo, sub, cab, linhas, vazio, rodape, extraTopo) {
   return `<div class="table-wrap" style="margin-bottom:18px">
@@ -1247,10 +1334,12 @@ function renderSecoesMeus() {
   const el = document.getElementById('mp-secoes');
   if (!el) return;
   mpFecharMenu();
-  if (mpBusca) { el.innerHTML = mpRenderBusca(); return; }
+  if (mpBuscando()) { el.innerHTML = mpRenderBusca(); return; }
   const aba = mpAbaAtual();
+  if (aba === 'mes') { el.innerHTML = mpRenderMes(); return; }
   const itens = mpItensAba(aba);
-  const { fatia, rodape } = mpPaginar(aba, itens);
+  let { fatia, rodape } = mpPaginar(aba, itens);
+  if (aba === 'concluidos' || aba === 'todos') { fatia = itens; rodape = mpRodapeServ(aba, mpHist[aba], (mpHist[aba] && mpHist[aba].itens || []).length); }
   const valor = p => fmtBRL(p.valor_total);
   let html = '';
   if (aba === 'voce') {
@@ -1260,10 +1349,12 @@ function renderSecoesMeus() {
       fatia.map(it => `<tr><td>${mpCelPedido(it)}</td><td>${mpCelCliente(it)}</td><td>${seloDias(it.o.dias_na_etapa)}</td><td>${valor(it.o)}</td><td>${mpAcoesLinha(it)}</td></tr>`),
       '✅ Nenhum pedido aguardando você', rodape);
   } else if (aba === 'cliente') {
-    html = mpTabela('📨 Aguardando autorização do cliente', 'Cotação de frete enviada · só vai para a Expedição depois de “Cliente autorizou”',
+    const venc = itens.filter(mpCotVencida).length;
+    if (venc) html += `<div class="mp-alerta">⚠ <strong>${venc} cotação(ões) sem resposta há ${mpPrazo('cotacao_vencida')} dias ou mais.</strong> Fale com o cliente e clique em <strong>Cliente autorizou</strong>, ou use o ⋯ para alterar ou cancelar a cotação.</div>`;
+    html += mpTabela('📨 Aguardando autorização do cliente', 'Cotação de frete enviada · só vai para a Expedição depois de “Cliente autorizou”',
       ['Pedido', 'Cliente', 'Frete cotado', 'Cotação enviada há', ''],
       fatia.map(it => `<tr><td>${mpCelPedido(it)}</td><td>${mpCelCliente(it)}</td><td>${esc(it.o.transportadora || '—')} · <strong>${fmtBRL(it.o.frete)}</strong>${it.o.previsao_entrega ? `<div style="font-size:11px;color:var(--muted)">previsão ${fmtDate(String(it.o.previsao_entrega).slice(0, 10))}</div>` : ''}</td>
-        <td>${seloDias(mpDiasDesde(it.t === 'p' ? it.o.cotacao_enviada_em : it.o.criado_em))}</td><td>${mpAcoesLinha(it)}</td></tr>`),
+        <td>${mpCotVencida(it) ? `<span class="pill pill-danger">vencida · ${mpCotDias(it)} dias</span><div style="font-size:11px;color:var(--danger);margin-top:3px">O cliente respondeu?</div>` : seloDias(mpCotDias(it))}</td><td>${mpAcoesLinha(it)}</td></tr>`),
       'Nenhuma cotação esperando o cliente', rodape);
   } else if (aba === 'separacao') {
     html = mpTabela('📦 Aguardando separação / embalagem', 'Liberado para o frete quando o Estoque concluir',
@@ -1276,7 +1367,7 @@ function renderSecoesMeus() {
       fatia.map(it => {
         const p = it.o, dias = Math.round(p.dias_restantes);
         const cor = dias < 0 ? 'var(--danger)' : dias <= 3 ? 'var(--warn)' : 'var(--success)';
-        return `<tr><td>${mpCelPedido(it)}</td><td>${esc(p.cliente_nome)}</td><td>${fmtDate(p.prazo_entrega)}</td>
+        return `<tr><td>${mpCelPedido(it)}</td><td>${mpNomeCli(p)}</td><td>${fmtDate(p.prazo_entrega)}</td>
           <td style="color:${cor};font-weight:700">${isNaN(dias) ? '—' : dias < 0 ? 'Vencido' : dias + 'd'}</td>
           <td style="color:var(--muted)">${p.itens_entregues != null ? p.itens_entregues + '/' + p.total_itens : '—'}</td>
           <td><span class="pill ${STATUS_PILL_PEDIDO[p.status] || ''}">${STATUS_LABEL_PEDIDO[p.status] || esc(p.status)}</span></td><td>${mpAcoesLinha(it)}</td></tr>`;
@@ -1289,42 +1380,56 @@ function renderSecoesMeus() {
         const sit = it.t === 'r' ? (MP_ST_REM[o.status] || o.status) : (o.status === 'produzido' ? 'Todo em remessas' : STATUS_LABEL_PEDIDO[o.status] || o.status);
         const venc = o.status === 'aguardando_retirada' && o.retirada_prevista && String(o.retirada_prevista).slice(0, 10) < hojeISO();
         return `<tr><td>${mpCelPedido(it)}</td><td>${mpCelCliente(it)}</td><td>${mpCelSaida(it)}</td><td>${mpPillEtapa('expedicao', sit)}</td>
-          <td>${venc ? seloDias(99999, 'retirada vencida') : seloDias(o.dias_na_etapa)}</td><td>${mpAcoesLinha(it)}</td></tr>`;
+          <td>${mpRetAtrasada(it) ? `<span class="pill pill-danger">parado ${o.dias_na_etapa} dias</span><div style="font-size:11px;color:var(--danger);margin-top:3px">confirme com o cliente</div>` : venc ? seloDias(99999, 'retirada vencida') : seloDias(o.dias_na_etapa)}</td><td>${mpAcoesLinha(it)}</td></tr>`;
       }), 'Nada com a Expedição agora', rodape);
+    const atras = itens.filter(mpRetAtrasada).length;
+    if (atras) html = `<div class="mp-alerta">⚠ <strong>${atras} retirada(s) parada(s) há ${mpPrazo('retirada_alerta')} dias ou mais.</strong> Confirme com o cliente quando ele vem buscar.</div>` + html;
   } else if (aba === 'concluidos') {
-    html = mpTabela('✅ Concluídos nos últimos 15 dias', 'Mais recentes primeiro · os mais antigos ficam em “Todos”',
+    const hc = mpHist.concluidos;
+    html = mpTabela('✅ Concluídos', `Saíram ou foram entregues em ${mpNomeMes(mpConclMes || mpHoje())}${hc && hc.valor_total ? ' · ' + fmtBRL(hc.valor_total) : ''} · mais recentes primeiro`,
       ['Pedido', 'Cliente', 'Saída', 'NF', 'Data', ''],
       fatia.map(it => {
-        const o = it.o, data = it.t === 'p' ? mpDataConcl(o) : (o.data_despacho || o.concluido_em || '');
-        return `<tr><td>${mpCelPedido(it)}</td><td>${it.t === 'p' ? esc(o.cliente_nome) : mpCelCliente(it)}</td>
+        const o = it.o, data = it.t === 'p' ? (o.data_ref || mpDataConcl(o)) : (o.data_despacho || o.concluido_em || '');
+        return `<tr><td>${mpCelPedido(it)}</td><td>${it.t === 'p' ? mpNomeCli(o) : mpCelCliente(it)}</td>
           <td>${it.t === 'p' ? `<span class="pill ${STATUS_PILL_PEDIDO[o.status] || ''}">${STATUS_LABEL_PEDIDO[o.status] || esc(o.status)}</span>${o.status === 'enviado' && o.transportadora ? ' <span style="color:var(--muted);font-size:12px">' + esc(o.transportadora) + '</span>' : ''}` : mpCelSaida(it)}</td>
           <td style="white-space:nowrap">${esc(o.nota_fiscal || '—')}</td><td>${data ? fmtDate(String(data).slice(0, 10)) : '—'}</td><td>${mpAcoesLinha(it)}</td></tr>`;
-      }), 'Nenhum pedido concluído nos últimos 15 dias', rodape);
+      }), hc ? `Nenhum pedido concluído em ${mpNomeMes(mpConclMes || mpHoje())}` : 'Carregando...', rodape, mpNavMes(mpConclMes || mpHoje(), 'mpConclNav'));
   } else {
+    const ht = mpHist.todos;
     const opts = [['', 'Todos os status'], ['aberto', 'Aberto'], ['em_producao', 'Em produção'], ['produzido', 'Produzido'], ['em_estoque', 'No estoque do cliente'],
       ['aguardando_nf', 'Aguardando NF'], ['aguardando_retirada', 'Aguardando retirada'], ['enviado', 'Enviado'], ['retirado', 'Retirado'], ['entregue', 'Entregue']];
-    const sel = `<select aria-label="Filtrar por status" onchange="mpTodosStatus=this.value;mpPag.todos=1;renderSecoesMeus()" style="min-width:200px">${opts.map(([v, t]) => `<option value="${v}"${v === mpTodosStatus ? ' selected' : ''}>${t}</option>`).join('')}</select>`;
-    html = mpTabela('📋 Todos os meus pedidos', 'Histórico completo · mais novos primeiro',
-      ['Pedido', 'Cliente', 'Prazo', 'Etapa', ''],
-      fatia.map(it => { const p = it.o, et = mpEtapaPedido(p);
-        return `<tr><td>${mpCelPedido(it)}</td><td>${esc(p.cliente_nome)}</td><td>${fmtDate(p.prazo_entrega)}</td>
-          <td><span class="pill ${STATUS_PILL_PEDIDO[p.status] || ''}">${(p.status === 'produzido' && Number(p.revenda_bloqueado)) ? '📦 Aguardando separação' : (STATUS_LABEL_PEDIDO[p.status] || esc(p.status))}</span></td>
-          <td>${mpAcoes((et === 'producao' ? `<button class="btn btn-sm btn-secondary" onclick="verDetalhe(${p.id})">Ver</button>` : '') + mpBtnNf(p) + mpBtnMais('p', p.id))}</td></tr>`; }),
-      'Nenhum pedido encontrado', rodape, sel);
+    const meses = [['3m', 'Últimos 3 meses']].concat(Array.from({ length: 24 }, (_, k) => { const m = mpMesSomar(mpHoje(), -k); return [m, mpNomeMes(m)]; }));
+    const filtros = `<div style="display:flex;gap:8px;flex-wrap:wrap">
+      <select aria-label="Período" onchange="mpTodosPeriodo(this.value)" style="min-width:170px">${meses.map(([v, t]) => `<option value="${v}"${v === mpTodosMes ? ' selected' : ''}>${t}</option>`).join('')}</select>
+      <select aria-label="Filtrar por status" onchange="mpTodosFiltro(this.value)" style="min-width:190px">${opts.map(([v, t]) => `<option value="${v}"${v === mpTodosStatus ? ' selected' : ''}>${t}</option>`).join('')}</select></div>`;
+    const grupos = {}; ((ht && ht.grupos) || []).forEach(g => { grupos[g.mes] = g; });
+    let ultimo = null;
+    const linhas = [];
+    fatia.forEach(it => {
+      const p = it.o, et = mpEtapaPedido(p), mes = String(p.data_ref || p.created_at || '').slice(0, 7);
+      if (mpTodosMes === '3m' && mes !== ultimo) {
+        ultimo = mes; const g = grupos[mes] || {};
+        linhas.push(`<tr class="mp-grupo"><td colspan="5">${mpNomeMes(mes)} <span>— ${g.qtd || 0} pedido(s) · ${fmtBRL(g.valor || 0)}</span></td></tr>`);
+      }
+      linhas.push(`<tr><td>${mpCelPedido(it)}</td><td>${mpNomeCli(p)}</td><td>${fmtDate(String(p.created_at || '').slice(0, 10))}</td>
+        <td><span class="pill ${STATUS_PILL_PEDIDO[p.status] || ''}">${(p.status === 'produzido' && Number(p.revenda_bloqueado)) ? '📦 Aguardando separação' : (STATUS_LABEL_PEDIDO[p.status] || esc(p.status))}</span></td>
+        <td>${mpAcoes((et === 'producao' ? `<button class="btn btn-sm btn-secondary" onclick="verDetalhe(${p.id})">Ver</button>` : '') + mpBtnNf(p) + mpBtnMais('p', p.id))}</td></tr>`);
+    });
+    html = mpTabela('📋 Todos os meus pedidos', `${mpTodosMes === '3m' ? 'Lançados nos últimos 3 meses, agrupados por mês' : 'Lançados em ' + mpNomeMes(mpTodosMes)}${ht ? ' · ' + ht.total + ' pedido(s) · ' + fmtBRL(ht.valor_total) : ''} · mais antigos: escolha o mês ou use a busca`,
+      ['Pedido', 'Cliente', 'Lançado em', 'Etapa', ''], linhas, ht ? 'Nenhum pedido neste período' : 'Carregando...', rodape, filtros);
   }
   el.innerHTML = html;
 }
 
-// Busca do topo: procura em todas as etapas (pedidos e remessas)
+// Busca do topo: procura no servidor em todas as etapas e em qualquer mês (pedidos e remessas)
 function mpRenderBusca() {
-  const q = mpBusca.toLowerCase();
-  const casa = s => String(s || '').toLowerCase().includes(q);
-  const ps = mpPedidosTodos().filter(p => casa(p.numero_pedido) || casa(p.cliente_nome) || casa(p.nome_fantasia) || casa(p.nota_fiscal))
-    .sort((a, b) => b.id - a.id).map(p => ({ t: 'p', o: p }));
-  const rs = (mpDados.remessas || []).filter(r => casa(r.numero_pedido) || casa(r.cliente_nome) || casa(r.nota_fiscal)).map(r => ({ t: 'r', o: r }));
+  if (!mpBuscaRes) return mpTabela(`🔎 Buscando “${esc(mpBusca)}”...`, 'em todas as etapas e meses', ['Pedido', 'Cliente', 'Etapa', 'Valor', ''], [], 'Buscando...', '');
+  const meus = new Map(mpPedidosMeus().map(p => [p.id, p]));
+  const ps = (mpBuscaRes.itens || []).map(p => ({ t: 'p', o: Object.assign({}, p, meus.get(p.id) || {}) }));
+  const rs = (mpBuscaRes.remessas || []).map(r => ({ t: 'r', o: Object.assign({}, r, (mpDados.remessas || []).find(x => x.id === r.id) || {}) }));
   const itens = rs.concat(ps);
   const { fatia, rodape } = mpPaginar('busca', itens);
-  return mpTabela(`🔎 Resultado da busca: “${esc(mpBusca)}”`, `${itens.length} encontrado(s) em todas as etapas · clique num card para voltar às listas`,
+  return mpTabela(`🔎 Resultado da busca: “${esc(mpBusca)}”`, `${itens.length} encontrado(s) em todas as etapas e meses${itens.length >= 60 ? ' (mostrando os 60 mais recentes)' : ''} · clique num card para voltar às listas`,
     ['Pedido', 'Cliente', 'Etapa', 'Valor', ''],
     fatia.map(it => {
       const o = it.o;
@@ -1334,9 +1439,80 @@ function mpRenderBusca() {
       else if (et === 'producao') txt = STATUS_LABEL_PEDIDO[o.status] || txt;
       else if (et === 'concluidos') txt = (STATUS_LABEL_PEDIDO[o.status] || 'Concluído') + (o.nota_fiscal ? ' · NF ' + esc(o.nota_fiscal) : '');
       else if (et === 'expedicao' && o.status) txt = 'Com a Expedição · ' + (o.status === 'aguardando_retirada' ? 'retirada' : 'aguardando NF');
-      return `<tr><td>${mpCelPedido(it)}</td><td>${it.t === 'p' ? esc(o.cliente_nome) : mpCelCliente(it)}</td><td>${mpPillEtapa(et, txt)}</td>
+      return `<tr><td>${mpCelPedido(it)}</td><td>${it.t === 'p' ? mpNomeCli(o) : mpCelCliente(it)}</td><td>${mpPillEtapa(et, txt)}</td>
         <td>${it.t === 'p' && o.valor_total != null ? fmtBRL(o.valor_total) : (it.t === 'r' ? fmtNum(o.total_qtd) + ' un.' : '—')}</td><td>${mpAcoesLinha(it)}</td></tr>`;
-    }), 'Nada encontrado com esse número ou cliente', rodape);
+    }), mpBuscaRes.erro ? esc(mpBuscaRes.erro) : 'Nada encontrado com esse número, cliente ou NF', rodape);
+}
+
+// ── Meu mês: vendido, produzido, faturado e clientes novos, comparando com o mês anterior
+function mpRenderMes() {
+  const d = mpMesDados;
+  const mes = mpMesSel || mpHoje();
+  if (!d) return mpTabela('📈 Meu mês', '', [''], [], 'Carregando...', '', mpNavMes(mes, 'mpMesNav'));
+  const a = d.atual, b = d.anterior;
+  const delta = (x, y) => {
+    if (!y) return x ? '<span class="mp-delta sobe">novo</span>' : '<span class="mp-delta">—</span>';
+    const pct = Math.round((x - y) / y * 100);
+    return `<span class="mp-delta ${pct > 0 ? 'sobe' : pct < 0 ? 'desce' : ''}">${pct > 0 ? '▲ +' : pct < 0 ? '▼ ' : ''}${pct}% vs ${MP_MESES[+b.mes.slice(5, 7) - 1]}</span>`;
+  };
+  const bloco = (titulo, dica, qtd, valor, qAnt, vAnt) => `<div class="mp-metrica">
+      <div class="l">${titulo}</div><div class="v">${valor != null ? fmtBRL(valor) : qtd}</div>
+      <div class="s">${valor != null ? qtd + ' pedido(s) · ' : ''}${delta(valor != null ? valor : qtd, valor != null ? vAnt : qAnt)}</div>
+      <div class="s" style="margin-top:4px">${dica}</div></div>`;
+  const metricas = `<div class="mp-metricas">
+    ${bloco('Vendido', 'pedidos lançados no mês', a.vendido.qtd, a.vendido.valor, b.vendido.qtd, b.vendido.valor)}
+    ${bloco('Produzido', 'pedidos que ficaram prontos no mês', a.produzido.qtd, a.produzido.valor, b.produzido.qtd, b.produzido.valor)}
+    ${bloco('Faturado', 'pedidos que saíram / foram entregues', a.faturado.qtd, a.faturado.valor, b.faturado.qtd, b.faturado.valor)}
+    ${bloco('Clientes novos', 'primeiro pedido do cliente', a.clientes_novos, null, b.clientes_novos, null)}
+  </div>`;
+  const novos = (d.novos || []).map(p => `<tr><td><strong>${esc(p.numero_pedido)}</strong> <span class="mp-novo">NOVO</span></td><td>${mpNomeCli(p)}</td>
+    <td>${fmtDate(String(p.created_at || '').slice(0, 10))}</td><td>${fmtBRL(p.valor_total)}</td>
+    <td><span class="pill ${STATUS_PILL_PEDIDO[p.status] || ''}">${STATUS_LABEL_PEDIDO[p.status] || esc(p.status)}</span></td></tr>`);
+  return `<div class="table-wrap" style="margin-bottom:18px">
+    <div class="table-head" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <div><span class="table-head-title">📈 Meu mês</span><div style="font-size:12px;color:var(--muted);margin-top:2px">Seus números em ${mpNomeMes(mes)}, comparando com o mês anterior</div></div>${mpNavMes(mes, 'mpMesNav')}
+    </div>${metricas}</div>` +
+    mpTabela(`🆕 Clientes novos em ${mpNomeMes(mes)}`, 'Clientes que fizeram o primeiro pedido com você neste mês', ['Pedido', 'Cliente', 'Lançado em', 'Valor', 'Etapa'],
+      novos, 'Nenhum cliente novo neste mês', '');
+}
+
+// ── Ficha do cliente (clique no nome)
+async function mpAbrirFicha(cid) {
+  if (!cid) return;
+  mpFecharMenu();
+  let m = document.getElementById('modal-mp-ficha');
+  if (!m) {
+    m = document.createElement('div'); m.className = 'modal-overlay'; m.id = 'modal-mp-ficha';
+    m.innerHTML = `<div class="modal" style="max-width:960px;width:96vw;max-height:92vh;overflow-y:auto">
+      <div class="modal-title" id="mp-ficha-tit">Cliente</div><div id="mp-ficha-corpo"></div>
+      <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('modal-mp-ficha')">Fechar</button></div></div>`;
+    document.body.appendChild(m);
+  }
+  const corpo = document.getElementById('mp-ficha-corpo');
+  document.getElementById('mp-ficha-tit').textContent = 'Ficha do cliente';
+  corpo.innerHTML = '<p style="color:var(--muted)">Carregando...</p>';
+  openModal('modal-mp-ficha');
+  try { mpFicha = await req('/pedidos/clientes/' + cid + '/ficha'); }
+  catch (e) { corpo.innerHTML = `<p style="color:var(--danger)">${esc(e.message)}</p>`; return; }
+  const c = mpFicha.cliente || {}, r = mpFicha.resumo || {};
+  document.getElementById('mp-ficha-tit').innerHTML = `🏢 ${esc(c.razao_social || '')}${r.pedidos === 1 ? ' <span class="mp-novo">CLIENTE NOVO</span>' : ''}`;
+  const info = [c.nome_fantasia, c.cnpj, [c.cidade, c.uf].filter(Boolean).join('/'), c.telefone, c.email].filter(Boolean).map(esc).join(' · ');
+  const mini = (l, v) => `<div class="mp-metrica"><div class="l">${l}</div><div class="v" style="font-size:20px">${v}</div></div>`;
+  corpo.innerHTML = `<div style="font-size:13px;color:var(--muted);margin-bottom:12px">${info || '—'}</div>
+    <div class="mp-metricas" style="padding:0;margin-bottom:14px">
+      ${mini('Pedidos', r.pedidos || 0)}${mini('Total comprado', fmtBRL(r.valor_total))}${mini('Ticket médio', fmtBRL(r.ticket_medio))}
+      ${mini('Primeiro / último', `${r.primeiro ? fmtDate(r.primeiro) : '—'}<div style="font-size:13px;color:var(--muted)">${r.ultimo ? fmtDate(r.ultimo) : ''}</div>`)}
+    </div>
+    ${(mpFicha.estoque || []).length ? `<div class="mp-alerta" style="border-color:var(--accent2);background:rgba(59,130,246,.08)">🏷️ <strong>Estoque guardado do cliente:</strong> ${mpFicha.estoque.map(x => `${fmtNum(x.saldo)} ${esc(x.descricao)}`).join(' · ')}</div>` : ''}
+    <div class="table-wrap"><div style="overflow-x:auto"><table>
+      <thead><tr><th>Pedido</th><th>Lançado em</th><th>Etapa</th><th>NF</th><th>Valor</th><th></th></tr></thead>
+      <tbody>${(mpFicha.pedidos || []).map(p => `<tr>
+        <td><strong>${esc(p.numero_pedido)}</strong>${mpSeloNovo(p)}${Number(p.origem_estoque_cliente) ? '<div style="font-size:11px;color:var(--accent2)">🏷️ entrega do estoque</div>' : ''}</td>
+        <td>${fmtDate(String(p.created_at || '').slice(0, 10))}</td>
+        <td><span class="pill ${STATUS_PILL_PEDIDO[p.status] || ''}">${STATUS_LABEL_PEDIDO[p.status] || esc(p.status)}</span></td>
+        <td>${esc(p.nota_fiscal || '—')}</td><td>${fmtBRL(p.valor_total)}</td>
+        <td>${mpAcoes(mpBtnNf(p) + mpBtnPdf(p.id))}</td></tr>`).join('') || '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:20px">Nenhum pedido</td></tr>'}</tbody>
+    </table></div></div>`;
 }
 
 // Ícone da nota fiscal: aparece quando a Expedição anexou o PDF da NF
@@ -1580,9 +1756,9 @@ async function excluirPedidoVendedor(id) {
 
 async function loadPedidosCom() {
   if (window._permExcluirCarregada !== true) { window._permExcluirCarregada = true; await carregarPermissaoExcluir(); }
-  const meuId = window.meuUsuario ? window.meuUsuario.id : null;
-  try { window._comLista = (await req('/pedidos/') || []).filter(p => meuId != null && p.vendedor_usuario_id === meuId); }
-  catch (e) { window._comLista = window._comLista || []; }
+  // O trabalho do dia vem do /meus (loadMeusPedidos). Aqui: histórico do mês, "Todos" e "Meu mês" — só o período e a página da tela.
+  await Promise.all(['concluidos', 'todos', 'mes'].map(q => mpCarregarHist(q).catch(() => {})));
+  window._comLista = mpPedidosTodos();
   renderCardsMeus();
   renderSecoesMeus();
 }
