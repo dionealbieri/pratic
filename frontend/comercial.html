@@ -59,9 +59,12 @@
   .btn.mp-b-parcial:hover{background:rgba(168,85,247,.26);color:#ead6ff}
   .btn.mp-b-retira{background:rgba(34,197,94,.13);border:1px solid #22c55e;color:#7ee2a2}
   .btn.mp-b-retira:hover{background:rgba(34,197,94,.24);color:#c3f5d3}
+  .btn.mp-b-pdf{background:rgba(239,68,68,.12);border:1px solid #ef4444;color:#fca5a5}
+  .btn.mp-b-pdf:hover{background:rgba(239,68,68,.24);color:#fecaca}
   [data-theme="light"] .btn.mp-b-cot{color:#1d4ed8}
   [data-theme="light"] .btn.mp-b-parcial{color:#7e22ce}
   [data-theme="light"] .btn.mp-b-retira{color:#15803d}
+  [data-theme="light"] .btn.mp-b-pdf{color:#b91c1c}
   [data-theme="light"] .mp-nov{background:rgba(240,180,41,.18)}
 </style>
 </head>
@@ -1084,7 +1087,7 @@ function renderCardsMeus() {
 }
 
 // ── botões e menu ⋯
-const mpBtnPdf = id => `<button class="btn btn-sm btn-secondary mp-ico" title="PDF do pedido" aria-label="PDF do pedido" onclick="imprimirPedidoVendedor(${id})">📄</button>`;
+const mpBtnPdf = id => `<button class="btn btn-sm mp-b-pdf" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${id})">📄 PDF</button>`;
 const mpBtnMais = (t, id) => `<button class="btn btn-sm btn-secondary mp-ico" title="Mais ações" aria-label="Mais ações" onclick="mpAbrirMenu(event,'${t}',${id})">⋯</button>`;
 const mpBtnNf = p => (Number(p.tem_nf_pdf) || p.nf_arquivo) ? `<a class="btn btn-sm btn-secondary" href="${API}/pedidos/${p.id}/nf-arquivo" target="_blank" rel="noopener" style="text-decoration:none" title="Ver a nota fiscal${p.nota_fiscal ? ' ' + esc(p.nota_fiscal) : ''}">🧾 Nota fiscal</a>` : '';
 const mpBtnNfRem = r => r.tem_nf_pdf ? `<a class="btn btn-sm btn-secondary" href="${API}/remessas/${r.id}/nf-arquivo" target="_blank" rel="noopener" style="text-decoration:none" title="Ver a nota fiscal da remessa">🧾 Nota fiscal</a>` : '';
