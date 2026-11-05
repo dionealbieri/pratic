@@ -20,6 +20,35 @@
     display: flex !important;
     flex-direction: column !important;
   }
+  /* Meus Pedidos: cards = abas, uma lista por vez */
+  .mp-topo{display:flex;justify-content:flex-end;margin-bottom:12px}
+  .mp-busca{display:flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:0 6px 0 12px;width:100%;max-width:460px;color:var(--muted)}
+  .mp-busca:focus-within{border-color:var(--accent)}
+  .mp-busca input{background:transparent!important;border:0!important;color:var(--text);padding:10px 0!important;width:100%;font-size:14px;outline:none;box-shadow:none!important}
+  .mp-busca button{background:none;border:0;color:var(--muted);font-size:18px;cursor:pointer;padding:4px 8px}
+  .mp-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px}
+  .mp-card{text-align:left;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px 14px;color:var(--text);cursor:pointer;font-family:inherit;transition:border-color .15s,opacity .15s}
+  .mp-card:hover{border-color:var(--accent)}
+  .mp-card.ativo{border:2px solid var(--accent);background:rgba(240,180,41,.08);padding:11px 13px}
+  .mp-card .l{font-size:11px;letter-spacing:.8px;font-weight:700;color:var(--muted);text-transform:uppercase}
+  .mp-card.pend .l{color:var(--accent)}
+  .mp-card .v{font-family:Syne,sans-serif;font-size:28px;font-weight:800;line-height:1.2}
+  .mp-card .s{font-size:12px;color:var(--muted)}
+  .mp-cards.buscando .mp-card{opacity:.45}
+  .mp-acoes{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+  .mp-ico{padding-left:10px!important;padding-right:10px!important;font-weight:700}
+  .mp-rodape{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 16px;flex-wrap:wrap;font-size:12px;color:var(--muted);border-top:1px solid var(--border)}
+  .mp-menu{position:fixed;z-index:3000;min-width:240px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;box-shadow:0 12px 30px rgba(0,0,0,.45);padding:6px;display:flex;flex-direction:column}
+  .mp-menu[hidden]{display:none}
+  .mp-menu button{background:none;border:0;color:var(--text);text-align:left;padding:9px 12px;border-radius:6px;font-size:13px;cursor:pointer;font-family:inherit}
+  .mp-menu button:hover,.mp-menu button:focus{background:rgba(255,255,255,.07);outline:none}
+  .mp-menu button.perigo{color:var(--danger)}
+  .mp-menu-sep{height:1px;background:var(--border);margin:4px 6px}
+  .mp-nov{background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.45);border-radius:10px;padding:8px 12px;margin-bottom:12px}
+  .mp-nov-barra{display:flex;align-items:center;gap:10px;font-size:13px;flex-wrap:wrap}
+  .mp-nov-txt{flex:1;min-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mp-nov-lista{display:flex;flex-direction:column;gap:4px;font-size:13px;max-height:180px;overflow-y:auto;margin-top:8px;padding-top:8px;border-top:1px solid rgba(59,130,246,.3)}
+  .mp-ponto{width:8px;height:8px;border-radius:4px;background:var(--accent);flex:none}
 </style>
 </head>
 <body>
@@ -76,42 +105,16 @@
 
   <!-- ── TAB PEDIDOS ── -->
   <div id="tab-pedidos">
+    <div class="mp-topo">
+      <label class="mp-busca">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg>
+        <input type="text" id="mp-busca" placeholder="Buscar nº do pedido, cliente ou NF em todas as etapas" aria-label="Buscar pedido" oninput="mpBuscar(this.value)">
+        <button type="button" aria-label="Limpar busca" title="Limpar busca" onclick="document.getElementById('mp-busca').value='';mpBuscar('')">×</button>
+      </label>
+    </div>
     <div id="mp-novidades"></div>
-    <div class="cards-grid" id="com-cards"></div>
-    <div id="mp-secoes"></div>
-
-    <div class="section-title" style="margin-top:8px">Todos os meus pedidos</div>
-    <div class="flex items-center justify-between mb-4">
-      <div class="flex gap-2 items-center" style="flex-wrap:wrap">
-        <select id="com-filtro-status" onchange="comPagina=1;loadPedidosCom()" style="min-width:180px">
-          <option value="andamento" selected>Em andamento (aberto / em produção)</option>
-          <option value="">Todos os status</option>
-          <option value="aberto">Aberto</option>
-          <option value="em_producao">Em produção</option>
-          <option value="produzido">Aguardando vendedor</option>
-          <option value="aguardando_nf">Aguardando NF</option>
-          <option value="aguardando_retirada">Aguardando retirada</option>
-          <option value="enviado">Enviado</option>
-          <option value="retirado">Retirado</option>
-          <option value="entregue">Entregue</option>
-        </select>
-        <input type="text" id="com-busca" placeholder="Buscar nº do pedido ou cliente..." oninput="comPagina=1;loadPedidosCom()" style="min-width:240px">
-      </div>
-    </div>
-
-    <div class="table-wrap">
-      <div class="table-head">
-        <span class="table-head-title">Pedidos</span>
-      </div>
-      <table>
-        <thead><tr>
-          <th>Nº Pedido</th><th>Cliente</th><th>Prazo</th>
-          <th>Dias</th><th>Itens</th><th>Status</th><th></th>
-        </tr></thead>
-        <tbody id="com-tbody"></tbody>
-      </table>
-      <div id="com-paginacao" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 16px;flex-wrap:wrap"></div>
-    </div>
+    <div class="mp-cards" id="com-cards"></div>
+    <div id="mp-secoes"><p style="color:var(--muted)">Carregando...</p></div>
   </div>
 
   <!-- ── TAB NOVO PEDIDO ── -->
@@ -901,7 +904,7 @@ document.addEventListener('visibilitychange', () => {
 // página) e o estoque dos clientes. Com uma janela aberta, só confere as chegadas
 // (som/aviso) e deixa a tela como está para não atrapalhar o que está sendo feito.
 let mpAtualizando = false;
-function mpModalAberto() { return !!document.querySelector('.modal-overlay.open, .modal-overlay[style*="flex"]'); }
+function mpModalAberto() { const m = document.getElementById('mp-menu'); return !!document.querySelector('.modal-overlay.open, .modal-overlay[style*="flex"]') || !!(m && !m.hidden); }
 function mpVisivel(id) { const el = document.getElementById(id); return !!(el && el.style.display !== 'none'); }
 async function mpAtualizarTela() {
   if (mpAtualizando) return;
@@ -926,6 +929,18 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) mpAt
 document.addEventListener('DOMContentLoaded', mpAtualizarBotaoSom);
 mpAtualizarBotaoSom();
 
+// ─── MEUS PEDIDOS: os cards são as abas — uma lista por vez ──────────────────
+// A tela abre no primeiro card que tem algo para o vendedor fazer. A busca do
+// topo procura em todas as etapas. Ações secundárias ficam no menu ⋯.
+let mpAba = null;              // card escolhido (null = automático)
+let mpBusca = '';
+let mpNovAberto = false;
+let mpTodosStatus = '';
+const mpPag = {};
+const MP_POR_PAG = 15;
+const MP_ETAPA_LABEL = { voce: 'Aguardando você', cliente: 'Aguardando cliente', separacao: 'Separação / embalagem',
+  producao: 'Em produção', expedicao: 'Com a Expedição', concluidos: 'Concluído', estoque: 'No estoque do cliente' };
+
 function renderNovidades() {
   const el = document.getElementById('mp-novidades');
   if (!el) return;
@@ -940,148 +955,351 @@ function renderNovidades() {
     if (n.status === 'retirado') return `foi <strong>retirado</strong> pelo cliente${n.nota_fiscal ? ' · NF ' + esc(n.nota_fiscal) : ''}`;
     return esc(n.status);
   };
-  el.innerHTML = `<div style="background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.45);border-radius:10px;padding:12px 16px;margin-bottom:16px">
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
-      <strong style="color:var(--accent2)">🔔 Desde seu último acesso (${nov.length})</strong>
+  const linha = n => `Pedido <strong>${esc(n.numero_pedido)}</strong> ${frase(n)}`;
+  el.innerHTML = `<div class="mp-nov">
+    <div class="mp-nov-barra">
+      <span class="mp-ponto"></span>
+      <span class="mp-nov-txt"><strong>🔔 ${nov.length} ${nov.length === 1 ? 'novidade' : 'novidades'}</strong> desde seu último acesso — ${linha(nov[0])}${nov.length > 1 ? ' …' : ''}</span>
+      <button class="btn btn-sm btn-secondary" onclick="mpNovAberto=!mpNovAberto;renderNovidades()">${mpNovAberto ? 'Ocultar' : 'Ver'}</button>
       <button class="btn btn-sm btn-secondary" onclick="mpMarcarVisto()">Marcar como visto</button>
     </div>
-    <div style="display:flex;flex-direction:column;gap:4px;font-size:13px;max-height:150px;overflow-y:auto">
-      ${nov.map(n => `<div>Pedido <strong>${esc(n.numero_pedido)}</strong> <span style="color:var(--muted)">(${esc(n.cliente_nome)})</span> ${frase(n)} <span style="color:var(--muted)">· ${fmtDataHora(n.em)}</span></div>`).join('')}
-    </div>
+    ${mpNovAberto ? `<div class="mp-nov-lista">${nov.map(n => `<div>${linha(n)} <span style="color:var(--muted)">(${esc(n.cliente_nome)}) · ${fmtDataHora(n.em)}</span></div>`).join('')}</div>` : ''}
   </div>`;
 }
 
 async function mpMarcarVisto() {
   try { await req('/pedidos/meus/visto', 'POST'); } catch (e) {}
   mpDados.novidades = [];
+  mpNovAberto = false;
   renderNovidades();
 }
 
-function renderCardsMeus() {
-  const ps = mpDados.pedidos || [];
-  const aguardando = ps.filter(p => p.status === 'produzido' && !mpRevendaPendente(p) && !mpSemSaldo(p) && !p.cotacao_enviada_em);
-  const aguardCli = ps.filter(p => p.status === 'produzido' && !mpRevendaPendente(p) && !mpSemSaldo(p) && p.cotacao_enviada_em).length
-                  + (mpDados.remessas || []).filter(r => r.status === 'aguardando_cliente').length;
-  const retirada = ps.filter(p => p.status === 'aguardando_retirada');
-  const expedicao = ps.filter(p => p.status === 'aguardando_nf');
-  const naoFaturado = ps.filter(p => ['produzido', 'aguardando_nf', 'aguardando_retirada'].includes(p.status))
-                        .reduce((a, p) => a + (Number(p.valor_total) || 0), 0);
-  document.getElementById('com-cards').innerHTML = `
-    <div class="card" style="${aguardando.length ? 'border-color:var(--accent)' : ''}"><div class="card-label">Aguardando você</div><div class="card-value ${aguardando.length ? 'danger' : 'success'}">${aguardando.length}</div><div style="font-size:12px;color:var(--muted)">produzidos sem frete/retirada definidos${aguardCli ? `<br><span style="color:var(--accent)">📨 ${aguardCli} aguardando o cliente autorizar</span>` : ''}</div></div>
-    <div class="card"><div class="card-label">Aguardando retirada</div><div class="card-value accent">${retirada.length}</div><div style="font-size:12px;color:var(--muted)">cliente vai buscar</div></div>
-    <div class="card"><div class="card-label">Com a Expedição</div><div class="card-value info">${expedicao.length}</div><div style="font-size:12px;color:var(--muted)">aguardando NF</div></div>
-    <div class="card"><div class="card-label">Pronto e não faturado</div><div class="card-value accent" style="font-size:22px">${fmtBRL(naoFaturado)}</div><div style="font-size:12px;color:var(--muted)">soma dos pedidos acima</div></div>`;
+// Em que etapa (card) o pedido / a remessa está
+function mpEtapaPedido(p) {
+  const s = p.status || 'aberto';
+  if (s === 'produzido') {
+    if (mpRevendaPendente(p)) return 'separacao';
+    if (mpSemSaldo(p)) return 'expedicao';
+    return p.cotacao_enviada_em ? 'cliente' : 'voce';
+  }
+  if (s === 'aberto' || s === 'em_producao') return 'producao';
+  if (s === 'aguardando_nf' || s === 'aguardando_retirada') return 'expedicao';
+  if (['enviado', 'retirado', 'entregue'].includes(s)) return 'concluidos';
+  if (s === 'em_estoque') return 'estoque';
+  return 'producao';
+}
+function mpEtapaRemessa(r) {
+  if (r.status === 'aguardando_cliente') return 'cliente';
+  if (r.status === 'aguardando_nf' || r.status === 'aguardando_retirada') return 'expedicao';
+  if (r.status === 'enviado' || r.status === 'retirado') return 'concluidos';
+  return '';
+}
+// Pedidos do portal (/meus, a partir da data de corte) + lista geral (/pedidos) para Em produção, Todos e busca
+function mpPedidosMeus() { return mpDados.pedidos || []; }
+function mpPedidosTodos() {
+  const m = new Map();
+  (window._comLista || []).forEach(p => m.set(p.id, p));
+  mpPedidosMeus().forEach(p => m.set(p.id, Object.assign({}, m.get(p.id) || {}, p)));
+  return [...m.values()];
+}
+function mpPedidoPorId(id) { return mpPedidosTodos().find(p => p.id === id); }
+function mpRemessaPorId(id) { return (mpDados.remessas || []).find(r => r.id === id); }
+const mpDataConcl = p => (p.status === 'entregue' ? (p.data_entrega || p.data_despacho) : p.data_despacho) || '';
+
+function mpItensAba(aba) {
+  const rs = mpDados.remessas || [];
+  if (aba === 'todos') {
+    let ps = mpPedidosTodos();
+    if (mpTodosStatus) ps = ps.filter(p => (p.status || 'aberto') === mpTodosStatus);
+    return ps.sort((a, b) => b.id - a.id).map(p => ({ t: 'p', o: p }));
+  }
+  const fonte = aba === 'producao' ? (window._comLista || []).map(p => Object.assign({}, p, mpPedidosMeus().find(x => x.id === p.id) || {}))
+                                   : mpPedidosMeus();
+  let itens = fonte.filter(p => mpEtapaPedido(p) === aba).map(p => ({ t: 'p', o: p }))
+    .concat(rs.filter(r => mpEtapaRemessa(r) === aba).map(r => ({ t: 'r', o: r })));
+  if (aba === 'concluidos') {
+    const d = it => it.t === 'p' ? mpDataConcl(it.o) : (it.o.data_despacho || it.o.concluido_em || '');
+    itens.sort((a, b) => String(d(b)).localeCompare(String(d(a))));
+  } else if (aba === 'producao') {
+    itens.sort((a, b) => String(a.o.prazo_entrega || '').localeCompare(String(b.o.prazo_entrega || '')));
+  } else {
+    const d = it => it.t === 'p' ? (aba === 'cliente' ? it.o.cotacao_enviada_em : it.o.status_desde) : (it.o.status_desde || it.o.criado_em);
+    itens.sort((a, b) => String(d(a) || '').localeCompare(String(d(b) || '')));   // parado há mais tempo primeiro
+  }
+  return itens;
 }
 
-function _tabelaSecao(titulo, badge, cabecalho, linhas, vazio) {
+function mpAbaAtual() {
+  if (mpAba) return mpAba;
+  for (const a of ['voce', 'cliente', 'separacao']) if (mpItensAba(a).length) return a;
+  return mpItensAba('expedicao').length ? 'expedicao' : 'producao';
+}
+function mpEscolherAba(a) {
+  mpAba = a;
+  mpBusca = '';
+  const b = document.getElementById('mp-busca'); if (b) b.value = '';
+  renderCardsMeus(); renderSecoesMeus();
+}
+function mpBuscar(v) {
+  mpBusca = (v || '').trim();
+  mpPag.busca = 1;
+  renderCardsMeus(); renderSecoesMeus();
+}
+
+function renderCardsMeus() {
+  const el = document.getElementById('com-cards');
+  if (!el) return;
+  const atual = mpAbaAtual();
+  const n = a => mpItensAba(a).length;
+  const ps = mpPedidosMeus();
+  const aguardCliVelho = mpItensAba('cliente').filter(it => mpDiasDesde(it.t === 'p' ? it.o.cotacao_enviada_em : it.o.criado_em) >= 3).length;
+  const nf = ps.filter(p => p.status === 'aguardando_nf').length + (mpDados.remessas || []).filter(r => r.status === 'aguardando_nf').length;
+  const ret = ps.filter(p => p.status === 'aguardando_retirada').length + (mpDados.remessas || []).filter(r => r.status === 'aguardando_retirada').length;
+  const card = (a, rotulo, qtd, sub, cor, pend) => `<button type="button" class="mp-card${a === atual && !mpBusca ? ' ativo' : ''}${pend && qtd ? ' pend' : ''}" onclick="mpEscolherAba('${a}')">
+      <div class="l">${rotulo}</div><div class="v" style="color:${qtd ? cor : 'var(--muted)'}">${qtd}</div><div class="s">${sub}</div></button>`;
+  el.className = 'mp-cards' + (mpBusca ? ' buscando' : '');
+  el.innerHTML =
+    card('voce', '⏳ Aguardando você', n('voce'), 'enviar cotação ou retirada', 'var(--danger)', true) +
+    card('cliente', '📨 Aguardando cliente', n('cliente'), aguardCliVelho ? `${aguardCliVelho} há 3+ dias` : 'cotação enviada', 'var(--accent)', true) +
+    card('separacao', '📦 Separação', n('separacao'), 'revenda / embalagem', 'var(--text)', false) +
+    card('producao', '🏭 Em produção', n('producao'), 'abertos e em produção', 'var(--text)', false) +
+    card('expedicao', '🧾 Com a Expedição', n('expedicao'), `${nf} aguardando NF · ${ret} retirada`, 'var(--accent2)', false) +
+    card('concluidos', '✅ Concluídos', n('concluidos'), 'últimos 15 dias', 'var(--success)', false) +
+    card('todos', '📋 Todos', mpPedidosTodos().length, 'histórico com filtros', 'var(--text)', false);
+}
+
+// ── botões e menu ⋯
+const mpBtnPdf = id => `<button class="btn btn-sm btn-secondary mp-ico" title="PDF do pedido" aria-label="PDF do pedido" onclick="imprimirPedidoVendedor(${id})">📄</button>`;
+const mpBtnMais = (t, id) => `<button class="btn btn-sm btn-secondary mp-ico" title="Mais ações" aria-label="Mais ações" onclick="mpAbrirMenu(event,'${t}',${id})">⋯</button>`;
+const mpBtnNf = p => (Number(p.tem_nf_pdf) || p.nf_arquivo) ? `<a class="btn btn-sm btn-secondary" href="${API}/pedidos/${p.id}/nf-arquivo" target="_blank" rel="noopener" style="text-decoration:none" title="Ver a nota fiscal${p.nota_fiscal ? ' ' + esc(p.nota_fiscal) : ''}">🧾 Nota fiscal</a>` : '';
+const mpBtnNfRem = r => r.tem_nf_pdf ? `<a class="btn btn-sm btn-secondary" href="${API}/remessas/${r.id}/nf-arquivo" target="_blank" rel="noopener" style="text-decoration:none" title="Ver a nota fiscal da remessa">🧾 Nota fiscal</a>` : '';
+const mpPodeParcial = p => !Number(p.origem_estoque_cliente) && !Number(p.para_estoque_cliente);
+const mpPodeEditar = p => (p.status || 'aberto') === 'aberto' && !(p.itens_iniciados > 0);
+
+function mpMenuItens(t, id) {
+  const it = [];
+  if (t === 'r') {
+    const r = mpRemessaPorId(id); if (!r) return it;
+    it.push({ txt: '📄 PDF do pedido', fn: () => imprimirPedidoVendedor(r.pedido_id) });
+    if (r.tem_nf_pdf) it.push({ txt: '🧾 Nota fiscal da remessa', fn: () => window.open(`${API}/remessas/${r.id}/nf-arquivo`, '_blank') });
+    if (['aguardando_cliente', 'aguardando_nf', 'aguardando_retirada'].includes(r.status))
+      it.push({ txt: '✕ Cancelar remessa', perigo: true, fn: () => mpCancelarRemessa(r.id, r.numero, r.numero_pedido) });
+    return it;
+  }
+  const p = mpPedidoPorId(id); if (!p) return it;
+  const et = mpEtapaPedido(p);
+  it.push({ txt: '👁 Ver detalhes', fn: () => verDetalhe(p.id) });
+  it.push({ txt: '📄 PDF do pedido', fn: () => imprimirPedidoVendedor(p.id) });
+  if (['voce', 'cliente', 'separacao', 'expedicao'].includes(et)) it.push({ txt: '📦 Cotação (caixas, peso, cubagem)', fn: () => abrirCotacaoPedido(p.id) });
+  if (et === 'cliente') {
+    it.push({ txt: '✏️ Alterar cotação', fn: () => mpAbrirEnvio(p.id, 'transportadora') });
+    it.push({ txt: '🙋 Cliente retira', fn: () => mpAbrirEnvio(p.id, 'retirada') });
+  }
+  if (et === 'voce') {
+    it.push({ txt: '📨 Enviar cotação', fn: () => mpAbrirEnvio(p.id, 'transportadora') });
+    it.push({ txt: '🙋 Cliente retira', fn: () => mpAbrirEnvio(p.id, 'retirada') });
+  }
+  if (['voce', 'cliente'].includes(et) || (p.status === 'em_producao' && mpPodeParcial(p)))
+    it.push({ txt: '📦 Envio parcial', fn: () => mpAbrirRemessa(p.id) });
+  if (p.status === 'aguardando_nf') it.push({ txt: '✏️ Alterar frete', fn: () => mpAbrirEnvio(p.id, 'transportadora') });
+  if (p.status === 'aguardando_retirada') it.push({ txt: '✏️ Alterar retirada', fn: () => mpAbrirEnvio(p.id, 'retirada') });
+  if (mpBtnNf(p)) it.push({ txt: '🧾 Nota fiscal', fn: () => window.open(`${API}/pedidos/${p.id}/nf-arquivo`, '_blank') });
+  if (mpPodeEditar(p)) {
+    it.push({ txt: '✏️ Editar pedido', fn: () => { window.location.href = '/?editar=' + p.id; } });
+    it.push({ txt: '🗑 Excluir pedido', perigo: true, fn: () => excluirPedidoVendedor(p.id) });
+  }
+  if (et === 'cliente') it.push({ txt: '↩ Cancelar cotação', perigo: true, fn: () => mpCancelarCotacao(p.id, p.numero_pedido) });
+  return it;
+}
+let mpMenuAtual = [];
+function mpAbrirMenu(ev, t, id) {
+  ev.stopPropagation();
+  let m = document.getElementById('mp-menu');
+  if (!m) { m = document.createElement('div'); m.id = 'mp-menu'; m.className = 'mp-menu'; m.setAttribute('role', 'menu'); document.body.appendChild(m); }
+  const btn = ev.currentTarget;
+  if (!m.hidden && m.dataset.dono === t + id) { mpFecharMenu(); return; }
+  mpMenuAtual = mpMenuItens(t, id);
+  m.innerHTML = mpMenuAtual.map((x, k) => `${x.perigo && k ? '<div class="mp-menu-sep"></div>' : ''}<button type="button" role="menuitem" class="${x.perigo ? 'perigo' : ''}" onclick="mpMenuExec(${k})">${x.txt}</button>`).join('');
+  m.dataset.dono = t + id;
+  m.hidden = false;
+  const r = btn.getBoundingClientRect();
+  const w = m.offsetWidth, h = m.offsetHeight;
+  let top = r.bottom + 4;
+  if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 4);
+  m.style.top = top + 'px';
+  m.style.left = Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8)) + 'px';
+}
+function mpFecharMenu() { const m = document.getElementById('mp-menu'); if (m) { m.hidden = true; m.dataset.dono = ''; } }
+function mpMenuExec(k) { const x = mpMenuAtual[k]; mpFecharMenu(); if (x) x.fn(); }
+document.addEventListener('click', e => { const m = document.getElementById('mp-menu'); if (m && !m.hidden && !m.contains(e.target)) mpFecharMenu(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') mpFecharMenu(); });
+window.addEventListener('scroll', mpFecharMenu, true);
+window.addEventListener('resize', mpFecharMenu);
+
+// ── células comuns
+function mpCelPedido(it) {
+  if (it.t === 'r') { const r = it.o; return `<strong>${esc(r.numero_pedido)}</strong><div style="font-size:11px;color:var(--accent2);font-weight:700">REMESSA ${r.numero} · parcial</div>`; }
+  const p = it.o;
+  return `<strong>${esc(p.numero_pedido)}</strong>` + (Number(p.origem_estoque_cliente) ? `<div style="font-size:11px;color:var(--accent2)">🏷️ entrega do estoque do cliente</div>` : '')
+    + (mpTemRemessa(p) && (mpDados.restante || {})[String(p.id)] !== undefined ? `<div style="font-size:11px;color:var(--muted)">falta enviar ${fmtNum((mpDados.restante || {})[String(p.id)])}</div>` : '');
+}
+function mpCelCliente(it) {
+  if (it.t === 'r') return `${esc(it.o.cliente_nome)}<div style="font-size:11px;color:var(--muted)">${(it.o.itens || []).map(i => fmtNum(i.quantidade) + ' ' + esc(i.descricao || '')).join('<br>')}</div>`;
+  const p = it.o;
+  return esc(p.cliente_nome) + ((p.revenda_pendentes || 0) > 0 ? `<div style="font-size:11px;color:var(--warn)">⚠ ${p.revenda_pendentes} item(ns) de revenda a separar</div>` : '')
+    + (p.status === 'produzido' && (p.embalagem_pendentes || 0) > 0 ? `<div style="font-size:11px;color:var(--warn)">⚠ embalagem de ${p.embalagem_pendentes} item(ns) ainda não informada</div>` : '');
+}
+function mpCelSaida(it) {
+  const o = it.o, ret = (it.t === 'r' ? o.modo === 'retirada' : (o.status === 'aguardando_retirada' || o.status === 'retirado'));
+  if (ret) return `Cliente retira${o.retirada_prevista ? `<div style="font-size:11px;color:var(--muted)">previsão ${fmtDate(String(o.retirada_prevista).slice(0, 10))}</div>` : ''}`;
+  return `${esc(o.transportadora || '—')}${o.frete ? ' · ' + fmtBRL(o.frete) : ''}`;
+}
+function mpPillEtapa(et, txt) {
+  const cor = { voce: 'pill-danger', cliente: 'pill-warn', separacao: 'pill-warn', producao: '', expedicao: 'pill-info', concluidos: 'pill-success', estoque: 'pill-info' }[et] || '';
+  return `<span class="pill ${cor}">${txt || MP_ETAPA_LABEL[et] || et}</span>`;
+}
+const mpAcoes = html => `<div class="mp-acoes">${html}</div>`;
+
+// Ações à vista de cada linha (o resto fica no ⋯)
+function mpAcoesLinha(it) {
+  if (it.t === 'r') {
+    const r = it.o;
+    const aut = r.status === 'aguardando_cliente' ? `<button class="btn btn-sm btn-primary" title="O cliente aprovou o frete: a remessa vai para a Expedição" onclick="mpAutorizarRemessa(${r.id}, ${r.numero}, '${esc(r.numero_pedido)}')">✅ Cliente autorizou</button>` : '';
+    return mpAcoes(aut + mpBtnNfRem(r) + mpBtnMais('r', r.id));
+  }
+  const p = it.o, et = mpEtapaPedido(p);
+  if (et === 'voce') return mpAcoes(
+    mpBtnPdf(p.id) +
+    `<button class="btn btn-sm btn-secondary" title="Caixas, peso e cubagem para cotar o frete" onclick="abrirCotacaoPedido(${p.id})">📦 Cotação</button>` +
+    `<button class="btn btn-sm btn-secondary" title="Enviar agora só uma parte (o resto sai depois)" onclick="mpAbrirRemessa(${p.id})">Envio parcial</button>` +
+    `<button class="btn btn-sm btn-secondary" title="O cliente vai buscar: vai direto para a Expedição" onclick="mpAbrirEnvio(${p.id},'retirada')">🙋 Cliente retira</button>` +
+    `<button class="btn btn-sm btn-primary" title="Registra a cotação do frete; o pedido espera o cliente autorizar" onclick="mpAbrirEnvio(${p.id},'transportadora')">📨 ${mpTemRemessa(p) ? 'Cotação do restante' : 'Enviar cotação'}</button>`);
+  if (et === 'cliente') return mpAcoes(`<button class="btn btn-sm btn-primary" title="O cliente aprovou o frete: o pedido vai para a Expedição" onclick="mpAutorizarCotacao(${p.id}, '${esc(p.numero_pedido)}')">✅ Cliente autorizou</button>` + mpBtnMais('p', p.id));
+  if (et === 'producao') return mpAcoes(`<button class="btn btn-sm btn-secondary" onclick="verDetalhe(${p.id})">Ver</button>` + mpBtnMais('p', p.id));
+  return mpAcoes(mpBtnNf(p) + mpBtnMais('p', p.id));
+}
+
+function mpPaginar(chave, itens) {
+  const total = Math.max(1, Math.ceil(itens.length / MP_POR_PAG));
+  let pg = mpPag[chave] || 1;
+  if (pg > total) pg = total;
+  mpPag[chave] = pg;
+  const ini = (pg - 1) * MP_POR_PAG;
+  const fatia = itens.slice(ini, ini + MP_POR_PAG);
+  const rodape = itens.length ? `<div class="mp-rodape"><span>${ini + 1}–${ini + fatia.length} de ${itens.length}</span>${total > 1 ? `<span style="display:flex;gap:6px;align-items:center">
+      <button class="btn btn-sm btn-secondary" ${pg <= 1 ? 'disabled' : ''} onclick="mpIrPag('${chave}',-1)">← Anterior</button>
+      <span>Página ${pg} de ${total}</span>
+      <button class="btn btn-sm btn-secondary" ${pg >= total ? 'disabled' : ''} onclick="mpIrPag('${chave}',1)">Próxima →</button></span>` : ''}</div>` : '';
+  return { fatia, rodape };
+}
+function mpIrPag(chave, d) { mpPag[chave] = (mpPag[chave] || 1) + d; renderSecoesMeus(); }
+
+function mpTabela(titulo, sub, cab, linhas, vazio, rodape, extraTopo) {
   return `<div class="table-wrap" style="margin-bottom:18px">
-    <div class="table-head"><span class="table-head-title">${titulo}${badge != null ? ` <span style="font-size:12px;background:var(--surface2);border-radius:10px;padding:2px 8px;margin-left:6px">${badge}</span>` : ''}</span></div>
+    <div class="table-head" style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <div><span class="table-head-title">${titulo}</span>${sub ? `<div style="font-size:12px;color:var(--muted);margin-top:2px">${sub}</div>` : ''}</div>${extraTopo || ''}
+    </div>
     <div style="overflow-x:auto"><table>
-      <thead><tr>${cabecalho.map(h => `<th>${h}</th>`).join('')}</tr></thead>
-      <tbody>${linhas.length ? linhas.join('') : `<tr><td colspan="${cabecalho.length}" style="text-align:center;color:var(--muted);padding:20px">${vazio}</td></tr>`}</tbody>
-    </table></div>
+      <thead><tr>${cab.map(h => `<th>${h}</th>`).join('')}</tr></thead>
+      <tbody>${linhas.length ? linhas.join('') : `<tr><td colspan="${cab.length}" style="text-align:center;color:var(--muted);padding:24px">${vazio}</td></tr>`}</tbody>
+    </table></div>${rodape || ''}
   </div>`;
 }
 
 function renderSecoesMeus() {
   const el = document.getElementById('mp-secoes');
   if (!el) return;
-  const ps = mpDados.pedidos || [];
-  const aguardando = ps.filter(p => p.status === 'produzido' && !mpRevendaPendente(p) && !mpSemSaldo(p) && !p.cotacao_enviada_em);
-  const aguardCliente = ps.filter(p => p.status === 'produzido' && !mpRevendaPendente(p) && !mpSemSaldo(p) && p.cotacao_enviada_em);
-  const separacao = ps.filter(p => p.status === 'produzido' && mpRevendaPendente(p));
-  const retirada = ps.filter(p => p.status === 'aguardando_retirada');
-  const expedicao = ps.filter(p => p.status === 'aguardando_nf');
-  const dataConcl = p => (p.status === 'entregue' ? (p.data_entrega || p.data_despacho) : p.data_despacho) || '';
-  const concluidos = ps.filter(p => ['enviado', 'retirado', 'entregue'].includes(p.status))
-                       .sort((a, b) => String(dataConcl(b)).localeCompare(String(dataConcl(a))));
-  const tampas = p => (Number(p.origem_estoque_cliente) ? `<div style="font-size:11px;color:var(--info,#3b82f6)">🏷️ entrega do estoque do cliente</div>` : '') + ((p.revenda_pendentes || 0) > 0 ? `<div style="font-size:11px;color:var(--warn)">⚠ ${p.revenda_pendentes} item(ns) de revenda a separar</div>` : '')
-    + (p.status === 'produzido' && (p.embalagem_pendentes || 0) > 0 ? `<div style="font-size:11px;color:var(--warn)">⚠ embalagem de ${p.embalagem_pendentes} item(ns) ainda não informada</div>` : '');
-
-  let html = _tabelaSecao('⏳ Aguardando você — defina como o pedido vai sair', aguardando.length,
-    ['Pedido', 'Cliente', 'Produzido há', 'Valor', ''],
-    aguardando.map(p => `<tr>
-      <td><strong>${esc(p.numero_pedido)}</strong></td>
-      <td>${esc(p.cliente_nome)}${tampas(p)}</td>
-      <td>${seloDias(p.dias_na_etapa)}</td>
-      <td>${fmtBRL(p.valor_total)}</td>
-      <td style="white-space:nowrap;text-align:right">
-        <button class="btn btn-sm btn-secondary" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${p.id})">📄 PDF</button>
-        <button class="btn btn-sm btn-secondary" title="Caixas, peso e cubagem para cotar o frete" onclick="abrirCotacaoPedido(${p.id})">📦 Cotação</button>
-        <button class="btn btn-sm btn-secondary" title="Enviar agora só uma parte (o resto sai depois)" onclick="mpAbrirRemessa(${p.id})">📦 Envio parcial</button>
-        <button class="btn btn-sm btn-primary" title="Registra a cotação do frete; o pedido espera o cliente autorizar" onclick="mpAbrirEnvio(${p.id},'transportadora')">📨 ${mpTemRemessa(p) ? 'Cotação do restante' : 'Enviar cotação'}</button>
-        <button class="btn btn-sm btn-secondary" onclick="mpAbrirEnvio(${p.id},'retirada')">🙋 Cliente retira</button>
-      </td></tr>`),
-    '✅ Nenhum pedido aguardando você');
-  if (aguardCliente.length) html += _tabelaSecao('📨 Aguardando autorização do cliente — cotação de frete enviada', aguardCliente.length,
-    ['Pedido', 'Cliente', 'Frete cotado', 'Cotação enviada há', ''],
-    aguardCliente.map(p => `<tr>
-      <td><strong>${esc(p.numero_pedido)}</strong></td>
-      <td>${esc(p.cliente_nome)}${tampas(p)}</td>
-      <td>${esc(p.transportadora || '—')} · <strong>${fmtBRL(p.frete)}</strong>${p.previsao_entrega ? `<div style="font-size:11px;color:var(--muted)">previsão ${fmtDate(p.previsao_entrega)}</div>` : ''}</td>
-      <td>${seloDias(mpDiasDesde(p.cotacao_enviada_em))}</td>
-      <td style="white-space:nowrap;text-align:right">
-        <button class="btn btn-sm btn-secondary" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${p.id})">📄 PDF</button>
-        <button class="btn btn-sm btn-secondary" title="Caixas, peso e cubagem" onclick="abrirCotacaoPedido(${p.id})">📦 Cotação</button>
-        <button class="btn btn-sm btn-secondary" title="Outra transportadora ou valor negociado" onclick="mpAbrirEnvio(${p.id},'transportadora')">✏️ Alterar</button>
-        <button class="btn btn-sm btn-secondary" title="Desistir desta cotação (volta para Aguardando você)" onclick="mpCancelarCotacao(${p.id}, '${esc(p.numero_pedido)}')">↩ Cancelar</button>
-        <button class="btn btn-sm btn-secondary" title="O cliente vai buscar: vai direto para a Expedição" onclick="mpAbrirEnvio(${p.id},'retirada')">🙋 Cliente retira</button>
-        <button class="btn btn-sm btn-primary" title="O cliente aprovou o frete: o pedido vai para a Expedição" onclick="mpAutorizarCotacao(${p.id}, '${esc(p.numero_pedido)}')">✅ Cliente autorizou</button>
-      </td></tr>`), '');
-  html += mpSecaoRemessas();
-
-  if (separacao.length) html += _tabelaSecao('📦 Aguardando separação / embalagem — liberado para o frete quando o Estoque concluir', separacao.length,
-    ['Pedido', 'Cliente', 'Produzido há', 'Valor', ''],
-    separacao.map(p => `<tr>
-      <td><strong>${esc(p.numero_pedido)}</strong></td>
-      <td>${esc(p.cliente_nome)}${tampas(p)}</td>
-      <td>${seloDias(p.dias_na_etapa)}</td>
-      <td>${fmtBRL(p.valor_total)}</td>
-      <td style="white-space:nowrap;text-align:right">
-        <button class="btn btn-sm btn-secondary" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${p.id})">📄 PDF</button>
-        <button class="btn btn-sm btn-secondary" title="Caixas, peso e cubagem para cotar o frete" onclick="abrirCotacaoPedido(${p.id})">📦 Cotação</button>
-      </td></tr>`), '');
-
-  if (retirada.length) html += _tabelaSecao('🙋 Aguardando retirada do cliente', retirada.length,
-    ['Pedido', 'Cliente', 'Previsão', 'Parado', ''],
-    retirada.map(p => {
-      const vencida = p.retirada_prevista && p.retirada_prevista < hojeISO();
-      return `<tr>
-        <td><strong>${esc(p.numero_pedido)}</strong></td>
-        <td>${esc(p.cliente_nome)}${tampas(p)}</td>
-        <td style="${vencida ? 'color:var(--danger);font-weight:700' : ''}">${p.retirada_prevista ? fmtDate(p.retirada_prevista) + (vencida ? ' · vencida' : '') : '—'}</td>
-        <td>${vencida ? seloDias(99999, (p.dias_na_etapa || 0) + ' dias') : seloDias(p.retirada_prevista ? 0 : p.dias_na_etapa, p.retirada_prevista ? 'no prazo' : null)}</td>
-        <td style="text-align:right;white-space:nowrap"><button class="btn btn-sm btn-secondary" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${p.id})">📄 PDF</button> <button class="btn btn-sm btn-secondary" onclick="mpAbrirEnvio(${p.id},'retirada')">✏️ Alterar</button></td>
-      </tr>`;
-    }), '');
-
-  if (expedicao.length) html += _tabelaSecao('🧾 Com a Expedição — aguardando NF', expedicao.length,
-    ['Pedido', 'Cliente', 'Transportadora', 'Frete', 'Aguardando há', ''],
-    expedicao.map(p => `<tr>
-      <td><strong>${esc(p.numero_pedido)}</strong></td>
-      <td>${esc(p.cliente_nome)}${tampas(p)}</td>
-      <td>${esc(p.transportadora || '—')}</td>
-      <td>${fmtBRL(p.frete)}</td>
-      <td>${seloDias(p.dias_na_etapa)}</td>
-      <td style="text-align:right;white-space:nowrap"><button class="btn btn-sm btn-secondary" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${p.id})">📄 PDF</button> <button class="btn btn-sm btn-secondary" title="Caixas, peso e cubagem para cotar o frete" onclick="abrirCotacaoPedido(${p.id})">📦 Cotação</button> <button class="btn btn-sm btn-secondary" onclick="mpAbrirEnvio(${p.id},'transportadora')">✏️ Alterar</button></td>
-    </tr>`), '');
-
-  const concluidosVis = mpVerTodosConcluidos ? concluidos : concluidos.slice(0, 10);
-  if (concluidos.length) html += _tabelaSecao('✅ Concluídos nos últimos 15 dias', concluidos.length,
-    ['Pedido', 'Cliente', 'Saída', 'NF', 'Data', ''],
-    concluidosVis.map(p => `<tr>
-      <td><strong>${esc(p.numero_pedido)}</strong></td>
-      <td>${esc(p.cliente_nome)}</td>
-      <td><span class="pill ${STATUS_PILL_PEDIDO[p.status] || ''}">${STATUS_LABEL_PEDIDO[p.status] || esc(p.status)}</span>${p.status === 'enviado' && p.transportadora ? ' <span style="color:var(--muted);font-size:12px">' + esc(p.transportadora) + '</span>' : ''}</td>
-      <td style="white-space:nowrap">${esc(p.nota_fiscal || '—')}</td>
-      <td>${fmtDate(dataConcl(p))}</td>
-      <td style="text-align:right;white-space:nowrap">${btnNotaFiscal(p, Number(p.tem_nf_pdf))} <button class="btn btn-sm btn-secondary" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${p.id})">📄 PDF</button></td>
-    </tr>`), '');
-  if (concluidos.length > 10) {
-    html += `<div style="text-align:center;margin:-8px 0 18px"><button class="btn btn-sm btn-secondary" onclick="mpVerTodosConcluidos=!mpVerTodosConcluidos;renderSecoesMeus()">${mpVerTodosConcluidos ? 'Mostrar só os 10 mais recentes' : 'Ver todos os ' + concluidos.length + ' concluídos'}</button></div>`;
+  mpFecharMenu();
+  if (mpBusca) { el.innerHTML = mpRenderBusca(); return; }
+  const aba = mpAbaAtual();
+  const itens = mpItensAba(aba);
+  const { fatia, rodape } = mpPaginar(aba, itens);
+  const valor = p => fmtBRL(p.valor_total);
+  let html = '';
+  if (aba === 'voce') {
+    const naoFat = mpPedidosMeus().filter(p => ['produzido', 'aguardando_nf', 'aguardando_retirada'].includes(p.status)).reduce((a, p) => a + (Number(p.valor_total) || 0), 0);
+    html = mpTabela('⏳ Aguardando você — defina como o pedido vai sair', `Parados há mais tempo primeiro · ${fmtBRL(naoFat)} produzidos e ainda não faturados`,
+      ['Pedido', 'Cliente', 'Produzido há', 'Valor', ''],
+      fatia.map(it => `<tr><td>${mpCelPedido(it)}</td><td>${mpCelCliente(it)}</td><td>${seloDias(it.o.dias_na_etapa)}</td><td>${valor(it.o)}</td><td>${mpAcoesLinha(it)}</td></tr>`),
+      '✅ Nenhum pedido aguardando você', rodape);
+  } else if (aba === 'cliente') {
+    html = mpTabela('📨 Aguardando autorização do cliente', 'Cotação de frete enviada · só vai para a Expedição depois de “Cliente autorizou”',
+      ['Pedido', 'Cliente', 'Frete cotado', 'Cotação enviada há', ''],
+      fatia.map(it => `<tr><td>${mpCelPedido(it)}</td><td>${mpCelCliente(it)}</td><td>${esc(it.o.transportadora || '—')} · <strong>${fmtBRL(it.o.frete)}</strong>${it.o.previsao_entrega ? `<div style="font-size:11px;color:var(--muted)">previsão ${fmtDate(String(it.o.previsao_entrega).slice(0, 10))}</div>` : ''}</td>
+        <td>${seloDias(mpDiasDesde(it.t === 'p' ? it.o.cotacao_enviada_em : it.o.criado_em))}</td><td>${mpAcoesLinha(it)}</td></tr>`),
+      'Nenhuma cotação esperando o cliente', rodape);
+  } else if (aba === 'separacao') {
+    html = mpTabela('📦 Aguardando separação / embalagem', 'Liberado para o frete quando o Estoque concluir',
+      ['Pedido', 'Cliente', 'Produzido há', 'Valor', ''],
+      fatia.map(it => `<tr><td>${mpCelPedido(it)}</td><td>${mpCelCliente(it)}</td><td>${seloDias(it.o.dias_na_etapa)}</td><td>${valor(it.o)}</td><td>${mpAcoesLinha(it)}</td></tr>`),
+      'Nada aguardando separação', rodape);
+  } else if (aba === 'producao') {
+    html = mpTabela('🏭 Em produção', 'Abertos e em produção · prazo mais próximo primeiro',
+      ['Pedido', 'Cliente', 'Prazo', 'Dias', 'Itens', 'Status', ''],
+      fatia.map(it => {
+        const p = it.o, dias = Math.round(p.dias_restantes);
+        const cor = dias < 0 ? 'var(--danger)' : dias <= 3 ? 'var(--warn)' : 'var(--success)';
+        return `<tr><td>${mpCelPedido(it)}</td><td>${esc(p.cliente_nome)}</td><td>${fmtDate(p.prazo_entrega)}</td>
+          <td style="color:${cor};font-weight:700">${isNaN(dias) ? '—' : dias < 0 ? 'Vencido' : dias + 'd'}</td>
+          <td style="color:var(--muted)">${p.itens_entregues != null ? p.itens_entregues + '/' + p.total_itens : '—'}</td>
+          <td><span class="pill ${STATUS_PILL_PEDIDO[p.status] || ''}">${STATUS_LABEL_PEDIDO[p.status] || esc(p.status)}</span></td><td>${mpAcoesLinha(it)}</td></tr>`;
+      }), 'Nenhum pedido em produção', rodape);
+  } else if (aba === 'expedicao') {
+    html = mpTabela('🧾 Com a Expedição', 'Aguardando NF ou retirada pelo cliente · parados há mais tempo primeiro',
+      ['Pedido', 'Cliente', 'Saída', 'Situação', 'Parado há', ''],
+      fatia.map(it => {
+        const o = it.o;
+        const sit = it.t === 'r' ? (MP_ST_REM[o.status] || o.status) : (o.status === 'produzido' ? 'Todo em remessas' : STATUS_LABEL_PEDIDO[o.status] || o.status);
+        const venc = o.status === 'aguardando_retirada' && o.retirada_prevista && String(o.retirada_prevista).slice(0, 10) < hojeISO();
+        return `<tr><td>${mpCelPedido(it)}</td><td>${mpCelCliente(it)}</td><td>${mpCelSaida(it)}</td><td>${mpPillEtapa('expedicao', sit)}</td>
+          <td>${venc ? seloDias(99999, 'retirada vencida') : seloDias(o.dias_na_etapa)}</td><td>${mpAcoesLinha(it)}</td></tr>`;
+      }), 'Nada com a Expedição agora', rodape);
+  } else if (aba === 'concluidos') {
+    html = mpTabela('✅ Concluídos nos últimos 15 dias', 'Mais recentes primeiro · os mais antigos ficam em “Todos”',
+      ['Pedido', 'Cliente', 'Saída', 'NF', 'Data', ''],
+      fatia.map(it => {
+        const o = it.o, data = it.t === 'p' ? mpDataConcl(o) : (o.data_despacho || o.concluido_em || '');
+        return `<tr><td>${mpCelPedido(it)}</td><td>${it.t === 'p' ? esc(o.cliente_nome) : mpCelCliente(it)}</td>
+          <td>${it.t === 'p' ? `<span class="pill ${STATUS_PILL_PEDIDO[o.status] || ''}">${STATUS_LABEL_PEDIDO[o.status] || esc(o.status)}</span>${o.status === 'enviado' && o.transportadora ? ' <span style="color:var(--muted);font-size:12px">' + esc(o.transportadora) + '</span>' : ''}` : mpCelSaida(it)}</td>
+          <td style="white-space:nowrap">${esc(o.nota_fiscal || '—')}</td><td>${data ? fmtDate(String(data).slice(0, 10)) : '—'}</td><td>${mpAcoesLinha(it)}</td></tr>`;
+      }), 'Nenhum pedido concluído nos últimos 15 dias', rodape);
+  } else {
+    const opts = [['', 'Todos os status'], ['aberto', 'Aberto'], ['em_producao', 'Em produção'], ['produzido', 'Produzido'], ['em_estoque', 'No estoque do cliente'],
+      ['aguardando_nf', 'Aguardando NF'], ['aguardando_retirada', 'Aguardando retirada'], ['enviado', 'Enviado'], ['retirado', 'Retirado'], ['entregue', 'Entregue']];
+    const sel = `<select aria-label="Filtrar por status" onchange="mpTodosStatus=this.value;mpPag.todos=1;renderSecoesMeus()" style="min-width:200px">${opts.map(([v, t]) => `<option value="${v}"${v === mpTodosStatus ? ' selected' : ''}>${t}</option>`).join('')}</select>`;
+    html = mpTabela('📋 Todos os meus pedidos', 'Histórico completo · mais novos primeiro',
+      ['Pedido', 'Cliente', 'Prazo', 'Etapa', ''],
+      fatia.map(it => { const p = it.o, et = mpEtapaPedido(p);
+        return `<tr><td>${mpCelPedido(it)}</td><td>${esc(p.cliente_nome)}</td><td>${fmtDate(p.prazo_entrega)}</td>
+          <td><span class="pill ${STATUS_PILL_PEDIDO[p.status] || ''}">${(p.status === 'produzido' && Number(p.revenda_bloqueado)) ? '📦 Aguardando separação' : (STATUS_LABEL_PEDIDO[p.status] || esc(p.status))}</span></td>
+          <td>${mpAcoes((et === 'producao' ? `<button class="btn btn-sm btn-secondary" onclick="verDetalhe(${p.id})">Ver</button>` : '') + mpBtnNf(p) + mpBtnMais('p', p.id))}</td></tr>`; }),
+      'Nenhum pedido encontrado', rodape, sel);
   }
-
   el.innerHTML = html;
+}
+
+// Busca do topo: procura em todas as etapas (pedidos e remessas)
+function mpRenderBusca() {
+  const q = mpBusca.toLowerCase();
+  const casa = s => String(s || '').toLowerCase().includes(q);
+  const ps = mpPedidosTodos().filter(p => casa(p.numero_pedido) || casa(p.cliente_nome) || casa(p.nome_fantasia) || casa(p.nota_fiscal))
+    .sort((a, b) => b.id - a.id).map(p => ({ t: 'p', o: p }));
+  const rs = (mpDados.remessas || []).filter(r => casa(r.numero_pedido) || casa(r.cliente_nome) || casa(r.nota_fiscal)).map(r => ({ t: 'r', o: r }));
+  const itens = rs.concat(ps);
+  const { fatia, rodape } = mpPaginar('busca', itens);
+  return mpTabela(`🔎 Resultado da busca: “${esc(mpBusca)}”`, `${itens.length} encontrado(s) em todas as etapas · clique num card para voltar às listas`,
+    ['Pedido', 'Cliente', 'Etapa', 'Valor', ''],
+    fatia.map(it => {
+      const o = it.o;
+      const et = it.t === 'p' ? mpEtapaPedido(o) : mpEtapaRemessa(o);
+      let txt = MP_ETAPA_LABEL[et] || '';
+      if (it.t === 'r') txt = MP_ST_REM[o.status] || o.status;
+      else if (et === 'producao') txt = STATUS_LABEL_PEDIDO[o.status] || txt;
+      else if (et === 'concluidos') txt = (STATUS_LABEL_PEDIDO[o.status] || 'Concluído') + (o.nota_fiscal ? ' · NF ' + esc(o.nota_fiscal) : '');
+      else if (et === 'expedicao' && o.status) txt = 'Com a Expedição · ' + (o.status === 'aguardando_retirada' ? 'retirada' : 'aguardando NF');
+      return `<tr><td>${mpCelPedido(it)}</td><td>${it.t === 'p' ? esc(o.cliente_nome) : mpCelCliente(it)}</td><td>${mpPillEtapa(et, txt)}</td>
+        <td>${it.t === 'p' && o.valor_total != null ? fmtBRL(o.valor_total) : (it.t === 'r' ? fmtNum(o.total_qtd) + ' un.' : '—')}</td><td>${mpAcoesLinha(it)}</td></tr>`;
+    }), 'Nada encontrado com esse número ou cliente', rodape);
 }
 
 // Ícone da nota fiscal: aparece quando a Expedição anexou o PDF da NF
@@ -1243,7 +1461,7 @@ async function mpCarregarTransportadoras() {
 }
 
 async function mpAbrirEnvio(id, modo) {
-  const p = (mpDados.pedidos || []).find(x => x.id === id);
+  const p = (mpDados.pedidos || []).find(x => x.id === id) || mpPedidoPorId(id);
   if (!p) return;
   const nomes = await mpCarregarTransportadoras();
   const sel = document.getElementById('mp-transportadora');
@@ -1325,57 +1543,11 @@ async function excluirPedidoVendedor(id) {
 
 async function loadPedidosCom() {
   if (window._permExcluirCarregada !== true) { window._permExcluirCarregada = true; await carregarPermissaoExcluir(); }
-  const status = document.getElementById('com-filtro-status').value;
-  const busca = document.getElementById('com-busca').value.toLowerCase();
-  let url = '/pedidos/';
-  if (status && status !== 'andamento') url += '?status=' + status;
   const meuId = window.meuUsuario ? window.meuUsuario.id : null;
-  let rows = (await req(url) || []).filter(p => meuId != null && p.vendedor_usuario_id === meuId);
-  if (status === 'andamento') rows = rows.filter(p => ['aberto', 'em_producao'].includes(p.status));
-  window._comLista = rows;
-  const filtrados = busca ? rows.filter(p =>
-    String(p.numero_pedido || '').toLowerCase().includes(busca) ||
-    String(p.cliente_nome || '').toLowerCase().includes(busca)
-  ) : rows;
-
-  const tbody = document.getElementById('com-tbody');
-  const pag = document.getElementById('com-paginacao');
-  if (!filtrados.length) {
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:32px">Nenhum pedido encontrado</td></tr>';
-    if (pag) pag.innerHTML = '';
-    return;
-  }
-  const totalPag = Math.max(1, Math.ceil(filtrados.length / COM_POR_PAGINA));
-  if (comPagina > totalPag) comPagina = totalPag;
-  const ini = (comPagina - 1) * COM_POR_PAGINA;
-  const pagina = filtrados.slice(ini, ini + COM_POR_PAGINA);
-  if (pag) {
-    pag.innerHTML = `<span style="font-size:12px;color:var(--muted)">${ini + 1}–${ini + pagina.length} de ${filtrados.length} pedido(s)</span>` +
-      (totalPag > 1 ? `<span style="display:flex;gap:6px;align-items:center">
-        <button class="btn btn-sm btn-secondary" ${comPagina <= 1 ? 'disabled' : ''} onclick="comPagina--;loadPedidosCom()">← Anterior</button>
-        <span style="font-size:12px">Página ${comPagina} de ${totalPag}</span>
-        <button class="btn btn-sm btn-secondary" ${comPagina >= totalPag ? 'disabled' : ''} onclick="comPagina++;loadPedidosCom()">Próxima →</button>
-      </span>` : '');
-  }
-  tbody.innerHTML = pagina.map(p => {
-    const dias = Math.round(p.dias_restantes);
-    const diasCor = dias < 0 ? 'var(--danger)' : dias <= 3 ? 'var(--warn)' : 'var(--success)';
-    return `<tr>
-      <td><strong>${p.numero_pedido}</strong></td>
-      <td>${p.cliente_nome}</td>
-      <td>${fmtDate(p.prazo_entrega)}</td>
-      <td style="color:${diasCor};font-weight:700">${dias < 0 ? 'Vencido' : dias + 'd'}</td>
-      <td style="color:var(--muted)">${p.itens_entregues}/${p.total_itens}</td>
-      <td><span class="pill ${STATUS_PILL_PEDIDO[p.status] || ''}">${(p.status === 'produzido' && Number(p.revenda_bloqueado)) ? '📦 Aguardando separação' : (STATUS_LABEL_PEDIDO[p.status] || p.status)}</span></td>
-      <td class="flex gap-2">
-        <button class="btn btn-sm btn-secondary" onclick="verDetalhe(${p.id})">Ver</button>
-        <button class="btn btn-sm btn-secondary" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${p.id})">📄 PDF</button>
-        ${btnNotaFiscal(p, !!p.nf_arquivo)}
-        ${['em_producao', 'produzido'].includes(p.status) && !Number(p.origem_estoque_cliente) && !Number(p.para_estoque_cliente) ? `<button class="btn btn-sm btn-secondary" title="Enviar agora só uma parte (o resto sai depois)" onclick="mpAbrirRemessa(${p.id})">📦 Envio parcial</button>` : ''}
-        ${(p.status || 'aberto') === 'aberto' && !(p.itens_iniciados > 0) ? `<button class="btn btn-sm btn-secondary" title="Editar o pedido (só antes da produção)" onclick="window.location.href='/?editar=${p.id}'">✏️ Editar</button> <button class="btn btn-sm btn-danger" title="Excluir pedido (só antes da produção)" onclick="excluirPedidoVendedor(${p.id})">🗑 Excluir</button>` : ''}
-      </td>
-    </tr>`;
-  }).join('');
+  try { window._comLista = (await req('/pedidos/') || []).filter(p => meuId != null && p.vendedor_usuario_id === meuId); }
+  catch (e) { window._comLista = window._comLista || []; }
+  renderCardsMeus();
+  renderSecoesMeus();
 }
 
 async function verDetalhe(id) {
