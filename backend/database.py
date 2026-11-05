@@ -1529,8 +1529,24 @@ def init_db():
     _migrar_estoque_cliente(conn)
     _migrar_nf_arquivo(conn)
     _migrar_remessas(conn)
+    _migrar_autorizacao_frete(conn)
     conn.commit()
     conn.close()
+
+
+def _migrar_autorizacao_frete(conn):
+    """Frete por transportadora só vai para a Expedição depois que o cliente autoriza a cotação.
+    Enquanto isso o pedido fica 'produzido' com a cotação gravada (cotacao_enviada_em);
+    a remessa parcial fica com status 'aguardando_cliente'."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(pedidos)").fetchall()]
+    for col in ("cotacao_enviada_em", "cotacao_enviada_por", "cotacao_autorizada_em", "cotacao_autorizada_por"):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE pedidos ADD COLUMN {col} TEXT")
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(pedidos_remessas)").fetchall()]
+    for col in ("cotacao_autorizada_em", "cotacao_autorizada_por"):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE pedidos_remessas ADD COLUMN {col} TEXT")
+    conn.commit()
 
 
 def _migrar_remessas(conn):
