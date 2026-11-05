@@ -2122,6 +2122,7 @@ def meus_pedidos(current_user: dict = Depends(get_current_user)):
         rows = conn.execute(f"""
             SELECT p.id, p.numero_pedido, p.status, p.status_desde, p.prazo_entrega,
                    p.transportadora, p.frete, p.previsao_entrega, p.retirada_prevista,
+                   p.cotacao_enviada_em, p.cotacao_enviada_por,
                    p.obs_vendedor, p.nota_fiscal, p.data_despacho, p.data_entrega, p.envio_definido_em,
                    COALESCE(p.origem_estoque_cliente,0) AS origem_estoque_cliente,
                    CASE WHEN p.nf_arquivo IS NOT NULL AND p.nf_arquivo != '' THEN 1 ELSE 0 END AS tem_nf_pdf,
@@ -2428,7 +2429,7 @@ def _cubagem_m3(qtd, c, l, a) -> float:
 def _remessado_por_item(conn, pedido_id: int, incluir_pendentes: bool = True) -> dict:
     """Quantidade de cada item que já saiu (ou está reservada) em remessas parciais."""
     try:
-        sts = ("aguardando_nf", "aguardando_retirada", "enviado", "retirado") if incluir_pendentes else ("enviado", "retirado")
+        sts = ("aguardando_cliente", "aguardando_nf", "aguardando_retirada", "enviado", "retirado") if incluir_pendentes else ("enviado", "retirado")
         rows = conn.execute(f"""SELECT ri.pedido_item_id, SUM(ri.quantidade) AS q FROM pedidos_remessa_itens ri
                                JOIN pedidos_remessas r ON r.id = ri.remessa_id
                                WHERE r.pedido_id = ? AND r.status IN ({','.join('?' * len(sts))})
@@ -2590,6 +2591,10 @@ def excluir_volume(id: int, vid: int, current_user: dict = Depends(get_current_u
 
 @router.post("/{id}/definir-envio")
 def definir_envio(id: int, body: DefinirEnvioIn, current_user: dict = Depends(get_current_user)):
+    return _definir_envio(id, body, current_user, False)
+
+
+def _definir_envio(id: int, body: DefinirEnvioIn, current_user: dict, _autorizando: bool = False):
     """Vendedor informa como o pedido produzido vai sair:
     - transportadora + frete combinado → Aguardando NF (entra na fila da Expedição);
     - retirada pelo cliente → Aguardando retirada;
@@ -2620,6 +2625,9 @@ def definir_envio(id: int, body: DefinirEnvioIn, current_user: dict = Depends(ge
             if _embalagem_pendente(conn, id) > 0:
                 raise HTTPException(400, "A embalagem deste pedido ainda não foi informada pelo Estoque/Expedição. "
                                          "Ele será liberado para o frete assim que as caixas forem informadas.")
+        if modo == "transportadora" and ped["status"] == "produzido" and not eh_gestor and not _autorizando:
+            raise HTTPException(400, "Envie a cotação ao cliente e, quando ele autorizar, clique em "
+                                     "'Cliente autorizou' para o pedido seguir para a Expedição.")
         if modo == "transportadora":
             transp = (body.transportadora or "").strip()
             if not transp:
@@ -2638,6 +2646,7 @@ def definir_envio(id: int, body: DefinirEnvioIn, current_user: dict = Depends(ge
             novo = "aguardando_nf"
         elif modo == "retirada":
             conn.execute("""UPDATE pedidos SET status='aguardando_retirada', transportadora=NULL, frete=0,
+                            cotacao_enviada_em=NULL, cotacao_enviada_por=NULL,
                             previsao_entrega=NULL, retirada_prevista=?, obs_vendedor=?,
                             envio_definido_em=datetime('now','localtime'), envio_definido_por=?
                             WHERE id=?""",
@@ -2646,7 +2655,9 @@ def definir_envio(id: int, body: DefinirEnvioIn, current_user: dict = Depends(ge
         elif modo == "voltar":
             conn.execute("""UPDATE pedidos SET status='produzido', transportadora=NULL, frete=0,
                             previsao_entrega=NULL, retirada_prevista=NULL,
-                            envio_definido_em=NULL, envio_definido_por=NULL WHERE id=?""", (id,))
+                            envio_definido_em=NULL, envio_definido_por=NULL,
+                            cotacao_enviada_em=NULL, cotacao_enviada_por=NULL,
+                            cotacao_autorizada_em=NULL, cotacao_autorizada_por=NULL WHERE id=?""", (id,))
             novo = "produzido"
         else:
             raise HTTPException(400, "Modo inválido. Use 'transportadora', 'retirada' ou 'voltar'.")
@@ -2656,6 +2667,87 @@ def definir_envio(id: int, body: DefinirEnvioIn, current_user: dict = Depends(ge
                 "aguardando_retirada": "Enviado para a Expedição (aguardando retirada)",
                 "produzido": "Pedido voltou para aguardando vendedor"}
         return {"mensagem": msgs[novo], "status": novo}
+    finally:
+        conn.close()
+
+
+# ─── Autorização do frete pelo cliente ──────────────────────────────────────
+# 1) vendedor envia a cotação (transportadora + frete) → pedido continua Produzido,
+#    na seção "Aguardando autorização do cliente";
+# 2) cliente autoriza → vendedor (ou Gestor) clica "Cliente autorizou" → Aguardando NF (Expedição).
+
+def _ped_para_cotacao(conn, id: int, current_user: dict):
+    ped = conn.execute("SELECT * FROM pedidos WHERE id=?", (id,)).fetchone()
+    if not ped:
+        raise HTTPException(404, "Pedido não encontrado")
+    if current_user.get("role") != "gestor" and ped["vendedor_usuario_id"] != current_user["id"]:
+        raise HTTPException(403, "Só o vendedor deste pedido (ou o Gestor) pode mexer na cotação.")
+    if ped["status"] != "produzido":
+        raise HTTPException(400, "A cotação só pode ser enviada/autorizada com o pedido produzido e ainda com o vendedor.")
+    return ped
+
+
+@router.post("/{id}/enviar-cotacao")
+def enviar_cotacao(id: int, body: DefinirEnvioIn, current_user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    try:
+        _ped_para_cotacao(conn, id, current_user)
+        if _revenda_pendente(conn, id) > 0:
+            raise HTTPException(400, "Este pedido tem itens de revenda ainda não separados.")
+        if _embalagem_pendente(conn, id) > 0:
+            raise HTTPException(400, "A embalagem deste pedido ainda não foi informada pelo Estoque/Expedição.")
+        rem = _remessado_por_item(conn, id)
+        if rem:
+            restante = sum(max(0, (r["quantidade"] or 0) - rem.get(r["id"], 0))
+                           for r in conn.execute("SELECT id, quantidade FROM pedidos_itens WHERE pedido_id=?", (id,)).fetchall())
+            if restante <= 0:
+                raise HTTPException(400, "Todo o pedido já está em remessas parciais; não há saldo para enviar.")
+        transp = (body.transportadora or "").strip()
+        cad = conn.execute("SELECT nome FROM transportadoras WHERE nome = ? COLLATE NOCASE AND ativo = 1", (transp,)).fetchone() if transp else None
+        if not cad:
+            raise HTTPException(400, "Escolha uma transportadora cadastrada.")
+        conn.execute("""UPDATE pedidos SET transportadora=?, frete=?, previsao_entrega=?, retirada_prevista=NULL, obs_vendedor=?,
+                        cotacao_enviada_em=datetime('now','localtime'), cotacao_enviada_por=?,
+                        cotacao_autorizada_em=NULL, cotacao_autorizada_por=NULL WHERE id=?""",
+                     (cad["nome"], float(body.frete or 0), (body.previsao_entrega or "").strip(),
+                      (body.obs_vendedor or "").strip(), _nome_usuario(current_user), id))
+        conn.commit()
+        return {"mensagem": "Cotação registrada. Quando o cliente autorizar, clique em 'Cliente autorizou' para ir à Expedição."}
+    finally:
+        conn.close()
+
+
+@router.post("/{id}/autorizar-cotacao")
+def autorizar_cotacao(id: int, current_user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    try:
+        ped = _ped_para_cotacao(conn, id, current_user)
+        if not ped["cotacao_enviada_em"] or not ped["transportadora"]:
+            raise HTTPException(400, "Este pedido não tem cotação enviada ao cliente.")
+        body = DefinirEnvioIn(modo="transportadora", transportadora=ped["transportadora"], frete=ped["frete"] or 0,
+                              previsao_entrega=ped["previsao_entrega"] or "", obs_vendedor=ped["obs_vendedor"] or "")
+    finally:
+        conn.close()
+    r = _definir_envio(id, body, current_user, True)
+    conn = get_conn()
+    try:
+        conn.execute("UPDATE pedidos SET cotacao_autorizada_em=datetime('now','localtime'), cotacao_autorizada_por=? WHERE id=?",
+                     (_nome_usuario(current_user), id))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"mensagem": "Cliente autorizou: pedido enviado para a Expedição (aguardando NF)", "status": r.get("status")}
+
+
+@router.post("/{id}/cancelar-cotacao")
+def cancelar_cotacao(id: int, current_user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    try:
+        _ped_para_cotacao(conn, id, current_user)
+        conn.execute("""UPDATE pedidos SET transportadora=NULL, frete=0, previsao_entrega=NULL,
+                        cotacao_enviada_em=NULL, cotacao_enviada_por=NULL WHERE id=?""", (id,))
+        conn.commit()
+        return {"mensagem": "Cotação cancelada; o pedido voltou para 'Aguardando você'."}
     finally:
         conn.close()
 

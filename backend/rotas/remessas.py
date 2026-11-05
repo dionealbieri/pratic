@@ -228,6 +228,8 @@ def fila_remessas(current_user: dict = Depends(get_current_user)):
     try:
         where = "(r.status IN ('aguardando_nf','aguardando_retirada') OR (r.status IN ('enviado','retirado') AND COALESCE(r.data_despacho, r.concluido_em, r.criado_em) >= date('now','localtime','-60 days')))"
         params = ()
+        if current_user.get("role") == "gestor":   # Gestor também vê (e pode autorizar) as que esperam o cliente
+            where = "(r.status = 'aguardando_cliente' OR " + where + ")"
         if current_user.get("role") == "comercial":
             where += " AND p.vendedor_usuario_id = ?"
             params = (current_user["id"],)
@@ -243,7 +245,7 @@ def minhas_remessas(current_user: dict = Depends(get_current_user)):
     conn = get_conn()
     try:
         uid = current_user["id"]
-        rems = _listar_remessas(conn, """p.vendedor_usuario_id = ? AND (r.status IN ('aguardando_nf','aguardando_retirada')
+        rems = _listar_remessas(conn, """p.vendedor_usuario_id = ? AND (r.status IN ('aguardando_cliente','aguardando_nf','aguardando_retirada')
                                          OR (r.status IN ('enviado','retirado') AND COALESCE(r.concluido_em, r.criado_em) >= datetime('now','localtime','-15 days')))""",
                                 (uid,))
         visto = conn.execute("SELECT meus_pedidos_visto_em FROM usuarios WHERE id=?", (uid,)).fetchone()
@@ -295,7 +297,7 @@ def criar_remessa(pid: int, body: RemessaIn, current_user: dict = Depends(get_cu
             if not cad:
                 raise HTTPException(400, "Escolha uma transportadora cadastrada.")
             transp = cad["nome"]
-            status = "aguardando_nf"
+            status = "aguardando_cliente"     # só vai para a Expedição quando o cliente autorizar o frete
         elif modo == "retirada":
             status = "aguardando_retirada"
         else:
@@ -317,7 +319,9 @@ def criar_remessa(pid: int, body: RemessaIn, current_user: dict = Depends(get_cu
                      (_nome_usuario(current_user), pid, f"Pedido {ped['numero_pedido']}: remessa parcial {numero}",
                       ", ".join(f"{disp[i.pedido_item_id]['descricao']}: {i.quantidade:g}" for i in itens)))
         conn.commit()
-        return {"mensagem": f"Remessa {numero} do pedido {ped['numero_pedido']} enviada para a Expedição.", "remessa_id": rid}
+        msg = (f"Remessa {numero} do pedido {ped['numero_pedido']}: cotação registrada. Quando o cliente autorizar, clique em 'Cliente autorizou'."
+               if status == "aguardando_cliente" else f"Remessa {numero} do pedido {ped['numero_pedido']} enviada para a Expedição.")
+        return {"mensagem": msg, "remessa_id": rid}
     finally:
         conn.close()
 
@@ -332,11 +336,33 @@ def cancelar_remessa(rid: int, current_user: dict = Depends(get_current_user)):
             _checar_acesso_pedido(ped, current_user)
         elif current_user.get("role") != "gestor":
             raise HTTPException(403, "Só o vendedor do pedido ou o Gestor cancela a remessa.")
-        if r["status"] not in STATUS_PENDENTES:
+        if r["status"] not in STATUS_PENDENTES + ("aguardando_cliente",):
             raise HTTPException(400, "A Expedição já lançou a NF desta remessa. Peça para ela desfazer.")
         conn.execute("UPDATE pedidos_remessas SET status='cancelada', status_desde=datetime('now','localtime') WHERE id=?", (rid,))
         conn.commit()
         return {"mensagem": f"Remessa {r['numero']} cancelada; as quantidades voltaram para o saldo do pedido."}
+    finally:
+        conn.close()
+
+
+@router.post("/{rid}/autorizar")
+def autorizar_remessa(rid: int, current_user: dict = Depends(get_current_user)):
+    """Cliente autorizou o frete da remessa → vai para a fila da Expedição (aguardando NF)."""
+    conn = get_conn()
+    try:
+        r = _remessa(conn, rid)
+        ped = _pedido(conn, r["pedido_id"])
+        if current_user.get("role") == "comercial":
+            _checar_acesso_pedido(ped, current_user)
+        elif current_user.get("role") != "gestor":
+            raise HTTPException(403, "Só o vendedor do pedido ou o Gestor autoriza o frete.")
+        if r["status"] != "aguardando_cliente":
+            raise HTTPException(400, "Esta remessa não está aguardando a autorização do cliente.")
+        conn.execute("""UPDATE pedidos_remessas SET status='aguardando_nf', status_desde=datetime('now','localtime'),
+                        cotacao_autorizada_em=datetime('now','localtime'), cotacao_autorizada_por=? WHERE id=?""",
+                     (_nome_usuario(current_user), rid))
+        conn.commit()
+        return {"mensagem": f"Cliente autorizou: remessa {r['numero']} enviada para a Expedição."}
     finally:
         conn.close()
 
