@@ -72,6 +72,7 @@ def _revenda_pendente(conn, pedido_id: int) -> int:
 # medidas + peso da caixa e unidades por caixa (ou o item já está em caixas).
 SQL_ITEM_COM_EMBALAGEM = """(
     EXISTS (SELECT 1 FROM pedidos_volumes v WHERE v.pedido_item_id = i.id)
+    OR EXISTS (SELECT 1 FROM pedidos_volume_itens vi WHERE vi.pedido_item_id = i.id)
     OR EXISTS (SELECT 1 FROM estoque_produtos ep2 WHERE ep2.id = i.produto_id
                AND COALESCE(ep2.embalagem_comprimento,0) > 0 AND COALESCE(ep2.embalagem_largura,0) > 0
                AND COALESCE(ep2.embalagem_altura,0) > 0 AND COALESCE(ep2.embalagem_peso,0) > 0
@@ -2701,6 +2702,7 @@ def remover_nf_arquivo(id: int, current_user: dict = Depends(get_current_user)):
 
 class VolumeIn(BaseModel):
     pedido_item_id: Optional[int] = None
+    pedido_itens_ids: Optional[List[int]] = None   # vários itens na mesma caixa
     descricao: Optional[str] = ""
     qtd_caixas: float = 1
     comprimento: float = 0
@@ -2781,10 +2783,16 @@ def _calcular_cotacao(conn, id: int, qtd_por_item: dict = None, usar_manuais: bo
         itens.append(_d)
     manuais = [dict(r) for r in conn.execute(
         "SELECT * FROM pedidos_volumes WHERE pedido_id=? ORDER BY id", (id,)).fetchall()] if usar_manuais else []
+    # Itens de cada caixa manual (uma caixa pode levar vários itens juntos)
+    for m in manuais:
+        ids = {r[0] for r in conn.execute("SELECT pedido_item_id FROM pedidos_volume_itens WHERE volume_id=?", (m["id"],)).fetchall()}
+        if m["pedido_item_id"]:
+            ids.add(m["pedido_item_id"])
+        m["itens_ids"] = sorted(ids)
     if qtd_por_item is not None:
         _ids = {i["id"] for i in itens}
-        manuais = [m for m in manuais if not m["pedido_item_id"] or m["pedido_item_id"] in _ids]
-    itens_com_manual = {m["pedido_item_id"] for m in manuais if m["pedido_item_id"]}
+        manuais = [m for m in manuais if not m["itens_ids"] or any(x in _ids for x in m["itens_ids"])]
+    itens_com_manual = {x for m in manuais for x in m["itens_ids"]}
 
     linhas, avisos = [], []
     tot_cx = tot_peso = tot_m3 = 0.0
@@ -2874,14 +2882,19 @@ def lancar_volume(id: int, v: VolumeIn, current_user: dict = Depends(get_current
             raise HTTPException(400, "Informe comprimento, largura e altura da caixa.")
         if (v.peso_caixa or 0) <= 0:
             raise HTTPException(400, "Informe o peso de cada caixa.")
-        if v.pedido_item_id:
-            ok = conn.execute("SELECT 1 FROM pedidos_itens WHERE id=? AND pedido_id=?", (v.pedido_item_id, id)).fetchone()
+        ids = list(dict.fromkeys([x for x in (v.pedido_itens_ids or []) if x] or ([v.pedido_item_id] if v.pedido_item_id else [])))
+        for iid in ids:
+            ok = conn.execute("SELECT 1 FROM pedidos_itens WHERE id=? AND pedido_id=?", (iid, id)).fetchone()
             if not ok:
                 raise HTTPException(400, "Item não pertence a este pedido.")
-        conn.execute("""INSERT INTO pedidos_volumes (pedido_id, pedido_item_id, descricao, qtd_caixas,
+        cur = conn.cursor()
+        cur.execute("""INSERT INTO pedidos_volumes (pedido_id, pedido_item_id, descricao, qtd_caixas,
                         comprimento, largura, altura, peso_caixa, usuario) VALUES (?,?,?,?,?,?,?,?,?)""",
-                     (id, v.pedido_item_id or None, (v.descricao or "").strip(), v.qtd_caixas,
-                      v.comprimento, v.largura, v.altura, v.peso_caixa, _nome_usuario(current_user)))
+                    (id, ids[0] if ids else None, (v.descricao or "").strip(), v.qtd_caixas,
+                     v.comprimento, v.largura, v.altura, v.peso_caixa, _nome_usuario(current_user)))
+        vid = cur.lastrowid
+        for iid in ids:
+            cur.execute("INSERT OR IGNORE INTO pedidos_volume_itens (volume_id, pedido_item_id) VALUES (?,?)", (vid, iid))
         st = conn.execute("SELECT status FROM pedidos WHERE id=?", (id,)).fetchone()["status"]
         _checar_bloqueio_revenda(conn, id, st)
         conn.commit()
@@ -2898,6 +2911,7 @@ def excluir_volume(id: int, vid: int, current_user: dict = Depends(get_current_u
         cur = conn.execute("DELETE FROM pedidos_volumes WHERE id=? AND pedido_id=?", (vid, id))
         if cur.rowcount == 0:
             raise HTTPException(404, "Lançamento não encontrado")
+        conn.execute("DELETE FROM pedidos_volume_itens WHERE volume_id=?", (vid,))
         st = conn.execute("SELECT status FROM pedidos WHERE id=?", (id,)).fetchone()["status"]
         _checar_bloqueio_revenda(conn, id, st)
         conn.commit()
@@ -3882,6 +3896,7 @@ def deletar_pedido(id: int, current_user = Depends(get_current_user)):
         cur.execute("DELETE FROM pedidos_parcelas WHERE pedido_id=?", (id,))
         cur.execute("DELETE FROM pedidos_itens WHERE pedido_id=?", (id,))
         cur.execute("DELETE FROM pedidos_status_hist WHERE pedido_id=?", (id,))
+        cur.execute("DELETE FROM pedidos_volume_itens WHERE volume_id IN (SELECT id FROM pedidos_volumes WHERE pedido_id=?)", (id,))
         cur.execute("DELETE FROM pedidos_volumes WHERE pedido_id=?", (id,))
         for _r in cur.execute("SELECT nf_arquivo FROM pedidos_remessas WHERE pedido_id=? AND nf_arquivo IS NOT NULL", (id,)).fetchall():
             try:
