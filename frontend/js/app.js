@@ -4849,7 +4849,7 @@ async function loadTransportadora() {
       <td style="white-space:nowrap"><strong>${p.numero_pedido}</strong>${_seloNovo(p)}</td>
       <td>${p.cliente_nome||'—'}${obsV}</td>
       <td>${_escHtml(p.vendedor_usuario_nome || p.vendedor || '—')}</td>
-      <td>${s2 === 'aguardando_retirada' ? '<span style="color:var(--muted)">Cliente retira</span>' : _escHtml(p.transportadora || '—')}</td>
+      <td>${s2 === 'aguardando_retirada' ? '<span style="color:var(--muted)">Cliente retira</span>' : _escHtml(p.transportadora || '—') + (p.cotacao_numero ? `<div style="font-size:11px;color:var(--muted)">cotação nº ${_escHtml(p.cotacao_numero)}</div>` : '')}</td>
       <td>${s2 === 'aguardando_retirada' ? '—' : fmtBRL(p.frete || 0)}</td>
       <td>${previsao}</td>
       <td style="white-space:nowrap">${p.nota_fiscal||'—'}${_nfPdfLink(p)}</td>
@@ -4978,7 +4978,7 @@ function _linhaRemessaExpedicao(r) {
     <td><strong>${_escHtml(r.numero_pedido)}</strong><div style="font-size:11px;color:var(--accent2,#3b82f6);font-weight:700">REMESSA ${r.numero} · parcial</div></td>
     <td>${_escHtml(r.cliente_nome || '—')}<div style="font-size:11px;color:var(--muted)">${itens}</div>${r.obs_vendedor ? `<div style="font-size:11px;color:var(--muted)">💬 ${_escHtml(r.obs_vendedor)}</div>` : ''}</td>
     <td>${_escHtml(r.vendedor_usuario_nome || r.vendedor || '—')}</td>
-    <td>${r.modo === 'retirada' ? '<span style="color:var(--muted)">Cliente retira</span>' : _escHtml(r.transportadora || '—')}</td>
+    <td>${r.modo === 'retirada' ? '<span style="color:var(--muted)">Cliente retira</span>' : _escHtml(r.transportadora || '—') + (r.cotacao_numero ? `<div style="font-size:11px;color:var(--muted)">cotação nº ${_escHtml(r.cotacao_numero)}</div>` : '')}</td>
     <td>${r.modo === 'retirada' ? '—' : fmtBRL(r.frete || 0)}</td>
     <td>${prev}</td>
     <td style="white-space:nowrap">${_escHtml(r.nota_fiscal || '—')}${nfLink}</td>
@@ -4990,7 +4990,7 @@ function _linhaRemessaExpedicao(r) {
 
 function _cabecalhoRemessa(r) {
   return `Pedido: <strong style="color:var(--accent); font-size:16px;">${_escHtml(r.numero_pedido)}</strong> · <strong style="color:var(--accent2,#3b82f6)">Remessa ${r.numero} (parcial)</strong> — Cliente: <strong>${_escHtml(r.cliente_nome || '')}</strong><br>
-    Vendedor: <strong>${_escHtml(r.vendedor_usuario_nome || r.vendedor || '—')}</strong>${r.obs_vendedor ? ' · 💬 ' + _escHtml(r.obs_vendedor) : ''}<br>
+    Vendedor: <strong>${_escHtml(r.vendedor_usuario_nome || r.vendedor || '—')}</strong>${r.obs_vendedor ? ' · 💬 ' + _escHtml(r.obs_vendedor) : ''}${r.cotacao_numero ? ' · 📨 Cotação nº <strong style="color:var(--accent)">' + _escHtml(r.cotacao_numero) + '</strong>' : ''}<br>
     <span style="font-size:13px">Nesta remessa: ${(r.itens || []).map(i => `<strong>${fmtNum(i.quantidade)}</strong> ${_escHtml(i.descricao || '')}`).join(' · ')}</span>`;
 }
 
@@ -5115,6 +5115,7 @@ async function abrirDespacho(id) {
     Pedido: <strong style="color:var(--accent); font-size:16px;">${p.numero_pedido}</strong> — Cliente: <strong style="color:var(--text);">${p.cliente_nome||''}</strong><br>
     Vendedor: <strong style="color:var(--text); font-weight:bold;">${p.vendedor || 'Não informado'}</strong>
     ${p.envio_definido_em ? `<br><span style="color:var(--muted);font-size:12px">Frete definido por ${_escHtml(p.envio_definido_por || 'vendedor')} em ${fmtDate(String(p.envio_definido_em).slice(0,10))}${p.obs_vendedor ? ' · 💬 ' + _escHtml(p.obs_vendedor) : ''}</span>` : ''}
+    ${p.cotacao_numero ? `<br><span style="font-size:13px">📨 Cotação da transportadora nº <strong style="color:var(--accent)">${_escHtml(p.cotacao_numero)}</strong></span>` : ''}
   `;
   
   await _preencherSelectTransp(document.getElementById('desp-transportadora'), p.transportadora || '');
