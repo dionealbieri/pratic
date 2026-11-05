@@ -250,6 +250,7 @@
     </div>
     <div id="rm-campos-transportadora" class="form-grid">
       <div class="form-group" style="grid-column:1/-1"><label>Transportadora desta remessa</label><select id="rm-transportadora"></select></div>
+      <div class="form-group"><label>Nº da cotação <span style="color:var(--muted);font-weight:400">(da transportadora)</span></label><input type="text" id="rm-cot-numero" maxlength="60" placeholder="Ex.: 123456"></div>
       <div class="form-group"><label>Frete combinado (R$)</label><input type="number" id="rm-frete" min="0" step="0.01" value="0"></div>
       <div class="form-group"><label>Previsão de entrega</label><input type="date" id="rm-previsao"></div>
     </div>
@@ -276,6 +277,7 @@
     </div>
     <div id="mp-campos-transportadora" class="form-grid">
       <div class="form-group" style="grid-column:1/-1"><label>Transportadora escolhida</label><select id="mp-transportadora"></select><span id="mp-transp-aviso" style="font-size:11px;color:var(--muted)"></span></div>
+      <div class="form-group"><label>Nº da cotação <span style="color:var(--muted);font-weight:400">(da transportadora)</span></label><input type="text" id="mp-cot-numero" maxlength="60" placeholder="Ex.: 123456"></div>
       <div class="form-group"><label>Valor do frete combinado (R$)</label><input type="number" id="mp-frete" min="0" step="0.01" value="0"></div>
       <div class="form-group"><label>Previsão de entrega</label><input type="date" id="mp-previsao"></div>
     </div>
@@ -1288,7 +1290,7 @@ function mpCelCliente(it) {
 function mpCelSaida(it) {
   const o = it.o, ret = (it.t === 'r' ? o.modo === 'retirada' : (o.status === 'aguardando_retirada' || o.status === 'retirado'));
   if (ret) return `Cliente retira${o.retirada_prevista ? `<div style="font-size:11px;color:var(--muted)">previsão ${fmtDate(String(o.retirada_prevista).slice(0, 10))}</div>` : ''}`;
-  return `${esc(o.transportadora || '—')}${o.frete ? ' · ' + fmtBRL(o.frete) : ''}`;
+  return `${esc(o.transportadora || '—')}${o.frete ? ' · ' + fmtBRL(o.frete) : ''}${o.cotacao_numero ? `<div style="font-size:11px;color:var(--muted)">cotação nº ${esc(o.cotacao_numero)}</div>` : ''}`;
 }
 function mpPillEtapa(et, txt) {
   const cor = { voce: 'pill-danger', cliente: 'pill-warn', separacao: 'pill-warn', producao: '', expedicao: 'pill-info', concluidos: 'pill-success', estoque: 'pill-info' }[et] || '';
@@ -1377,7 +1379,7 @@ function renderSecoesMeus() {
     if (venc) html += `<div class="mp-alerta">⚠ <strong>${venc} cotação(ões) sem resposta há ${mpPrazo('cotacao_vencida')} dias ou mais.</strong> Fale com o cliente e clique em <strong>Cliente autorizou</strong>, ou use o ⋯ para alterar ou cancelar a cotação.</div>`;
     html += mpTabela('📨 Aguardando autorização do cliente', 'Cotação de frete enviada · só vai para a Expedição depois de “Cliente autorizou”',
       ['Pedido', 'Cliente', 'Frete cotado', 'Cotação enviada há', ''],
-      fatia.map(it => `<tr><td>${mpCelPedido(it)}</td><td>${mpCelCliente(it)}</td><td>${esc(it.o.transportadora || '—')} · <strong>${fmtBRL(it.o.frete)}</strong>${it.o.previsao_entrega ? `<div style="font-size:11px;color:var(--muted)">previsão ${fmtDate(String(it.o.previsao_entrega).slice(0, 10))}</div>` : ''}</td>
+      fatia.map(it => `<tr><td>${mpCelPedido(it)}</td><td>${mpCelCliente(it)}</td><td>${esc(it.o.transportadora || '—')} · <strong>${fmtBRL(it.o.frete)}</strong>${it.o.cotacao_numero ? `<div style="font-size:12px">Cotação nº <strong>${esc(it.o.cotacao_numero)}</strong></div>` : ''}${it.o.previsao_entrega ? `<div style="font-size:11px;color:var(--muted)">previsão ${fmtDate(String(it.o.previsao_entrega).slice(0, 10))}</div>` : ''}</td>
         <td>${mpCotVencida(it) ? `<span class="pill pill-danger">vencida · ${mpCotDias(it)} dias</span><div style="font-size:11px;color:var(--danger);margin-top:3px">O cliente respondeu?</div>` : seloDias(mpCotDias(it))}</td><td>${mpAcoesLinha(it)}</td></tr>`),
       'Nenhuma cotação esperando o cliente', rodape);
   } else if (aba === 'separacao') {
@@ -1652,6 +1654,7 @@ async function mpSalvarRemessa() {
   if (mpRemModo === 'transportadora') {
     body.transportadora = document.getElementById('rm-transportadora').value.trim();
     body.frete = parseFloat(document.getElementById('rm-frete').value) || 0;
+    body.cotacao_numero = (document.getElementById('rm-cot-numero') || {}).value ? document.getElementById('rm-cot-numero').value.trim() : '';
     body.previsao_entrega = document.getElementById('rm-previsao').value;
     if (!body.transportadora) { showAlert('Escolha a transportadora', 'danger'); return; }
   } else body.retirada_prevista = document.getElementById('rm-retirada-prevista').value;
@@ -1736,6 +1739,7 @@ async function mpAbrirEnvio(id, modo) {
   document.getElementById('mp-envio-id').value = id;
   document.getElementById('mp-envio-cab').innerHTML = `Pedido <strong style="color:var(--accent)">${esc(p.numero_pedido)}</strong> — ${esc(p.cliente_nome)}<br><span style="color:var(--muted)">Valor: ${fmtBRL(p.valor_total)}</span>`;
   document.getElementById('mp-frete').value = temCot ? (p.frete || 0) : 0;
+  document.getElementById('mp-cot-numero').value = temCot ? (p.cotacao_numero || '') : '';
   document.getElementById('mp-previsao').value = p.previsao_entrega || '';
   document.getElementById('mp-retirada-prevista').value = p.retirada_prevista || '';
   document.getElementById('mp-obs').value = p.obs_vendedor || '';
@@ -1760,6 +1764,7 @@ async function mpSalvarEnvio() {
   if (mpModo === 'transportadora') {
     body.transportadora = document.getElementById('mp-transportadora').value.trim();
     body.frete = parseFloat(document.getElementById('mp-frete').value) || 0;
+    body.cotacao_numero = document.getElementById('mp-cot-numero').value.trim();
     body.previsao_entrega = document.getElementById('mp-previsao').value;
     if (!body.transportadora) { showAlert('Escolha a transportadora', 'danger'); return; }
   } else {
