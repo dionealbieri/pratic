@@ -4792,7 +4792,7 @@ async function loadTransportadora() {
   else lista.sort((a, b) => String(a.status_desde || '').localeCompare(String(b.status_desde || '')));
 
   // Remessas parciais entram na mesma lista (linha própria, com a NF da remessa)
-  const mapaRem = { aguardando_nf: ['aguardando_nf'], aguardando_retirada: ['aguardando_retirada'], enviado: ['enviado'],
+  const mapaRem = { aguardando_vendedor: ['aguardando_cliente'], aguardando_nf: ['aguardando_nf'], aguardando_retirada: ['aguardando_retirada'], enviado: ['enviado'],
                     retirado: ['retirado'], todos: ['enviado', 'retirado'] };
   let listaRem = busca
     ? _remessasCache.filter(r => (String(r.numero_pedido) + ' ' + (r.cliente_nome || '') + ' ' + (r.vendedor_usuario_nome || r.vendedor || '') + ' ' + (r.nota_fiscal || '')).toLowerCase().includes(busca))
@@ -4805,7 +4805,7 @@ async function loadTransportadora() {
     const chip = (txt, qtd, alvo, cor) => `<button type="button" onclick="document.getElementById('ped-transp-filtro').value='${alvo}';loadTransportadora()" style="background:var(--surface2);border:1px solid ${filtro === alvo ? 'var(--accent)' : 'var(--border)'};border-radius:8px;padding:8px 12px;font-size:13px;color:var(--text);cursor:pointer;white-space:nowrap">${txt} <strong style="color:${cor}">${qtd}</strong></button>`;
     resumo.innerHTML = chip('🧾 Aguardando NF', n('aguardando_nf'), 'aguardando_nf', 'var(--accent)')
       + chip('🙋 Aguardando retirada', n('aguardando_retirada'), 'aguardando_retirada', 'var(--accent)')
-      + (ehGestor ? chip('⏳ Aguardando vendedor', rows.filter(aguardVend).length, 'aguardando_vendedor', 'var(--danger)') : '')
+      + (ehGestor ? chip('⏳ Aguardando vendedor/cliente', rows.filter(aguardVend).length + _remessasCache.filter(r => r.status === 'aguardando_cliente').length, 'aguardando_vendedor', 'var(--danger)') : '')
       + `<button type="button" id="exp-som-btn" onclick="_expAlternarSom()" title="Tocar um som quando chegar pedido para NF/retirada" style="background:none;border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;color:var(--muted);cursor:pointer;white-space:nowrap">${_expSomLigado() ? '🔔 Som ligado' : '🔕 Som desligado'}</button>`;
   }
 
@@ -4822,6 +4822,8 @@ async function loadTransportadora() {
       acoes = revPend > 0 ? btnRevenda : `<button class="btn btn-sm btn-primary" onclick="abrirDespacho(${p.id})">📦 Lançar NF e despachar</button>`;
     } else if (s2 === 'aguardando_retirada' && podeDespachar) {
       acoes = revPend > 0 ? btnRevenda : `<button class="btn btn-sm btn-primary" onclick="abrirRetirada(${p.id})">✅ Lançar NF e registrar retirada</button>`;
+    } else if (s2 === 'produzido' && ehGestor && p.cotacao_enviada_em) {
+      acoes = `<button class="btn btn-sm btn-primary" title="O cliente aprovou o frete cotado: vai para a fila da Expedição" onclick="autorizarFreteGestor('pedido', ${p.id}, '${_escHtml(p.numero_pedido)}')">✅ Cliente autorizou</button> <button class="btn btn-sm btn-secondary" title="Pedido que já saiu por fora do sistema" onclick="marcarJaEntregue(${p.id}, '${_escHtml(p.numero_pedido)}')">✓ Já entregue</button>`;
     } else if (s2 === 'produzido' && ehGestor) {
       acoes = `<span style="font-size:12px;color:var(--muted)">aguardando o vendedor</span> <button class="btn btn-sm btn-secondary" title="Exceção do Gestor: despachar sem o vendedor ter definido o frete" onclick="abrirDespacho(${p.id})">📦 Despachar direto</button> <button class="btn btn-sm btn-secondary" title="Pedido que já saiu por fora do sistema: tira da lista marcando como entregue" onclick="marcarJaEntregue(${p.id}, '${_escHtml(p.numero_pedido)}')">✓ Já entregue</button>`;
     } else if (s2 === 'enviado' && podeDespachar) {
@@ -4849,12 +4851,23 @@ async function loadTransportadora() {
       <td>${previsao}</td>
       <td style="white-space:nowrap">${p.nota_fiscal||'—'}${_nfPdfLink(p)}</td>
       <td>${pendente ? _seloDiasEtapa(_diasDesde(p.status_desde)) : (p.data_despacho ? fmtDate(p.data_despacho) : '—')}</td>
-      <td><span class="pill ${s2 === 'produzido' ? 'pill-danger' : STATUS_PILL_PED[s2]}">${s2 === 'produzido' ? '⏳ Aguardando vendedor' : STATUS_LABEL_PED[s2]}</span></td>
+      <td><span class="pill ${s2 === 'produzido' ? (p.cotacao_enviada_em ? 'pill-warn' : 'pill-danger') : STATUS_PILL_PED[s2]}">${s2 === 'produzido' ? (p.cotacao_enviada_em ? '📨 Cotação enviada · aguardando cliente' : '⏳ Aguardando vendedor') : STATUS_LABEL_PED[s2]}</span></td>
       <td class="flex gap-2" style="flex-wrap:wrap">${acoes}</td>
     </tr>`;
   }).join('') + listaRem.map(r => _linhaRemessaExpedicao(r)).join('');
 }
 window.loadTransportadora = loadTransportadora;
+
+// Gestor autoriza o frete no lugar do vendedor (ex.: cliente ligou direto na empresa)
+async function autorizarFreteGestor(tipo, id, rotulo) {
+  if (!confirm(`O cliente autorizou o frete de ${rotulo}?\n\nVai para a fila da Expedição (aguardando NF).`)) return;
+  try {
+    const r = await api(tipo === 'remessa' ? '/remessas/' + id + '/autorizar' : '/pedidos/' + id + '/autorizar-cotacao', 'POST');
+    showAlert(r.mensagem);
+    loadTransportadora();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+window.autorizarFreteGestor = autorizarFreteGestor;
 
 // ─── EXPEDIÇÃO: ATUALIZAÇÃO AUTOMÁTICA + AVISO DE CHEGADA ────────────────────
 // A cada 30 s, com a fila da Expedição na tela, recarrega a lista sozinha.
@@ -4932,13 +4945,14 @@ setInterval(_expAtualizarFila, 30000);
 
 // ─── REMESSAS PARCIAIS (Expedição) ───────────────────────────────────────────
 let _remessasCache = [];
-const _ST_REMESSA = { aguardando_nf: '🧾 Aguardando NF', aguardando_retirada: '🙋 Aguardando retirada', enviado: '🚚 Enviada', retirado: '✅ Retirada' };
+const _ST_REMESSA = { aguardando_cliente: '📨 Aguardando cliente autorizar', aguardando_nf: '🧾 Aguardando NF', aguardando_retirada: '🙋 Aguardando retirada', enviado: '🚚 Enviada', retirado: '✅ Retirada' };
 function _linhaRemessaExpedicao(r) {
   const podeDesp = temPermissao('expedicao', 'despachar');
   const podeDesf = temPermissao('expedicao', 'desfazer');
-  const pend = ['aguardando_nf', 'aguardando_retirada'].includes(r.status);
+  const pend = ['aguardando_cliente', 'aguardando_nf', 'aguardando_retirada'].includes(r.status);
   let acoes = '';
-  if (r.status === 'aguardando_nf' && podeDesp) acoes = `<button class="btn btn-sm btn-primary" onclick="abrirDespachoRemessa(${r.id})">📦 Lançar NF e despachar</button>`;
+  if (r.status === 'aguardando_cliente') acoes = _ehGestorLogado() ? `<button class="btn btn-sm btn-primary" title="O cliente aprovou o frete: a remessa vai para a fila da Expedição" onclick="autorizarFreteGestor('remessa', ${r.id}, '${_escHtml(r.numero_pedido)} / remessa ${r.numero}')">✅ Cliente autorizou</button>` : '<span style="font-size:12px;color:var(--muted)">aguardando o cliente</span>';
+  else if (r.status === 'aguardando_nf' && podeDesp) acoes = `<button class="btn btn-sm btn-primary" onclick="abrirDespachoRemessa(${r.id})">📦 Lançar NF e despachar</button>`;
   else if (r.status === 'aguardando_retirada' && podeDesp) acoes = `<button class="btn btn-sm btn-primary" onclick="abrirRetiradaRemessa(${r.id})">✅ Lançar NF e registrar retirada</button>`;
   else if (r.status === 'enviado') acoes = (podeDesp ? `<button class="btn btn-sm btn-secondary" title="Editar o envio" onclick="abrirDespachoRemessa(${r.id})">✏️</button> ` : '') + (podeDesf ? `<button class="btn btn-sm btn-secondary" onclick="desfazerRemessa(${r.id})">↺ Desfazer</button>` : '');
   else if (r.status === 'retirado' && podeDesf) acoes = `<button class="btn btn-sm btn-secondary" onclick="desfazerRemessa(${r.id})">↺ Desfazer</button>`;
