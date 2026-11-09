@@ -6754,16 +6754,19 @@ async function verDetalhesPedido(id) {
   }
   const btnEst = document.getElementById('btn-ped-estoque-cli');
   if (btnEst) {
-    const podeEst = (_ehGestorLogado() || temPermissao('estoque', 'movimentar') || temPermissao('expedicao', 'despachar')) && p.status === 'produzido';
+    const entregueSemNf = p.status === 'entregue' && !String(p.nota_fiscal || '').trim() && !String(p.data_despacho || '').trim();
+    const podeEst = ((_ehGestorLogado() || temPermissao('estoque', 'movimentar') || temPermissao('expedicao', 'despachar')) && p.status === 'produzido')
+      || (_ehGestorLogado() && entregueSemNf);
     btnEst.style.display = podeEst ? '' : 'none';
-    btnEst.onclick = async () => { if (await guardarNoEstoqueCliente(p.id, p.numero_pedido, p.cliente_nome)) { closeModal('modal-ped-detalhe'); if (typeof loadPedidos === 'function') loadPedidos(); } };
+    btnEst.onclick = async () => { if (await guardarNoEstoqueCliente(p.id, p.numero_pedido, p.cliente_nome, entregueSemNf)) { closeModal('modal-ped-detalhe'); if (typeof loadPedidos === 'function') loadPedidos(); } };
   }
   _carregarHistoricoProducaoPedido(id);
   _carregarRemessasPedido(id);
 }
 
 // Manda um pedido pronto inteiro para o estoque do cliente (Gestor / Estoque / Expedição)
-async function guardarNoEstoqueCliente(id, num, cliente) {
+async function guardarNoEstoqueCliente(id, num, cliente, eraEntregue) {
+  if (eraEntregue && !confirm(`ATENÇÃO: o pedido ${num} está marcado como ENTREGUE.\n\nUse só se ele NÃO saiu da empresa e está guardado aqui para o cliente. Ele deixa de contar como entregue.`)) return false;
   if (!confirm(`Guardar o pedido ${num} no ESTOQUE DO CLIENTE${cliente ? ' (' + cliente + ')' : ''}?\n\nTodos os itens (revenda também) entram no estoque do cliente e o pedido sai da fila de frete. O vendedor faz as entregas depois, pela aba "Estoque dos meus clientes".`)) return false;
   try {
     const r = await api('/pedidos/' + id + '/guardar-estoque-cliente', 'POST');
