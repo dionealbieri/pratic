@@ -1646,3 +1646,35 @@ button:disabled.btn-loading {
   cursor: pointer;
   accent-color: var(--accent);
 }
+
+/* ─── BOTÕES COLORIDOS (padrão do sistema) ─────────────────────────────────
+   Todo botão secundário ganha uma cor pela ação (js/botoes.js escolhe pelo texto):
+   azul = ver/consultar · verde = confirmar/entregar · roxo = editar/alterar ·
+   laranja = separar/atenção · turquesa = estoque do cliente/NF/imprimir ·
+   vermelho = excluir/cancelar/PDF · cinza = fechar/voltar. O amarelo cheio
+   (btn-primary) continua sendo a ação principal da tela. */
+.btn.bt {
+  background: rgba(var(--bt), .13);
+  border: 1px solid rgba(var(--bt), .75);
+  color: var(--bt-txt);
+}
+.btn.bt:hover:not(:disabled) {
+  background: rgba(var(--bt), .26);
+  border-color: rgb(var(--bt));
+  color: var(--bt-txt-hover, var(--bt-txt));
+}
+.btn.bt:disabled { opacity: .45; cursor: not-allowed; }
+.btn.bt-azul    { --bt: 59,130,246;  --bt-txt: #93c5fd; --bt-txt-hover: #dbeafe; }
+.btn.bt-verde   { --bt: 34,197,94;   --bt-txt: #86efac; --bt-txt-hover: #dcfce7; }
+.btn.bt-roxo    { --bt: 168,85,247;  --bt-txt: #d8b4fe; --bt-txt-hover: #f3e8ff; }
+.btn.bt-laranja { --bt: 251,146,60;  --bt-txt: #fdba74; --bt-txt-hover: #ffedd5; }
+.btn.bt-turq    { --bt: 20,184,166;  --bt-txt: #5eead4; --bt-txt-hover: #ccfbf1; }
+.btn.bt-verm    { --bt: 239,68,68;   --bt-txt: #fca5a5; --bt-txt-hover: #fee2e2; }
+.btn.bt-cinza   { --bt: 148,163,184; --bt-txt: #cbd5e1; --bt-txt-hover: #f1f5f9; }
+[data-theme="light"] .btn.bt-azul    { --bt-txt: #1d4ed8; --bt-txt-hover: #1e3a8a; }
+[data-theme="light"] .btn.bt-verde   { --bt-txt: #15803d; --bt-txt-hover: #14532d; }
+[data-theme="light"] .btn.bt-roxo    { --bt-txt: #7e22ce; --bt-txt-hover: #581c87; }
+[data-theme="light"] .btn.bt-laranja { --bt-txt: #c2410c; --bt-txt-hover: #7c2d12; }
+[data-theme="light"] .btn.bt-turq    { --bt-txt: #0f766e; --bt-txt-hover: #134e4a; }
+[data-theme="light"] .btn.bt-verm    { --bt-txt: #b91c1c; --bt-txt-hover: #7f1d1d; }
+[data-theme="light"] .btn.bt-cinza   { --bt-txt: #475569; --bt-txt-hover: #1e293b; }
