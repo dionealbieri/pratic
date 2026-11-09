@@ -5,13 +5,13 @@
   const REGRAS = [
     ['verm',    /🗑|excluir|remover|apagar|cancelar (a |o )?(cota|remessa|pedido|lan)|↩ ?cancelar|desfazer|\bpdf\b/i],
     ['cinza',   /^\W*(fechar|cancelar|voltar|limpar|anterior|próxima|proxima|ocultar|mostrar|sair)\b|^[\s←→◀▶×✕]+$/i],
-    ['turq',    /🏷|estoque do cliente|imprimir|🖨|nota fiscal|🧾|\bnf\b/i],
+    ['rosa',    /🏷|estoque do cliente|imprimir|🖨|nota fiscal|🧾|\bnf\b/i],
     ['verde',   /✅|✓|entregue|confirm|autoriz|retira|🙋|💾|salvar|concluir|liberar|visto|marcar/i],
     ['roxo',    /✏|editar|alterar|trocar|parcial|✂|corrigir|🔁|acertar|⚙/i],
     ['laranja', /⚠|separar|revenda|🧹|limpeza|📐|embalagem|pendente/i],
     ['azul',    /👁|\bver\b|caixa|📦|cota|detalhe|copiar|📋|busca|🔍|importar|📥|anexar|📎|baixar|⬇|hist[oó]rico|ficha|\+|➕|novo|nova|adicionar|lançar/i],
   ];
-  const CORES = ['azul', 'verde', 'roxo', 'laranja', 'turq', 'verm', 'cinza'];
+  const CORES = ['azul', 'verde', 'roxo', 'laranja', 'rosa', 'verm', 'cinza'];
   const PULAR = /\b(btn-primary|btn-neon|btn-full-primary|mp-b-[a-z]+|mp-card)\b/;
   // Variantes antigas viram o mesmo padrão (mesma cor de sempre, novo acabamento)
   const FIXAS = [['btn-danger', 'verm'], ['btn-success', 'verde'], ['btn-info', 'azul'], ['btn-warning', 'laranja']];
