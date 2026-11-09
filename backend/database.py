@@ -2070,4 +2070,8 @@ def _migrar_arquivo_original(conn):
     cols_r = [r[1] for r in conn.execute("PRAGMA table_info(pedidos_remessas)").fetchall()]
     if cols_r and "cotacao_numero" not in cols_r:
         conn.execute("ALTER TABLE pedidos_remessas ADD COLUMN cotacao_numero TEXT")
+    # Tipo do volume lançado à mão: caixa, saco, envelope, pacote ou fardo
+    cols_v = [r[1] for r in conn.execute("PRAGMA table_info(pedidos_volumes)").fetchall()]
+    if cols_v and "tipo" not in cols_v:
+        conn.execute("ALTER TABLE pedidos_volumes ADD COLUMN tipo TEXT DEFAULT 'caixa'")
     conn.commit()
