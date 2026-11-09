@@ -12,7 +12,7 @@
     document.documentElement.setAttribute('data-theme', savedTheme);
   })();
 </script>
-<link rel="stylesheet" href="css/common.css?v=20261109b">
+<link rel="stylesheet" href="css/common.css?v=20261109c">
 <style>
   .nav-item[data-page="comunicacao"] { color:#25d366; }
   .nav-item[data-page="comunicacao"] .icon svg { display:inline-block; }
@@ -2776,7 +2776,7 @@
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal('modal-ped-detalhe')">Fechar</button>
       <button class="btn btn-secondary" id="btn-ped-ja-entregue" style="display:none;margin-right:auto" title="Gestor: pedido que já saiu por fora do sistema">✓ Marcar como entregue</button>
-      <button class="btn" id="btn-ped-estoque-cli" style="display:none;background:rgba(20,184,166,.15);border:1px solid #14b8a6;color:#5eead4;font-weight:700" title="Guardar o pedido pronto no estoque do cliente (o vendedor entrega depois, em partes)">🏷️ Guardar no estoque do cliente</button>
+      <button class="btn btn-secondary" id="btn-ped-estoque-cli" style="display:none" title="Guardar o pedido pronto no estoque do cliente (o vendedor entrega depois, em partes)">🏷️ Guardar no estoque do cliente</button>
       <button class="btn btn-primary" id="btn-imprimir-pedido-modal">🖨️ Imprimir Pedido</button>
     </div>
   </div>
@@ -3242,6 +3242,6 @@ document.addEventListener('click', function() {
   if (menu) menu.classList.remove('show');
 });
 </script>
-<script src="js/botoes.js?v=20261109b"></script>
+<script src="js/botoes.js?v=20261109c"></script>
 </body>
 </html>
