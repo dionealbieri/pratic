@@ -1413,26 +1413,29 @@ def _recalc_status_pedido(cur, pedido_id):
 
 def _entrada_estoque_cliente(cur, pedido_id):
     """Lança no estoque do cliente o que foi produzido no pedido (itens de produção; revenda fica de fora)."""
-    ped = cur.execute("SELECT cliente_id, numero_pedido FROM pedidos WHERE id=?", (pedido_id,)).fetchone()
+    ped = cur.execute("SELECT cliente_id, numero_pedido, COALESCE(para_estoque_cliente,0) AS pec FROM pedidos WHERE id=?", (pedido_id,)).fetchone()
     if not ped:
         return
+    # para_estoque_cliente = 2: guardado à mão pelo Gestor/Estoque — entra o pedido inteiro (revenda também)
+    manual = ped["pec"] == 2
     cur.execute("DELETE FROM estoque_cliente_mov WHERE pedido_id=? AND tipo='entrada'", (pedido_id,))
     itens = cur.execute("""
         SELECT i.id, i.produto_id, i.descricao, i.quantidade, i.qtd_produzida, i.valor_unitario
         FROM pedidos_itens i
         LEFT JOIN estoque_produtos ep ON ep.id = i.produto_id
         LEFT JOIN estoque_categorias ec ON ec.id = ep.categoria_id
-        WHERE i.pedido_id = ? AND (ec.tipo IS NULL OR ec.tipo != 'revenda')
-    """, (pedido_id,)).fetchall()
+        WHERE i.pedido_id = ? AND (? = 1 OR ec.tipo IS NULL OR ec.tipo != 'revenda')
+    """, (pedido_id, 1 if manual else 0)).fetchall()
     for it in itens:
         qtd = float(it["qtd_produzida"] or 0) or float(it["quantidade"] or 0)
         if qtd <= 0:
             continue
         cur.execute("""INSERT INTO estoque_cliente_mov
                        (cliente_id, produto_id, descricao, tipo, quantidade, valor_unitario, pedido_id, pedido_item_id, usuario, observacao)
-                       VALUES (?, ?, ?, 'entrada', ?, ?, ?, ?, 'Produção', ?)""",
+                       VALUES (?, ?, ?, 'entrada', ?, ?, ?, ?, ?, ?)""",
                     (ped["cliente_id"], it["produto_id"], _desc_estoque(it["descricao"]), qtd,
-                     it["valor_unitario"] or 0, pedido_id, it["id"], f"Produzido no pedido {ped['numero_pedido']}"))
+                     it["valor_unitario"] or 0, pedido_id, it["id"], "Manual" if manual else "Produção",
+                     f"{'Guardado' if manual else 'Produzido'} no pedido {ped['numero_pedido']}"))
 
 
 def _desc_estoque(d) -> str:
@@ -2562,6 +2565,40 @@ def limpeza_marcar_entregue(body: LimpezaIn, current_user: dict = Depends(get_cu
                          (_nome_usuario(current_user), f"{feitos} pedido(s) antigo(s) marcados como entregues na limpeza"))
         conn.commit()
         return {"mensagem": f"{feitos} pedido(s) marcados como entregues.", "feitos": feitos}
+    finally:
+        conn.close()
+
+
+@router.post("/{id}/guardar-estoque-cliente")
+def guardar_no_estoque_cliente(id: int, current_user: dict = Depends(get_current_user)):
+    """Gestor / Estoque / Expedição: manda um pedido PRONTO inteiro para o estoque do cliente
+    (sem a Produção ter marcado o check). Entram todos os itens, revenda também."""
+    if not (current_user.get("role") == "gestor" or verificar_permissao("estoque", "movimentar", current_user)
+            or verificar_permissao("expedicao", "despachar", current_user)):
+        raise HTTPException(403, "Só o Gestor, o Estoque ou a Expedição podem guardar o pedido no estoque do cliente")
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        ped = cur.execute("SELECT id, numero_pedido, status FROM pedidos WHERE id=?", (id,)).fetchone()
+        if not ped:
+            raise HTTPException(404, "Pedido não encontrado")
+        if (ped["status"] or "aberto") != "produzido":
+            raise HTTPException(400, "Só dá para guardar no estoque do cliente um pedido PRODUZIDO (pronto e ainda sem frete/retirada).")
+        if _revenda_pendente(conn, id) > 0:
+            raise HTTPException(400, "Separe primeiro os itens de revenda deste pedido.")
+        if cur.execute("SELECT 1 FROM pedidos_remessas WHERE pedido_id=? AND status != 'cancelada'", (id,)).fetchone():
+            raise HTTPException(400, "Este pedido já tem envio parcial (remessa). Cancele a remessa antes.")
+        cur.execute("""UPDATE pedidos SET para_estoque_cliente=2, status='em_estoque', revenda_bloqueado=0,
+                       transportadora=NULL, frete=0, previsao_entrega=NULL, retirada_prevista=NULL, cotacao_numero=NULL,
+                       cotacao_enviada_em=NULL, cotacao_enviada_por=NULL WHERE id=?""", (id,))
+        _marcar_usuario_hist(conn, id, current_user)
+        _entrada_estoque_cliente(cur, id)
+        n = cur.execute("SELECT COUNT(*) FROM estoque_cliente_mov WHERE pedido_id=? AND tipo='entrada'", (id,)).fetchone()[0]
+        conn.execute("""INSERT INTO auditoria (usuario, acao, entidade, entidade_id, descricao, valor_anterior, valor_novo)
+                        VALUES (?, 'guardar_estoque_cliente', 'pedidos', ?, ?, 'produzido', 'em_estoque')""",
+                     (_nome_usuario(current_user), id, f"Pedido {ped['numero_pedido']} guardado no estoque do cliente ({n} item(ns))"))
+        conn.commit()
+        return {"mensagem": f"Pedido {ped['numero_pedido']} guardado no estoque do cliente ({n} item(ns)). O vendedor faz as entregas pela aba Estoque dos meus clientes."}
     finally:
         conn.close()
 
