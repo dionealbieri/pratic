@@ -6752,9 +6752,27 @@ async function verDetalhesPedido(id) {
     btnEnt.style.display = pode ? '' : 'none';
     btnEnt.onclick = async () => { if (await marcarJaEntregue(p.id, p.numero_pedido)) { closeModal('modal-ped-detalhe'); if (typeof loadPedidos === 'function') loadPedidos(); } };
   }
+  const btnEst = document.getElementById('btn-ped-estoque-cli');
+  if (btnEst) {
+    const podeEst = (_ehGestorLogado() || temPermissao('estoque', 'movimentar') || temPermissao('expedicao', 'despachar')) && p.status === 'produzido';
+    btnEst.style.display = podeEst ? '' : 'none';
+    btnEst.onclick = async () => { if (await guardarNoEstoqueCliente(p.id, p.numero_pedido, p.cliente_nome)) { closeModal('modal-ped-detalhe'); if (typeof loadPedidos === 'function') loadPedidos(); } };
+  }
   _carregarHistoricoProducaoPedido(id);
   _carregarRemessasPedido(id);
 }
+
+// Manda um pedido pronto inteiro para o estoque do cliente (Gestor / Estoque / Expedição)
+async function guardarNoEstoqueCliente(id, num, cliente) {
+  if (!confirm(`Guardar o pedido ${num} no ESTOQUE DO CLIENTE${cliente ? ' (' + cliente + ')' : ''}?\n\nTodos os itens (revenda também) entram no estoque do cliente e o pedido sai da fila de frete. O vendedor faz as entregas depois, pela aba "Estoque dos meus clientes".`)) return false;
+  try {
+    const r = await api('/pedidos/' + id + '/guardar-estoque-cliente', 'POST');
+    showAlert('🏷️ ' + r.mensagem);
+    if (document.getElementById('ped-transp-tbody') && document.getElementById('ped-transp-tbody').offsetParent) loadTransportadora();
+    return true;
+  } catch (e) { showAlert(e.message, 'danger'); return false; }
+}
+window.guardarNoEstoqueCliente = guardarNoEstoqueCliente;
 
 // Produção lançada com um produto que não está mais no pedido (marca trocada depois):
 // passa os lançamentos para o produto do pedido, acertando o estoque dos dois.
