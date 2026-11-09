@@ -2840,6 +2840,7 @@ class VolumeIn(BaseModel):
     pedido_item_id: Optional[int] = None
     pedido_itens_ids: Optional[List[int]] = None   # vários itens na mesma caixa
     descricao: Optional[str] = ""
+    tipo: Optional[str] = "caixa"     # caixa | saco | envelope | pacote | fardo
     qtd_caixas: float = 1
     comprimento: float = 0
     largura: float = 0
@@ -3012,12 +3013,19 @@ def lancar_volume(id: int, v: VolumeIn, current_user: dict = Depends(get_current
     conn = get_conn()
     try:
         _acesso_pedido_cotacao(conn, id, current_user, editar=True)
+        tipo = (v.tipo or "caixa").strip().lower()
+        if tipo not in ("caixa", "saco", "envelope", "pacote", "fardo"):
+            tipo = "caixa"
+        nome_t = {"caixa": "caixa", "saco": "saco", "envelope": "envelope", "pacote": "pacote", "fardo": "fardo"}[tipo]
+        # Saco e envelope: a espessura é opcional (entra um valor pequeno para a cubagem)
+        if tipo in ("saco", "envelope") and (v.altura or 0) <= 0:
+            v.altura = 2 if tipo == "saco" else 1
         if (v.qtd_caixas or 0) <= 0:
-            raise HTTPException(400, "Informe a quantidade de caixas.")
+            raise HTTPException(400, f"Informe a quantidade de {nome_t}s.")
         if (v.comprimento or 0) <= 0 or (v.largura or 0) <= 0 or (v.altura or 0) <= 0:
-            raise HTTPException(400, "Informe comprimento, largura e altura da caixa.")
+            raise HTTPException(400, f"Informe as medidas do {nome_t}." if tipo != "caixa" else "Informe comprimento, largura e altura da caixa.")
         if (v.peso_caixa or 0) <= 0:
-            raise HTTPException(400, "Informe o peso de cada caixa.")
+            raise HTTPException(400, f"Informe o peso de cada {nome_t}.")
         ids = list(dict.fromkeys([x for x in (v.pedido_itens_ids or []) if x] or ([v.pedido_item_id] if v.pedido_item_id else [])))
         for iid in ids:
             ok = conn.execute("SELECT 1 FROM pedidos_itens WHERE id=? AND pedido_id=?", (iid, id)).fetchone()
@@ -3025,9 +3033,9 @@ def lancar_volume(id: int, v: VolumeIn, current_user: dict = Depends(get_current
                 raise HTTPException(400, "Item não pertence a este pedido.")
         cur = conn.cursor()
         cur.execute("""INSERT INTO pedidos_volumes (pedido_id, pedido_item_id, descricao, qtd_caixas,
-                        comprimento, largura, altura, peso_caixa, usuario) VALUES (?,?,?,?,?,?,?,?,?)""",
+                        comprimento, largura, altura, peso_caixa, usuario, tipo) VALUES (?,?,?,?,?,?,?,?,?,?)""",
                     (id, ids[0] if ids else None, (v.descricao or "").strip(), v.qtd_caixas,
-                     v.comprimento, v.largura, v.altura, v.peso_caixa, _nome_usuario(current_user)))
+                     v.comprimento, v.largura, v.altura, v.peso_caixa, _nome_usuario(current_user), tipo))
         vid = cur.lastrowid
         for iid in ids:
             cur.execute("INSERT OR IGNORE INTO pedidos_volume_itens (volume_id, pedido_item_id) VALUES (?,?)", (vid, iid))
