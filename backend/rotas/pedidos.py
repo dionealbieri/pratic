@@ -2579,15 +2579,23 @@ def guardar_no_estoque_cliente(id: int, current_user: dict = Depends(get_current
     conn = get_conn()
     cur = conn.cursor()
     try:
-        ped = cur.execute("SELECT id, numero_pedido, status FROM pedidos WHERE id=?", (id,)).fetchone()
+        ped = cur.execute("SELECT id, numero_pedido, status, nota_fiscal, data_despacho FROM pedidos WHERE id=?", (id,)).fetchone()
         if not ped:
             raise HTTPException(404, "Pedido não encontrado")
-        if (ped["status"] or "aberto") != "produzido":
-            raise HTTPException(400, "Só dá para guardar no estoque do cliente um pedido PRODUZIDO (pronto e ainda sem frete/retirada).")
+        st_ant = ped["status"] or "aberto"
+        # Entregue sem NF (marcado à mão / limpeza / sistema antigo) que na verdade está guardado aqui: só o Gestor
+        entregue_sem_nf = st_ant == "entregue" and not (ped["nota_fiscal"] or "").strip() and not (ped["data_despacho"] or "").strip()
+        if entregue_sem_nf and current_user.get("role") != "gestor":
+            raise HTTPException(403, "Pedido marcado como Entregue: só o Gestor pode passar para o estoque do cliente.")
+        if st_ant != "produzido" and not entregue_sem_nf:
+            raise HTTPException(400, "Só dá para guardar no estoque do cliente um pedido PRODUZIDO (pronto e ainda sem frete/retirada) "
+                                     "ou, pelo Gestor, um Entregue sem nota fiscal.")
         if _revenda_pendente(conn, id) > 0:
             raise HTTPException(400, "Separe primeiro os itens de revenda deste pedido.")
         if cur.execute("SELECT 1 FROM pedidos_remessas WHERE pedido_id=? AND status != 'cancelada'", (id,)).fetchone():
             raise HTTPException(400, "Este pedido já tem envio parcial (remessa). Cancele a remessa antes.")
+        if entregue_sem_nf:
+            cur.execute("UPDATE pedidos SET data_entrega=NULL WHERE id=?", (id,))
         cur.execute("""UPDATE pedidos SET para_estoque_cliente=2, status='em_estoque', revenda_bloqueado=0,
                        transportadora=NULL, frete=0, previsao_entrega=NULL, retirada_prevista=NULL, cotacao_numero=NULL,
                        cotacao_enviada_em=NULL, cotacao_enviada_por=NULL WHERE id=?""", (id,))
@@ -2595,8 +2603,8 @@ def guardar_no_estoque_cliente(id: int, current_user: dict = Depends(get_current
         _entrada_estoque_cliente(cur, id)
         n = cur.execute("SELECT COUNT(*) FROM estoque_cliente_mov WHERE pedido_id=? AND tipo='entrada'", (id,)).fetchone()[0]
         conn.execute("""INSERT INTO auditoria (usuario, acao, entidade, entidade_id, descricao, valor_anterior, valor_novo)
-                        VALUES (?, 'guardar_estoque_cliente', 'pedidos', ?, ?, 'produzido', 'em_estoque')""",
-                     (_nome_usuario(current_user), id, f"Pedido {ped['numero_pedido']} guardado no estoque do cliente ({n} item(ns))"))
+                        VALUES (?, 'guardar_estoque_cliente', 'pedidos', ?, ?, ?, 'em_estoque')""",
+                     (_nome_usuario(current_user), id, f"Pedido {ped['numero_pedido']} guardado no estoque do cliente ({n} item(ns))", st_ant))
         conn.commit()
         return {"mensagem": f"Pedido {ped['numero_pedido']} guardado no estoque do cliente ({n} item(ns)). O vendedor faz as entregas pela aba Estoque dos meus clientes."}
     finally:
