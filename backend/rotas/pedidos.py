@@ -1484,7 +1484,8 @@ def listar_pedidos(status: Optional[str] = None, cliente_id: Optional[int] = Non
                GROUP_CONCAT(DISTINCT pr.marca) as marcas,
                julianday(p.prazo_entrega) - julianday('now') as dias_restantes,
                uv.nome as vendedor_usuario_nome,
-               """ + _sql_cliente_novo('p') + """ as cliente_novo
+               """ + _sql_cliente_novo('p') + """ as cliente_novo,
+               CASE WHEN p.status = 'produzido' THEN """ + _sql_embalagem_pendente('p') + """ ELSE 0 END as embalagem_pendentes
         FROM pedidos p
         JOIN pedidos_clientes c ON p.cliente_id = c.id
         LEFT JOIN usuarios uv ON uv.id = p.vendedor_usuario_id
