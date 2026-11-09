@@ -43,9 +43,9 @@
         </table></div>
         </div>
         <div id="cot-itens-nota" style="display:none;font-size:12px;color:var(--muted);margin:4px 0 2px"></div>
-        <div style="font-weight:700;font-size:13px;margin:16px 0 6px">Caixas lançadas manualmente</div>
+        <div style="font-weight:700;font-size:13px;margin:16px 0 6px">Volumes lançados manualmente <span style="font-weight:400;color:var(--muted)">(caixas, sacos, envelopes...)</span></div>
         <div style="overflow-x:auto"><table style="width:100%">
-          <thead><tr><th>Item / descrição</th><th>Caixas</th><th>Medidas</th><th>Peso/caixa</th><th>Peso total</th><th>m³</th><th></th></tr></thead>
+          <thead><tr><th>Item / descrição</th><th>Qtd.</th><th>Medidas</th><th>Peso cada</th><th>Peso total</th><th>m³</th><th></th></tr></thead>
           <tbody id="cot-manuais"></tbody>
         </table></div>
         <div id="cot-somente-leitura" style="display:none;margin-top:12px;font-size:13px;color:var(--muted);background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:10px;padding:10px 12px"></div>
@@ -56,11 +56,16 @@
             <div class="form-group" style="grid-column:1/-1;min-width:0"><label>Itens nesta caixa</label>
               <div id="cot-item" style="display:flex;flex-wrap:wrap;gap:6px"></div></div>
             <div class="form-group" style="grid-column:1/-1;min-width:0"><label>Descrição <span style="color:var(--muted);font-weight:400">(opcional)</span></label><input id="cot-desc" placeholder="Ex.: caixa única com as tampas, caixa do fornecedor, fardo..." style="width:100%"></div>
-            <div class="form-group" style="min-width:0"><label>Qtd. caixas</label><input type="number" id="cot-qtd" min="1" step="1" value="1" style="width:100%"></div>
+            <div class="form-group" style="grid-column:1/-1;min-width:0"><label>Tipo de volume</label>
+              <div id="cot-tipo" style="display:flex;flex-wrap:wrap;gap:6px">
+                ${[['caixa','📦 Caixa'],['saco','🛍️ Saco'],['envelope','✉️ Envelope'],['pacote','🎁 Pacote'],['fardo','🧱 Fardo']].map(([v, t]) =>
+                  `<button type="button" data-tipo="${v}" onclick="cotEscolherTipo('${v}')" class="btn btn-sm btn-secondary" style="padding:6px 12px">${t}</button>`).join('')}
+              </div></div>
+            <div class="form-group" style="min-width:0"><label id="cot-lbl-qtd">Qtd. caixas</label><input type="number" id="cot-qtd" min="1" step="1" value="1" style="width:100%"></div>
             <div class="form-group" style="min-width:0"><label>Comp. (cm)</label><input type="number" id="cot-c" min="0" step="0.1" style="width:100%"></div>
             <div class="form-group" style="min-width:0"><label>Larg. (cm)</label><input type="number" id="cot-l" min="0" step="0.1" style="width:100%"></div>
-            <div class="form-group" style="min-width:0"><label>Alt. (cm)</label><input type="number" id="cot-a" min="0" step="0.1" style="width:100%"></div>
-            <div class="form-group" style="min-width:0"><label>Peso/caixa (kg)</label><input type="number" id="cot-p" min="0" step="0.01" style="width:100%"></div>
+            <div class="form-group" style="min-width:0"><label id="cot-lbl-alt">Alt. (cm)</label><input type="number" id="cot-a" min="0" step="0.1" style="width:100%"></div>
+            <div class="form-group" style="min-width:0"><label id="cot-lbl-peso">Peso/caixa (kg)</label><input type="number" id="cot-p" min="0" step="0.01" style="width:100%"></div>
             <div class="form-group" style="min-width:0"><button class="btn btn-primary" style="width:100%" onclick="cotLancarVolume()">＋ Lançar</button></div>
           </div>
         </div>
@@ -82,7 +87,7 @@
     document.getElementById('cot-num').textContent = '· Pedido ' + (d.numero_pedido || d.pedido_id);
     const t = d.totais || {};
     document.getElementById('cot-totais').innerHTML =
-      cardTotal('Volumes (caixas)', n(t.caixas, 0)) +
+      cardTotal('Volumes', n(t.caixas, 0)) +
       cardTotal('Peso total', n(t.peso_kg) + ' kg', 'última caixa pode ir incompleta') +
       cardTotal('Cubagem', n(t.cubagem_m3, 3) + ' m³');
     document.getElementById('cot-avisos').innerHTML = (d.avisos || []).length
@@ -94,7 +99,7 @@
     document.getElementById('cot-itens-bloco').style.display = itensCalc.length ? '' : 'none';
     const nota = document.getElementById('cot-itens-nota');
     nota.style.display = itensManual.length ? '' : 'none';
-    nota.innerHTML = itensManual.length ? `📦 ${itensManual.length === (d.itens || []).length ? 'Todos os itens estão' : itensManual.length + ' item(ns) estão'} nas caixas lançadas manualmente (abaixo).` : '';
+    nota.innerHTML = itensManual.length ? `📦 ${itensManual.length === (d.itens || []).length ? 'Todos os itens estão' : itensManual.length + ' item(ns) estão'} nos volumes lançados manualmente (abaixo).` : '';
     document.getElementById('cot-itens').innerHTML = itensCalc.map(it => {
       const qtd = `${n(it.quantidade, 0)} ${e(it.unidade || '')}`;
       const nome = `${e(it.descricao)}${it.revenda ? ' <span style="font-size:10px;color:var(--warn)">REVENDA</span>' : ''}`;
@@ -110,7 +115,7 @@
       return ids.length ? ids.map(i => e(nomeItem[i] || 'Item')).join('<br>') : '<span style="color:var(--muted)">(volume extra, sem item)</span>'; };
     document.getElementById('cot-manuais').innerHTML = (d.manuais || []).map(m => `<tr>
         <td>${nomesDe(m)}${m.descricao ? `<div style="font-size:11px;color:var(--muted)">${e(m.descricao)}</div>` : ''}</td>
-        <td><strong>${n(m.qtd_caixas, 0)}</strong></td><td>${medidas(m.comprimento, m.largura, m.altura)}</td>
+        <td><strong>${qtdTipo(m.qtd_caixas, m)}</strong></td><td>${medidas(m.comprimento, m.largura, m.altura)}</td>
         <td>${n(m.peso_caixa)} kg</td><td>${n(m.peso_total)} kg</td><td>${n(m.cubagem_m3, 3)}</td>
         <td style="text-align:right"><button class="btn btn-sm btn-secondary cot-del" title="Excluir lançamento por ${e(m.usuario || '')}" onclick="cotExcluirVolume(${m.id})">🗑</button></td></tr>`).join('')
       || '<tr><td colspan="7" style="text-align:center;color:var(--muted)">Nenhum lançamento manual</td></tr>';
@@ -147,10 +152,33 @@
     document.getElementById('cot-qtd').value = 1;
     document.getElementById('cot-item').innerHTML = '';
     delete document.getElementById('cot-item').dataset.pronto;
+    window.cotEscolherTipo('caixa');
     try {
       await recarregar();
       document.getElementById('modal-cotacao').classList.add('open');
     } catch (err) { alert('Erro ao carregar dados da cotação: ' + err.message); }
+  };
+
+  let cotTipo = 'caixa';
+  window.cotEscolherTipo = function (t) {
+    cotTipo = TIPOS[t] ? t : 'caixa';
+    document.querySelectorAll('#cot-tipo button').forEach(b => {
+      const on = b.dataset.tipo === cotTipo;
+      b.style.background = on ? 'var(--accent)' : '';
+      b.style.color = on ? '#14161d' : '';
+      b.style.borderColor = on ? 'var(--accent)' : '';
+      b.style.fontWeight = on ? '700' : '';
+    });
+    const nomes = TIPOS[cotTipo];
+    const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+    document.getElementById('cot-lbl-qtd').textContent = 'Qtd. ' + nomes[1];
+    document.getElementById('cot-lbl-peso').textContent = 'Peso/' + nomes[0] + ' (kg)';
+    const opcional = cotTipo === 'saco' || cotTipo === 'envelope';
+    document.getElementById('cot-lbl-alt').innerHTML = opcional ? 'Espessura (cm) <span style="color:var(--muted);font-weight:400">opcional</span>' : 'Alt. (cm)';
+    document.getElementById('cot-a').placeholder = opcional ? (cotTipo === 'saco' ? '2' : '1') : '';
+    const desc = document.getElementById('cot-desc');
+    if (desc) desc.placeholder = cotTipo === 'caixa' ? 'Ex.: caixa única com as tampas, caixa do fornecedor...' : `Ex.: ${nomes[0]} plástico com os bottons...`;
+    void cap;
   };
 
   window.cotLancarVolume = async function () {
@@ -158,6 +186,7 @@
     const body = {
       pedido_itens_ids: [...document.querySelectorAll('#cot-item input:checked')].map(c => +c.value),
       descricao: document.getElementById('cot-desc').value.trim(),
+      tipo: cotTipo,
       qtd_caixas: v('cot-qtd'), comprimento: v('cot-c'), largura: v('cot-l'), altura: v('cot-a'), peso_caixa: v('cot-p'),
     };
     try {
@@ -165,6 +194,7 @@
       ['cot-desc', 'cot-c', 'cot-l', 'cot-a', 'cot-p'].forEach(i => { document.getElementById(i).value = ''; });
       document.getElementById('cot-qtd').value = 1;
       document.querySelectorAll('#cot-item input').forEach(c => { c.checked = false; });
+      window.cotEscolherTipo('caixa');
       await recarregar();
     } catch (err) { alert(err.message); }
   };
@@ -175,15 +205,20 @@
     catch (err) { alert(err.message); }
   };
 
+  const TIPOS = { caixa: ['caixa', 'caixas', 'cx'], saco: ['saco', 'sacos', 'saco(s)'], envelope: ['envelope', 'envelopes', 'envelope(s)'],
+                  pacote: ['pacote', 'pacotes', 'pacote(s)'], fardo: ['fardo', 'fardos', 'fardo(s)'] };
+  const tipoDe = m => TIPOS[(m && m.tipo) || 'caixa'] || TIPOS.caixa;
+  const qtdTipo = (q, m) => { const t = tipoDe(m); return `${n(q, 0)} ${Number(q) === 1 ? t[0] : t[1]}`; };
+
   function textoResumo(d) {
     const t = d.totais || {};
     const linhas = [`Pedido ${d.numero_pedido || d.pedido_id}`,
-      `Volumes: ${n(t.caixas, 0)} caixa(s) | Peso: ${n(t.peso_kg)} kg | Cubagem: ${n(t.cubagem_m3, 3)} m³`];
+      `Volumes: ${n(t.caixas, 0)} | Peso: ${n(t.peso_kg)} kg | Cubagem: ${n(t.cubagem_m3, 3)} m³`];
     (d.itens || []).filter(it => it.origem === 'cadastro').forEach(it => {
       linhas.push(`- ${it.descricao}: ${n(it.caixas, 0)} cx de ${medidas(it.comprimento, it.largura, it.altura)}, ${n(it.peso_caixa)} kg/cx`);
     });
     (d.manuais || []).forEach(m => {
-      linhas.push(`- ${m.descricao || 'Caixas avulsas'}: ${n(m.qtd_caixas, 0)} cx de ${medidas(m.comprimento, m.largura, m.altura)}, ${n(m.peso_caixa)} kg/cx`);
+      linhas.push(`- ${m.descricao || 'Volumes avulsos'}: ${qtdTipo(m.qtd_caixas, m)} de ${medidas(m.comprimento, m.largura, m.altura)}, ${n(m.peso_caixa)} kg cada`);
     });
     if ((d.avisos || []).length) linhas.push('Atenção: há itens sem dados de embalagem (não somados).');
     return linhas.join('\n');
@@ -212,7 +247,7 @@
         <div style="font-size:20px;font-weight:800;color:var(--accent)">${val}</div></div>`;
     const linhas = (d.itens || []).filter(it => it.origem === 'cadastro').map(it =>
         `<li>${e(it.descricao)}: <strong>${n(it.caixas, 0)} cx</strong> de ${medidas(it.comprimento, it.largura, it.altura)} · ${n(it.peso_caixa)} kg/cx</li>`)
-      .concat((d.manuais || []).map(m => `<li>${e(m.descricao || 'Caixas avulsas')}: <strong>${n(m.qtd_caixas, 0)} cx</strong> de ${medidas(m.comprimento, m.largura, m.altura)} · ${n(m.peso_caixa)} kg/cx</li>`));
+      .concat((d.manuais || []).map(m => `<li>${e(m.descricao || 'Volumes avulsos')}: <strong>${qtdTipo(m.qtd_caixas, m)}</strong> de ${medidas(m.comprimento, m.largura, m.altura)} · ${n(m.peso_caixa)} kg cada</li>`));
     el.dataset.pedidoId = id;
     el.innerHTML = `<div style="border:1px solid rgba(96,165,250,.45);background:rgba(96,165,250,.07);border-radius:12px;padding:12px 14px">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px">
