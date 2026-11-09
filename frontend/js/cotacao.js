@@ -35,11 +35,14 @@
         <div class="modal-title">📦 Dados para cotação do frete <span id="cot-num" style="color:var(--muted);font-weight:400"></span></div>
         <div id="cot-totais" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:14px"></div>
         <div id="cot-avisos"></div>
-        <div style="font-weight:700;font-size:13px;margin:6px 0">Caixas por item</div>
+        <div id="cot-itens-bloco">
+        <div style="font-weight:700;font-size:13px;margin:6px 0">Caixas por item <span style="font-weight:400;color:var(--muted)">(pelo cadastro do produto)</span></div>
         <div style="overflow-x:auto"><table style="width:100%">
           <thead><tr><th>Item</th><th>Qtd. pedido</th><th>Caixas</th><th>Medidas da caixa</th><th>Peso total</th><th>m³</th></tr></thead>
           <tbody id="cot-itens"></tbody>
         </table></div>
+        </div>
+        <div id="cot-itens-nota" style="display:none;font-size:12px;color:var(--muted);margin:4px 0 2px"></div>
         <div style="font-weight:700;font-size:13px;margin:16px 0 6px">Caixas lançadas manualmente</div>
         <div style="overflow-x:auto"><table style="width:100%">
           <thead><tr><th>Item / descrição</th><th>Caixas</th><th>Medidas</th><th>Peso/caixa</th><th>Peso total</th><th>m³</th><th></th></tr></thead>
@@ -85,7 +88,14 @@
     document.getElementById('cot-avisos').innerHTML = (d.avisos || []).length
       ? `<div style="background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.4);border-radius:10px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:var(--warn)">⚠ ${d.avisos.map(e).join('<br>⚠ ')}<br><span style="color:var(--muted)">Os totais acima não incluem esses itens até que as caixas sejam lançadas.</span></div>`
       : '';
-    document.getElementById('cot-itens').innerHTML = (d.itens || []).map(it => {
+    // Itens que estão nas caixas lançadas à mão saem daqui (aparecem só embaixo, nas caixas lançadas)
+    const itensManual = (d.itens || []).filter(it => it.origem === 'manual');
+    const itensCalc = (d.itens || []).filter(it => it.origem !== 'manual');
+    document.getElementById('cot-itens-bloco').style.display = itensCalc.length ? '' : 'none';
+    const nota = document.getElementById('cot-itens-nota');
+    nota.style.display = itensManual.length ? '' : 'none';
+    nota.innerHTML = itensManual.length ? `📦 ${itensManual.length === (d.itens || []).length ? 'Todos os itens estão' : itensManual.length + ' item(ns) estão'} nas caixas lançadas manualmente (abaixo).` : '';
+    document.getElementById('cot-itens').innerHTML = itensCalc.map(it => {
       const qtd = `${n(it.quantidade, 0)} ${e(it.unidade || '')}`;
       const nome = `${e(it.descricao)}${it.revenda ? ' <span style="font-size:10px;color:var(--warn)">REVENDA</span>' : ''}`;
       if (it.origem === 'manual') return `<tr><td>${nome}</td><td>${qtd}</td><td colspan="4" style="color:var(--muted)">↓ usa as caixas lançadas manualmente</td></tr>`;
@@ -209,7 +219,7 @@
         <strong style="color:#8fb8ff">① Dados para cotar com a transportadora</strong>
         <span style="display:flex;gap:6px;flex-wrap:wrap">
           <button type="button" class="btn btn-sm btn-primary" onclick="cotCopiarPainel()">📋 Copiar para a transportadora</button>
-          <button type="button" class="btn btn-sm btn-secondary" onclick="abrirCotacaoPedido(${id})">${d.pode_editar ? 'Ver / lançar caixas' : 'Ver caixas'}</button>
+          <button type="button" class="btn btn-sm" style="background:rgba(59,130,246,.16);border:1px solid #3b82f6;color:#8fb8ff;font-weight:700" onclick="abrirCotacaoPedido(${id})">📦 ${d.pode_editar ? 'Ver / lançar caixas' : 'Ver caixas'}</button>
         </span>
       </div>
       <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px">${mini('Volumes', n(t.caixas, 0) + ' cx')}${mini('Peso', n(t.peso_kg) + ' kg')}${mini('Cubagem', n(t.cubagem_m3, 3) + ' m³')}</div>
@@ -235,7 +245,7 @@
       el.dataset.pedidoId = id;
       el.innerHTML = `📦 <strong>${n(t.caixas, 0)}</strong> volume(s) · <strong>${n(t.peso_kg)}</strong> kg · ${n(t.cubagem_m3, 3)} m³` +
         ((d.avisos || []).length ? ` <span style="color:var(--warn)">· ⚠ ${d.avisos.length} item(ns) sem embalagem</span>` : ' <span style="color:var(--success)">· embalagem completa</span>') +
-        ` <button type="button" class="btn btn-sm btn-secondary" style="margin-left:6px" onclick="abrirCotacaoPedido(${id})">${d.pode_editar ? 'Ver / lançar caixas' : 'Ver caixas'}</button>`;
+        ` <button type="button" class="btn btn-sm" style="margin-left:6px;background:rgba(59,130,246,.16);border:1px solid #3b82f6;color:#8fb8ff;font-weight:700" onclick="abrirCotacaoPedido(${id})">📦 ${d.pode_editar ? 'Ver / lançar caixas' : 'Ver caixas'}</button>`;
       return d;
     } catch (err) { el.innerHTML = '<span style="color:var(--muted)">Volumes indisponíveis</span>'; return null; }
   };

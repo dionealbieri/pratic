@@ -4781,9 +4781,13 @@ async function loadTransportadora() {
   const desdeVend = (_prazosParados && _prazosParados.mostrar_desde) || '';
   const aguardVend = p => p.status === 'produzido' && (!desdeVend || String(p.created_at || '').slice(0, 10) >= desdeVend);
   // Com algo digitado na busca, procura em TODOS os pedidos (qualquer status)
+  // Separação/embalagem: produzido com revenda por separar ou item sem caixa informada — é o Estoque/Expedição quem resolve
+  const precisaSep = p => p.status === 'produzido' && ((p.revenda_pendentes || 0) > 0 || (p.embalagem_pendentes || 0) > 0)
+    && (!desdeVend || String(p.created_at || '').slice(0, 10) >= desdeVend);
   let lista = busca ? rows.slice()
     : filtro === 'aguardando_vendedor' ? rows.filter(aguardVend)
-    : rows.filter(p => (mapa[filtro] || mapa.pendentes).includes(st(p)));
+    : filtro === 'separacao' ? rows.filter(precisaSep)
+    : rows.filter(p => (mapa[filtro] || mapa.pendentes).includes(st(p)) || (filtro === 'pendentes' && precisaSep(p)));
   if (busca) lista = lista.filter(p =>
     String(p.numero_pedido || '').toLowerCase().includes(busca) ||
     String(p.cliente_nome || '').toLowerCase().includes(busca) ||
@@ -4804,7 +4808,9 @@ async function loadTransportadora() {
   if (resumo) {
     const n = s2 => rows.filter(p => st(p) === s2).length + _remessasCache.filter(r => r.status === s2).length;
     const chip = (txt, qtd, alvo, cor) => `<button type="button" onclick="document.getElementById('ped-transp-filtro').value='${alvo}';loadTransportadora()" style="background:var(--surface2);border:1px solid ${filtro === alvo ? 'var(--accent)' : 'var(--border)'};border-radius:8px;padding:8px 12px;font-size:13px;color:var(--text);cursor:pointer;white-space:nowrap">${txt} <strong style="color:${cor}">${qtd}</strong></button>`;
-    resumo.innerHTML = chip('📋 Todos pendentes', n('aguardando_nf') + n('aguardando_retirada'), 'pendentes', 'var(--accent)')
+    const nSep = rows.filter(precisaSep).length;
+    resumo.innerHTML = chip('📋 Todos pendentes', n('aguardando_nf') + n('aguardando_retirada') + nSep, 'pendentes', 'var(--accent)')
+      + chip('📦 Separação / embalagem', nSep, 'separacao', nSep ? 'var(--warn)' : 'var(--muted)')
       + chip('🧾 Aguardando NF', n('aguardando_nf'), 'aguardando_nf', 'var(--accent)')
       + chip('🙋 Aguardando retirada', n('aguardando_retirada'), 'aguardando_retirada', 'var(--accent)')
       + (ehGestor ? chip('⏳ Aguardando vendedor/cliente', rows.filter(aguardVend).length + _remessasCache.filter(r => r.status === 'aguardando_cliente').length, 'aguardando_vendedor', 'var(--danger)') : '')
@@ -4821,7 +4827,13 @@ async function loadTransportadora() {
     const revPend = p.revenda_pendentes || 0;
     const btnRevenda = `<button class="btn btn-sm btn-secondary" style="color:var(--warn);border-color:var(--warn)" title="Separe as tampas/revenda antes de concluir" onclick="verDetalhesPedido(${p.id})">⚠ Separar ${revPend} revenda</button>`;
     let acoes = '';
-    if (s2 === 'aguardando_nf' && podeDespachar) {
+    const embPend = p.status === 'produzido' ? (p.embalagem_pendentes || 0) : 0;
+    const podeCaixa = ehGestor || temPermissao('expedicao', 'despachar') || temPermissao('estoque', 'movimentar');
+    if (precisaSep(p) && !(s2 === 'produzido' && ehGestor && filtro === 'aguardando_vendedor')) {
+      acoes = (revPend > 0 ? btnRevenda + ' ' : '')
+        + (embPend > 0 ? (podeCaixa ? `<button class="btn btn-sm" style="background:rgba(59,130,246,.16);border:1px solid #3b82f6;color:#8fb8ff;font-weight:700" title="Produto sem embalagem cadastrada: lance as caixas (medidas e peso) para o vendedor poder cotar o frete" onclick="abrirCotacaoPedido(${p.id})">📐 Informar embalagem (${embPend})</button>`
+                                    : `<span style="font-size:12px;color:var(--warn)">📐 ${embPend} item(ns) sem embalagem</span>`) : '');
+    } else if (s2 === 'aguardando_nf' && podeDespachar) {
       acoes = revPend > 0 ? btnRevenda : `<button class="btn btn-sm btn-primary" onclick="abrirDespacho(${p.id})">📦 Lançar NF e despachar</button>`;
     } else if (s2 === 'aguardando_retirada' && podeDespachar) {
       acoes = revPend > 0 ? btnRevenda : `<button class="btn btn-sm btn-primary" onclick="abrirRetirada(${p.id})">✅ Lançar NF e registrar retirada</button>`;
@@ -4855,6 +4867,7 @@ async function loadTransportadora() {
       <td style="white-space:nowrap">${p.nota_fiscal||'—'}${_nfPdfLink(p)}</td>
       <td>${pendente ? _seloDiasEtapa(_diasDesde(p.status_desde)) : (p.data_despacho ? fmtDate(p.data_despacho) : '—')}</td>
       <td>${(() => {
+        if (precisaSep(p)) return `<span class="pill pill-warn" title="O vendedor só consegue cotar o frete depois disso">📦 ${(p.revenda_pendentes || 0) > 0 && (p.embalagem_pendentes || 0) > 0 ? 'Separar revenda + embalagem' : (p.revenda_pendentes || 0) > 0 ? 'Separar revenda' : 'Informar embalagem'}</span>`;
         if (s2 !== 'produzido') return `<span class="pill ${STATUS_PILL_PED[s2]}">${STATUS_LABEL_PED[s2]}</span>`;
         if (!p.cotacao_enviada_em) return '<span class="pill pill-danger">⏳ Aguardando vendedor</span>';
         const dc = _diasDesde(p.cotacao_enviada_em), lim = Number((_prazosParados || {}).cotacao_vencida) || 3;
@@ -4922,6 +4935,8 @@ function _expVerificarChegadas(rows, rems) {
   const st = p => p.status_efetivo || p.status;
   const mapa = new Map();
   (rows || []).filter(p => pend.includes(st(p))).forEach(p => mapa.set('p' + p.id + st(p), `Pedido ${p.numero_pedido} — ${p.cliente_nome || ''} (${st(p) === 'aguardando_nf' ? 'aguardando NF' : 'aguardando retirada'})`));
+  (rows || []).filter(p => p.status === 'produzido' && ((p.revenda_pendentes || 0) > 0 || (p.embalagem_pendentes || 0) > 0))
+    .forEach(p => mapa.set('s' + p.id, `Pedido ${p.numero_pedido} — ${p.cliente_nome || ''} (${(p.embalagem_pendentes || 0) > 0 ? 'informar embalagem' : 'separar revenda'})`));
   (rems || []).filter(r => pend.includes(r.status)).forEach(r => mapa.set('r' + r.id + r.status, `Remessa ${r.numero_pedido}${r.numero ? '/' + r.numero : ''} — ${r.cliente_nome || ''}`));
   if (_expConhecidas === null) { _expConhecidas = new Set(mapa.keys()); return; }   // 1ª carga: só memoriza
   const novos = [...mapa.keys()].filter(k => !_expConhecidas.has(k));
@@ -5157,6 +5172,7 @@ window.abrirDespacho = abrirDespacho;
 
 // Quando a Expedição lança/exclui caixas com o despacho aberto, atualiza o resumo e os volumes
 window.cotAoAlterar = function (pedidoId, d) {
+  if (document.getElementById('ped-transp-tbody') && document.getElementById('ped-transp-tbody').offsetParent) { try { loadTransportadora(); } catch (e) {} }
   const det = document.getElementById('ped-det-embalagem');
   const detModal = document.getElementById('modal-ped-detalhe');
   if (det && detModal && detModal.classList.contains('open')) resumoCotacaoHTML(pedidoId, det);
