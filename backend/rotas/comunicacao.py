@@ -376,16 +376,26 @@ def limpar_conversa_usuario(usuario_id: int, current_user=Depends(get_current_us
     if current_user.get("role") != "gestor":
         raise HTTPException(403, "Apenas o administrador pode limpar conversas.")
     conn = get_conn()
+    me = current_user.get("id")
+    # Mesmo recorte que a tela mostra (GET /?usuario_id=): as mensagens que EU mandei
+    # (autor=eu, destino=ele) E as que ELE me mandou (autor=ele, destino=eu).
+    # Antes apagava só "conversa_usuario_id = ele" -> sumiam só as minhas e as
+    # recebidas ficavam, tendo que excluir uma a uma.
+    u2 = conn.execute("SELECT role FROM usuarios WHERE id=?", (usuario_id,)).fetchone()
+    where = "(conversa_setor='p2p' AND ((autor_id=? AND conversa_usuario_id=?) OR (autor_id=? AND conversa_usuario_id=?)))"
+    params = [me, usuario_id, usuario_id, me]
+    if u2 and u2["role"] != "gestor":
+        where += " OR (conversa_setor IS NULL AND conversa_usuario_id=?)"   # histórico antigo
+        params.append(usuario_id)
     arquivos = conn.execute(
-        "SELECT anexo_arquivo FROM comunicacao_recados WHERE conversa_usuario_id=? AND anexo_arquivo IS NOT NULL",
-        (usuario_id,),
+        f"SELECT anexo_arquivo FROM comunicacao_recados WHERE ({where}) AND anexo_arquivo IS NOT NULL", params,
     ).fetchall()
-    conn.execute("DELETE FROM comunicacao_recados WHERE conversa_usuario_id=?", (usuario_id,))
+    apagadas = conn.execute(f"DELETE FROM comunicacao_recados WHERE {where}", params).rowcount
     conn.commit()
     conn.close()
     for a in arquivos:
         _apagar_arquivo(a["anexo_arquivo"])
-    return {"mensagem": "Conversa limpa"}
+    return {"mensagem": "Conversa limpa", "apagadas": apagadas}
 
 
 @router.delete("/{id}")
