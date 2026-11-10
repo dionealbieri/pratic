@@ -108,7 +108,7 @@ def _gerar_previa_pdf(caminho_pdf: str) -> Optional[str]:
         try:
             pagina = pdf[0]
             largura = pagina.get_width() or 595
-            escala = max(1.0, min(3.0, 1600.0 / float(largura)))
+            escala = max(2.0, min(5.0, 2600.0 / float(largura)))   # ~2600 px: nítida em A4 (≈300 dpi)
             img = pagina.render(scale=escala).to_pil()
         finally:
             pdf.close()
@@ -303,6 +303,21 @@ def _arquivo_arte(pid: int, current_user: dict, previa: bool):
             raise HTTPException(403, "Programação da Produção ainda em teste (só o gestor).")
         nome = ped["arte_previa"] if (previa and ped["arte_previa"]) else ped["arte_arquivo"]
         nome_orig = ped["arte_arquivo_nome"]
+        # Prévias antigas (geradas em resolução menor) são refeitas na hora, mais nítidas
+        if previa and ped["arte_previa"] and (ped["arte_arquivo"] or "").lower().endswith(".pdf"):
+            try:
+                from PIL import Image
+                with Image.open(os.path.join(_pasta_artes(), os.path.basename(ped["arte_previa"]))) as im:
+                    pequena = im.size[0] < 2000 and im.size[1] < 2000
+            except Exception:
+                pequena = True
+            if pequena:
+                nova = _gerar_previa_pdf(os.path.join(_pasta_artes(), os.path.basename(ped["arte_arquivo"])))
+                if nova:
+                    conn.execute("UPDATE pedidos SET arte_previa=? WHERE id=?", (nova, pid))
+                    conn.commit()
+                    _apagar(ped["arte_previa"])
+                    nome = nova
     finally:
         conn.close()
     if not nome:
