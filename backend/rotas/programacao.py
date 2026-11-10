@@ -93,10 +93,11 @@ def _pasta_artes() -> str:
 def _apagar(nome: Optional[str]):
     if not nome:
         return
-    try:
-        os.remove(os.path.join(_pasta_artes(), os.path.basename(nome)))
-    except OSError:
-        pass
+    for arq in (os.path.basename(nome), _nome_corte(nome)):
+        try:
+            os.remove(os.path.join(_pasta_artes(), arq))
+        except OSError:
+            pass
 
 
 def _gerar_previa_pdf(caminho_pdf: str) -> Optional[str]:
@@ -115,6 +116,47 @@ def _gerar_previa_pdf(caminho_pdf: str) -> Optional[str]:
         nome = f"{uuid.uuid4().hex}_previa.png"
         img.save(os.path.join(_pasta_artes(), nome), "PNG", optimize=True)
         return nome
+    except Exception:
+        return None
+
+
+def _nome_corte(nome: str) -> str:
+    return os.path.splitext(os.path.basename(nome))[0] + "_corte.png"
+
+
+def _imagem_cortada(nome: str) -> Optional[str]:
+    """Versão da arte sem a margem branca em volta, para ocupar o máximo do verso da
+    ficha. Fica guardada ao lado do original (gera uma vez só)."""
+    pasta = _pasta_artes()
+    origem = os.path.join(pasta, os.path.basename(nome))
+    destino = os.path.join(pasta, _nome_corte(nome))
+    if os.path.exists(destino) and os.path.getmtime(destino) >= os.path.getmtime(origem):
+        return os.path.basename(destino)
+    try:
+        from PIL import Image, ImageOps
+        with Image.open(origem) as im:
+            im = ImageOps.exif_transpose(im)
+            if im.mode in ("RGBA", "LA", "P"):
+                fundo = Image.new("RGB", im.size, (255, 255, 255))
+                rgba = im.convert("RGBA")
+                fundo.paste(rgba, mask=rgba.split()[-1])
+                im = fundo
+            else:
+                im = im.convert("RGB")
+            cinza = im.convert("L")
+            # tudo que não é (quase) branco conta como conteúdo
+            mascara = cinza.point(lambda v: 255 if v < 235 else 0)
+            caixa = mascara.getbbox()
+            if caixa:
+                w, h = im.size
+                folga = int(max(w, h) * 0.015)
+                caixa = (max(0, caixa[0] - folga), max(0, caixa[1] - folga),
+                         min(w, caixa[2] + folga), min(h, caixa[3] + folga))
+                # só corta se tirar margem de verdade (foto sem margem fica como está)
+                if (caixa[2] - caixa[0]) * (caixa[3] - caixa[1]) < 0.92 * w * h:
+                    im = im.crop(caixa)
+            im.save(destino, "PNG", optimize=True)
+        return os.path.basename(destino)
     except Exception:
         return None
 
@@ -325,6 +367,10 @@ def _arquivo_arte(pid: int, current_user: dict, previa: bool):
     caminho = os.path.join(_pasta_artes(), os.path.basename(nome))
     if not os.path.exists(caminho):
         raise HTTPException(404, "Arquivo da arte não encontrado no servidor")
+    if previa and not caminho.lower().endswith(".pdf"):
+        cortada = _imagem_cortada(nome)
+        if cortada:
+            caminho = os.path.join(_pasta_artes(), cortada)
     ext = os.path.splitext(caminho)[1].lower()
     return FileResponse(caminho, media_type=EXT_ARTE.get(ext, "application/octet-stream"),
                         headers={"Content-Disposition": f'inline; filename="{os.path.basename(nome_orig or nome)}"'})
