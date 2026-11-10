@@ -13967,8 +13967,8 @@ async function imprimirFichas(ids) {
     .obsped{font-size:15px;line-height:1.45;border:1.5px solid #111;border-radius:7px;padding:8px 12px}
     .anot{flex:1;min-height:70px;border:1.5px dashed #111;border-radius:7px;padding:6px 10px}
     .rod{display:flex;justify-content:space-between;font-size:10px;color:#444;border-top:1px solid #bbb;padding-top:5px}
-    .arte{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden}
-    .arte img{width:100%;height:100%;object-fit:contain;image-rendering:auto}
+    .arte{flex:1;min-height:0;display:flex;align-items:flex-start;justify-content:center;overflow:hidden}
+    .arte img{width:100%;height:100%;object-fit:contain;object-position:center top;image-rendering:auto}
     .semarte{font-size:26px;font-weight:800;text-align:center}.semarte span{font-size:15px;font-weight:400}
     @media screen{body{background:#888}.folha{background:#fff;width:210mm;margin:12px auto;padding:9mm;height:297mm}}`;
   w.document.open();
