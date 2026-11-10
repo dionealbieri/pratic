@@ -3878,7 +3878,7 @@ async function loadRelEstoque() {
     ].join('');
     thead.innerHTML = '<tr><th>Data</th><th>Código</th><th>Produto</th><th>Categoria</th><th>Tipo</th><th>Quantidade</th><th>Saldo Depois</th><th>Motivo/Obs.</th></tr>';
     tbody.innerHTML = movs.length ? movs.map(m => {
-      const tipoLabel = {entrada:'Entrada',saida:'Saída',perda:'Perda',ajuste:'Ajuste'}[m.tipo] || m.tipo;
+      const tipoLabel = {entrada:'Entrada',saida:'Saída',perda:'Perda',ajuste:'Ajuste',sobra:'Sobra',estorno:'Estorno'}[m.tipo] || m.tipo;
       const pill = m.tipo === 'entrada' ? 'pill-success' : (m.tipo === 'perda' ? 'pill-danger' : 'pill-warn');
       return `<tr>
         <td>${fmtDate(m.data)}</td>
@@ -3888,7 +3888,7 @@ async function loadRelEstoque() {
         <td><span class="pill ${pill}">${tipoLabel}</span></td>
         <td>${fmtNum(m.quantidade)}</td>
         <td>${fmtNum(m.saldo_posterior)}</td>
-        <td>${m.motivo || m.observacao || '—'}</td>
+        <td>${_escHtml([m.motivo, (m.observacao && m.observacao !== m.motivo) ? m.observacao : ''].filter(Boolean).join(' · ') || '—')}</td>
       </tr>`;
     }).join('') : '<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:28px">Nenhuma movimentação encontrada</td></tr>';
     return;
@@ -6296,7 +6296,7 @@ async function loadPedidos() {
       <td>${fmtDate(p.prazo_entrega)}</td>
       <td style="color:${diasCor};font-weight:700">${dias<0?'Vencido':dias+'d'}</td>
       <td>${p.itens_produzidos}/${p.total_itens}</td>
-      <td><span class="pill ${STATUS_PILL_PED[p.status_efetivo||p.status]}">${STATUS_LABEL_PED[p.status_efetivo||p.status]}</span></td>
+      <td><span class="pill ${STATUS_PILL_PED[p.status_efetivo||p.status]}">${STATUS_LABEL_PED[p.status_efetivo||p.status]}</span>${(p.marca_divergente||0) > 0 ? `<div style="margin-top:4px"><span class="pill pill-danger" style="cursor:pointer;white-space:nowrap" title="A Produção lançou uma marca que não está no pedido. Abra o pedido e use 🔁 Corrigir marca (ou corrija o pedido), senão o estoque baixa da marca errada." onclick="verDetalhesPedido(${p.id})">⚠ Marca divergente</span></div>` : ''}</td>
       <td class="flex gap-2">
         <button class="btn btn-sm btn-secondary" onclick="verDetalhesPedido(${p.id})">Ver</button>
         <button class="btn btn-sm btn-secondary" title="Imprimir Relatório" onclick="imprimirPedido(${p.id})">🖨️</button>
@@ -9469,6 +9469,12 @@ function toggleMovTipo() {
   if (fornecedor) fornecedor.style.display = show ? '' : 'none';
   if (custo) custo.style.display = show ? '' : 'none';
   if (nfCaixa) nfCaixa.style.display = show ? 'grid' : 'none';
+  const mot = document.getElementById('est-mov-motivo');
+  if (mot) {
+    mot.placeholder = tipo === 'ajuste' ? 'Obrigatório: por que o saldo está sendo ajustado? (ex.: contagem física)' : '';
+    const lab = mot.parentElement && mot.parentElement.querySelector('label');
+    if (lab) lab.textContent = tipo === 'ajuste' ? 'Motivo do ajuste *' : 'Motivo / Observação';
+  }
   onDigitaNumeroNF();
 }
 
@@ -9518,7 +9524,12 @@ async function salvarMovimentacao() {
     data: _getVal('est-mov-data') || new Date().toISOString().slice(0,10)
   };
   if (!body.produto_id) { showAlert('Selecione o produto', 'danger'); return; }
-  if (!body.quantidade || body.quantidade <= 0) { showAlert('Informe a quantidade', 'danger'); return; }
+  if (body.tipo === 'ajuste' ? !(body.quantidade >= 0) : (!body.quantidade || body.quantidade <= 0)) { showAlert('Informe a quantidade', 'danger'); return; }
+  if (body.tipo === 'ajuste' && body.motivo.length < 3) {
+    showAlert('Informe o motivo do ajuste (ex.: contagem física, quebra encontrada)', 'danger');
+    const el = document.getElementById('est-mov-motivo'); if (el) el.focus();
+    return;
+  }
   try {
     await api('/estoque/movimentacoes', 'POST', body);
     closeModal('modal-movimentacao');
@@ -9602,14 +9613,19 @@ async function loadMovimentacoes() {
     tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:28px">Nenhuma movimentação registrada</td></tr>';
     return;
   }
-  const labels = {entrada:'Entrada', saida:'Saída', perda:'Perda', ajuste:'Ajuste', sobra:'Sobra'};
-  tbody.innerHTML = movs.map(m => `
-    <tr>
+  const labels = {entrada:'Entrada', saida:'Saída', perda:'Perda', ajuste:'Ajuste', sobra:'Sobra', estorno:'↩ Estorno'};
+  const pills = {entrada:'pill-success', sobra:'pill-success', perda:'pill-danger', ajuste:'pill-warn', estorno:'pill-info'};
+  tbody.innerHTML = movs.map(m => {
+    const det = [m.motivo, (m.observacao && m.observacao !== m.motivo) ? m.observacao : ''].filter(Boolean).join(' · ');
+    const sobe = Number(m.saldo_posterior || 0) >= Number(m.saldo_anterior || 0);
+    return `
+    <tr${m.tipo === 'estorno' ? ' style="background:rgba(59,130,246,.06)"' : ''}>
       <td>${fmtDate(m.data)}</td>
       <td>${m.produto_codigo || '—'}</td>
       <td>${m.produto_nome || '—'}</td>
       <td>
-        <span class="pill">${labels[m.tipo] || m.tipo}</span>
+        <span class="pill ${pills[m.tipo] || ''}">${labels[m.tipo] || m.tipo}${m.tipo === 'estorno' ? (sobe ? ' (devolvido)' : ' (baixado)') : ''}</span>
+        ${det ? `<small style="display:block;color:var(--muted);margin-top:2px;max-width:340px;white-space:normal">${_escHtml(det)}</small>` : ''}
         ${m.nota_fiscal ? `<small style="display:block;color:var(--muted);margin-top:2px">NF: ${m.nota_fiscal}</small>` : ''}
         ${m.nota_fiscal_chave ? `<small style="display:block;color:var(--muted);margin-top:2px" title="${m.nota_fiscal_chave}">Chave: ${m.nota_fiscal_chave.slice(0,8)}...${m.nota_fiscal_chave.slice(-6)}</small>` : ''}
       </td>
@@ -9617,8 +9633,9 @@ async function loadMovimentacoes() {
       <td>${fmtNum(m.saldo_anterior || 0)}</td>
       <td>${fmtNum(m.saldo_posterior || 0)}</td>
       <td>${m.responsavel || '—'}</td>
-      <td>${temPermissao('estoque', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="deletarMovimentacao(${m.id})">✕</button>` : ''}</td>
-    </tr>`).join('');
+      <td>${temPermissao('estoque', 'deletar') && m.tipo !== 'estorno' && !m.producao_diaria_id ? `<button class="btn btn-sm btn-danger" title="Excluir: o saldo volta e fica uma linha de estorno no extrato" onclick="deletarMovimentacao(${m.id})">✕</button>` : ''}</td>
+    </tr>`;
+  }).join('');
 }
 
 let _movNfBuscaTimer = null;
@@ -9750,11 +9767,12 @@ function gerarRelatorioMovimentacoes() {
 }
 
 async function deletarMovimentacao(id) {
-  if (!confirm('Remover esta movimentação? O saldo atual não será recalculado automaticamente.')) return;
+  if (!confirm('Excluir esta movimentação?\n\nO saldo volta ao que era sem ela e fica uma linha de ESTORNO no extrato, com o seu nome.')) return;
   try {
     await api('/estoque/movimentacoes/' + id, 'DELETE');
-    showAlert('Movimentação removida.');
+    showAlert('Movimentação excluída — estorno registrado no extrato.');
     await loadMovimentacoes();
+    if (typeof loadProdutos === 'function') await loadProdutos();
   } catch(e) { showAlert(e.message, 'danger'); }
 }
 
