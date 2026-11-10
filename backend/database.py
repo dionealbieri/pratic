@@ -1532,6 +1532,7 @@ def init_db():
     _migrar_autorizacao_frete(conn)
     _corrigir_revenda_marcada_entregue(conn)
     _migrar_arquivo_original(conn)
+    _migrar_programacao(conn)
     conn.commit()
     conn.close()
 
@@ -2074,4 +2075,44 @@ def _migrar_arquivo_original(conn):
     cols_v = [r[1] for r in conn.execute("PRAGMA table_info(pedidos_volumes)").fetchall()]
     if cols_v and "tipo" not in cols_v:
         conn.execute("ALTER TABLE pedidos_volumes ADD COLUMN tipo TEXT DEFAULT 'caixa'")
+    conn.commit()
+
+
+def _migrar_programacao(conn):
+    """Programação da Produção (fila por prioridade e urgência) + ficha frente e verso.
+    Tudo começa DESLIGADO para os setores (programacao_liberada = 0): só o gestor usa
+    enquanto testa."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(pedidos)").fetchall()]
+    novas = {
+        # Informações do vendedor para a produção (saem na ficha impressa)
+        "info_cor_impressao": "TEXT", "info_marca": "TEXT", "info_arte_modo": "TEXT",
+        "info_arte_ref": "TEXT", "info_observacao": "TEXT",
+        "info_atualizado_por": "TEXT", "info_atualizado_em": "TEXT",
+        # Verso da ficha: a arte (PDF ou imagem) + prévia em PNG quando é PDF
+        "arte_arquivo": "TEXT", "arte_arquivo_nome": "TEXT", "arte_previa": "TEXT",
+        # Pagamento: só comercial e gestor veem (não sai na ficha)
+        "pag_condicao": "TEXT", "pag_valor_pago": "REAL", "pag_data": "TEXT", "pag_observacao": "TEXT",
+        # Prioridade: o vendedor pede com motivo, só o gestor aprova
+        "prioridade_status": "TEXT", "prioridade_motivo": "TEXT",
+        "prioridade_pedida_por": "TEXT", "prioridade_pedida_em": "TEXT",
+        "prioridade_decidida_por": "TEXT", "prioridade_decidida_em": "TEXT",
+        "prioridade_obs_gestor": "TEXT",
+    }
+    for col, tipo in novas.items():
+        if col not in cols:
+            conn.execute(f"ALTER TABLE pedidos ADD COLUMN {col} {tipo}")
+    conn.execute("""CREATE TABLE IF NOT EXISTS programacao_ordem (
+        data TEXT NOT NULL, pedido_id INTEGER NOT NULL, posicao INTEGER NOT NULL,
+        PRIMARY KEY (data, pedido_id))""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS programacao_confirmada (
+        data TEXT PRIMARY KEY, confirmado_por TEXT, confirmado_em TEXT)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS programacao_pulos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT NOT NULL, pedido_id INTEGER NOT NULL,
+        motivo TEXT, usuario TEXT, criado_em TEXT DEFAULT (datetime('now','localtime')))""")
+    for chave, valor, desc in (
+        ("programacao_liberada", "0", "Programação da Produção liberada para os setores (0 = só o gestor, em teste)"),
+        ("urgencia_dias", "3", "Pedido fica URGENTE quando faltam até N dias para o prazo"),
+        ("prioridade_limite", "3", "Máximo de pedidos com prioridade aprovada ao mesmo tempo"),
+    ):
+        conn.execute("INSERT OR IGNORE INTO configuracoes (chave, valor, descricao) VALUES (?, ?, ?)", (chave, valor, desc))
     conn.commit()
