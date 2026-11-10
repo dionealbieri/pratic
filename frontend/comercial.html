@@ -868,6 +868,8 @@ async function loadMeusPedidos() {
     mpDados.restante = rm.restante || {};
     mpDados.novidades = (mpDados.novidades || []).concat(rm.novidades || []);
   } catch (e) { mpDados.remessas = []; mpDados.restante = {}; }
+  // Programação da Produção: posição na fila de hoje e selo (só depois de liberada)
+  try { const pf = await req('/programacao/meus') || {}; mpDados.prog = pf.liberada ? (pf.pedidos || {}) : null; } catch (e) { mpDados.prog = null; }
   mpVerificarChegadas(mpDados);
   renderNovidades();
   renderCardsMeus();
@@ -1240,6 +1242,7 @@ function mpMenuItens(t, id) {
   if (p.status === 'aguardando_retirada') it.push({ txt: '✏️ Alterar retirada', fn: () => mpAbrirEnvio(p.id, 'retirada') });
   if (mpBtnNf(p)) it.push({ txt: '🧾 Nota fiscal', fn: () => window.open(`${API}/pedidos/${p.id}/nf-arquivo`, '_blank') });
   it.push({ txt: Number(p.tem_original) ? '📎 Trocar o PDF original do pedido' : '📎 Anexar o PDF original do pedido', fn: () => mpAnexarOriginal(p.id, p.numero_pedido) });
+  if (mpDados && mpDados.prog) it.push({ txt: ['aberto', 'em_producao'].includes(p.status) ? '🏭 Produção: arte, informações, pagamento e prioridade' : '🏭 Informações para a produção e pagamento', fn: () => { window.location.href = '/?prog=' + p.id; } });
   if (mpPodeEditar(p)) {
     it.push({ txt: '✏️ Editar pedido', fn: () => { window.location.href = '/?editar=' + p.id; } });
     it.push({ txt: '🗑 Excluir pedido', perigo: true, fn: () => excluirPedidoVendedor(p.id) });
@@ -1276,8 +1279,22 @@ window.addEventListener('resize', mpFecharMenu);
 function mpCelPedido(it) {
   if (it.t === 'r') { const r = it.o; return `<strong>${esc(r.numero_pedido)}</strong><div style="font-size:11px;color:var(--accent2);font-weight:700">REMESSA ${r.numero} · parcial</div>`; }
   const p = it.o;
-  return `<span style="white-space:nowrap"><strong>${esc(p.numero_pedido)}</strong>${mpSeloNovo(p)}</span>` + (Number(p.origem_estoque_cliente) ? `<div style="font-size:11px;color:var(--accent2)">🏷️ entrega do estoque do cliente</div>` : '')
+  return `<span style="white-space:nowrap"><strong>${esc(p.numero_pedido)}</strong>${mpSeloNovo(p)}</span>` + mpFilaInfo(p) + (Number(p.origem_estoque_cliente) ? `<div style="font-size:11px;color:var(--accent2)">🏷️ entrega do estoque do cliente</div>` : '')
     + (mpTemRemessa(p) && (mpDados.restante || {})[String(p.id)] !== undefined ? `<div style="font-size:11px;color:var(--muted)">falta enviar ${fmtNum((mpDados.restante || {})[String(p.id)])}</div>` : '');
+}
+// Posição na fila da produção (Programação) — só aparece depois que o gestor libera
+const MP_SELO_FILA = { prioridade: ['PRIORIDADE', '#a78bfa', 'rgba(139,92,246,.18)'], atrasado: ['ATRASADO', '#f87171', 'rgba(239,68,68,.15)'], urgente: ['URGENTE', '#fb923c', 'rgba(249,115,22,.16)'], no_prazo: ['NO PRAZO', '#34d399', 'rgba(16,185,129,.15)'] };
+function mpFilaInfo(p) {
+  const f = mpDados && mpDados.prog && mpDados.prog[String(p.id)];
+  if (!f) return '';
+  let h = '';
+  if (f.posicao) {
+    const s = MP_SELO_FILA[f.selo] || MP_SELO_FILA.no_prazo;
+    h += `<div style="font-size:11px;margin-top:2px"><span style="font-weight:700">Fila: ${f.posicao}º</span> <span style="padding:1px 6px;border-radius:8px;font-weight:800;font-size:10px;color:${s[1]};background:${s[2]}">${s[0]}</span></div>`;
+  } else if (f.pulado) h += '<div style="font-size:11px;color:var(--muted);margin-top:2px">Fila: fora da programação de hoje</div>';
+  if (f.prioridade_status === 'pedida') h += '<div style="font-size:11px;color:var(--accent);margin-top:2px">Prioridade: aguardando o gestor</div>';
+  if (f.prioridade_status === 'recusada') h += '<div style="font-size:11px;color:#f87171;margin-top:2px">Prioridade recusada</div>';
+  return h;
 }
 const mpSeloNovo = p => Number(p.cliente_novo) ? ' <span class="mp-novo" title="Cliente novo: primeiro pedido dele">NOVO</span>' : '';
 const mpNomeCli = o => o && o.cliente_id ? `<button type="button" class="mp-cli" title="Ver a ficha do cliente" onclick="mpAbrirFicha(${o.cliente_id})">${esc(o.cliente_nome)}</button>` : esc((o && o.cliente_nome) || '—');

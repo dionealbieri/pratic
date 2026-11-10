@@ -511,6 +511,51 @@
     </div>
 
     <!-- PEDIDOS -->
+    <div class="page" id="page-programacao">
+      <div class="flex items-center" style="justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+        <div>
+          <div class="section-title" style="margin:0">📋 Programação da Produção <span id="prog-teste-badge" class="pill pill-warn" style="display:none;margin-left:6px;font-size:11px">em teste · só gestor</span></div>
+          <div style="font-size:13px;color:var(--muted);margin-top:4px">A fila já vem na ordem da regra. Arraste as linhas (ou use ▲▼) para ajustar — ex.: juntar pedidos da mesma cor — e confirme a programação do dia.</div>
+        </div>
+        <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+          <label for="prog-data" style="font-size:13px">Dia</label>
+          <input type="date" id="prog-data" style="max-width:160px" onchange="loadProgramacao()">
+          <button class="btn btn-secondary" data-cor="cinza" onclick="voltarRegraProgramacao()" id="prog-btn-regra" style="display:none">↺ Voltar à ordem da regra</button>
+          <button class="btn btn-secondary" data-cor="verde" onclick="confirmarProgramacao()">✅ Confirmar programação</button>
+          <button class="btn btn-primary" onclick="imprimirFichasDoDia()">🖨️ Imprimir fichas do dia</button>
+        </div>
+      </div>
+      <div id="prog-confirmada" style="margin-bottom:12px"></div>
+      <div id="prog-contadores" style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px"></div>
+      <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">
+        <div class="table-wrap" style="flex:999 1 640px;min-width:0">
+          <div class="table-head"><span class="table-head-title">Fila do dia</span><span style="font-size:12px;color:var(--muted)">Prioridade → Atrasado → Urgente → Ordem de chegada</span></div>
+          <div style="overflow-x:auto">
+            <table>
+              <thead><tr><th style="width:70px">#</th><th>Pedido / Cliente</th><th>Produtos a produzir</th><th>Impressão</th><th>Prazo</th><th>Situação</th><th style="text-align:right">Ações</th></tr></thead>
+              <tbody id="prog-tbody"><tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px">Carregando...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+        <div style="flex:1 1 280px;max-width:360px;display:flex;flex-direction:column;gap:16px">
+          <div class="card" id="prog-card-prioridades" style="display:none">
+            <div style="font-family:var(--font-head);font-weight:700;margin-bottom:10px">🟣 Pedidos de prioridade</div>
+            <div id="prog-prioridades"></div>
+          </div>
+          <div class="card">
+            <div style="font-family:var(--font-head);font-weight:700;margin-bottom:10px">Como a fila é montada</div>
+            <div style="display:flex;flex-direction:column;gap:8px;font-size:13px">
+              <div><span class="pill" style="background:rgba(139,92,246,.18);color:#a78bfa">1 · PRIORIDADE</span> pedida pelo vendedor e aprovada pelo gestor</div>
+              <div><span class="pill pill-danger">2 · ATRASADO</span> o prazo já passou</div>
+              <div><span class="pill pill-warn">3 · URGENTE</span> vence em até <b id="prog-urg-dias">3</b> dias</div>
+              <div><span class="pill pill-success">4 · NO PRAZO</span> por ordem de chegada</div>
+              <div style="color:var(--muted);font-size:12px">Pedido pulado no dia vai para o fim (motivo registrado) e volta na próxima programação.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="page" id="page-pedidos">
       <div id="ped-tabs-row" style="display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap">
         <button class="btn btn-secondary" id="ptab-fila" onclick="switchPedidosTab('fila')" style="border-color:var(--accent);color:var(--accent)">🏭 Fila de Produção</button>
@@ -1418,6 +1463,22 @@
                 <input type="number" id="cfg-retirada-alerta" min="1" step="1" style="max-width:80px"> <span style="font-size:13px">dias</span>
                 <button class="btn btn-sm btn-primary" onclick="salvarPrazosAlerta()">💾 Salvar alertas</button>
               </div>
+            </div>
+          </div>
+
+          <div class="card" style="margin-bottom:20px">
+            <div style="font-family:var(--font-head);font-weight:700;margin-bottom:6px">📋 Programação da Produção <span id="cfg-prog-badge" class="pill" style="margin-left:6px">—</span></div>
+            <div style="font-size:13px;color:var(--muted);margin-bottom:12px;line-height:1.6">Fila por prioridade e urgência, ficha da produção (frente e verso), informações do vendedor para a produção e pagamento do pedido.<br>
+              <b>Em teste</b> (desligado): só o Gestor vê e usa — nada muda para os setores. <b>Liberado</b>: aparece para os setores; a tela de Programação só para os perfis com a página <b>📋 Programação</b> marcada na tabela abaixo. Aprovar prioridade é sempre só do Gestor.</div>
+            <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+              <label class="flex gap-2 items-center" style="font-size:14px;font-weight:600;cursor:pointer">
+                <input type="checkbox" id="cfg-prog-liberada" style="width:18px;height:18px"> Liberar para os setores
+              </label>
+              <label for="cfg-urgencia-dias" style="font-size:13px;margin-left:14px">🟠 Urgente quando faltam até</label>
+              <input type="number" id="cfg-urgencia-dias" min="0" step="1" style="max-width:80px"> <span style="font-size:13px">dias</span>
+              <label for="cfg-prioridade-limite" style="font-size:13px;margin-left:10px">🟣 Máx. de prioridades</label>
+              <input type="number" id="cfg-prioridade-limite" min="1" step="1" style="max-width:80px">
+              <button class="btn btn-sm btn-primary" onclick="salvarConfigProgramacao()">💾 Salvar</button>
             </div>
           </div>
 
@@ -2773,6 +2834,68 @@
 </div>
 
 <!-- MODAL DETALHE PEDIDO -->
+<div class="modal-overlay" id="modal-prog-info">
+  <div class="modal" style="max-width:640px;width:95vw">
+    <div class="modal-title" id="modal-prog-info-title">Informações para a produção</div>
+    <input type="hidden" id="pi-pedido-id">
+    <div style="font-family:var(--font-head);font-weight:700;margin-bottom:8px;color:var(--accent)">🏭 Para a produção (sai na ficha impressa)</div>
+    <div class="form-grid">
+      <div class="form-group"><label for="pi-cor">Cor da impressão</label>
+        <input id="pi-cor" list="pi-cores" placeholder="Branco, Preto, Colorido...">
+        <datalist id="pi-cores"><option value="Branco"><option value="Preto"><option value="Colorido"><option value="Vermelho"><option value="Azul"><option value="Dourado"></datalist></div>
+      <div class="form-group"><label for="pi-marca">Marca do copo</label>
+        <input id="pi-marca" list="pi-marcas" placeholder="ALTACOPOS, TOTALPLAST...">
+        <datalist id="pi-marcas"><option value="ALTACOPOS"><option value="TOTALPLAST"><option value="RIOPLASTIC"><option value="CRISTALCOPOS"><option value="COPAZA"></datalist></div>
+      <div class="form-group"><label for="pi-arte-modo">Arte</label>
+        <select id="pi-arte-modo" onchange="document.getElementById('pi-arte-ref-wrap').style.display=this.value==='igual'?'':'none'">
+          <option value="">—</option><option value="nova">Arte nova (anexada)</option><option value="igual">Igual a um pedido anterior</option><option value="sem">Sem impressão</option>
+        </select></div>
+      <div class="form-group" id="pi-arte-ref-wrap" style="display:none"><label for="pi-arte-ref">Igual ao pedido nº</label><input id="pi-arte-ref" placeholder="ex.: 15301"></div>
+    </div>
+    <div class="form-group"><label for="pi-obs">Observação para a produção</label>
+      <textarea id="pi-obs" rows="3" placeholder="ex.: logo de um lado, QR code do outro, como de costume"></textarea></div>
+    <div id="pi-pag-bloco" style="border-top:1px solid var(--border);margin-top:10px;padding-top:12px">
+      <div style="font-family:var(--font-head);font-weight:700;margin-bottom:8px;color:#3b82f6">💰 Pagamento <span style="font-size:12px;font-weight:400;color:var(--muted)">— só comercial e gestor veem, não sai na ficha</span></div>
+      <div class="form-grid">
+        <div class="form-group"><label for="pi-pag-cond">Condição</label>
+          <select id="pi-pag-cond"><option value="">—</option><option value="a_vista">À vista</option><option value="entrada_restante">Entrada + restante na saída</option><option value="a_prazo">A prazo</option><option value="pago_total">Pago total</option><option value="outro">Outro</option></select></div>
+        <div class="form-group"><label for="pi-pag-valor">Valor pago (R$)</label><input id="pi-pag-valor" type="number" min="0" step="0.01"></div>
+        <div class="form-group"><label for="pi-pag-data">Data do pagamento</label><input id="pi-pag-data" type="date"></div>
+      </div>
+      <div class="form-group"><label for="pi-pag-obs">Observação do pagamento</label><input id="pi-pag-obs" placeholder="ex.: restante na saída do material com o frete; meia nota"></div>
+    </div>
+    <div id="pi-prio-bloco" style="border-top:1px solid var(--border);margin-top:10px;padding-top:12px">
+      <div style="font-family:var(--font-head);font-weight:700;margin-bottom:8px;color:#a78bfa">🟣 Prioridade</div>
+      <div id="pi-prio-status" style="font-size:13px;margin-bottom:8px"></div>
+      <label class="flex gap-2 items-center" style="font-size:14px;font-weight:600;cursor:pointer" id="pi-prio-ck-wrap">
+        <input type="checkbox" id="pi-prio-ck" style="width:18px;height:18px" onchange="document.getElementById('pi-prio-motivo-wrap').style.display=this.checked?'':'none'"> <span id="pi-prio-ck-txt">Pedir prioridade para este pedido</span>
+      </label>
+      <div class="form-group" id="pi-prio-motivo-wrap" style="display:none;margin-top:8px"><label for="pi-prio-motivo">Motivo (obrigatório)</label>
+        <textarea id="pi-prio-motivo" rows="2" placeholder="ex.: cliente tem evento no sábado, pagou entrada à vista"></textarea>
+        <div style="font-size:12px;color:var(--muted);margin-top:4px" id="pi-prio-ajuda">Vai para aprovação do gestor. Enquanto não for aprovado, o pedido segue na fila normal (pelo prazo).</div></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-prog-info')">Cancelar</button>
+      <button class="btn btn-primary" onclick="salvarProgInfo()">💾 Salvar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-prog-pular">
+  <div class="modal" style="max-width:460px;width:95vw">
+    <div class="modal-title" id="modal-prog-pular-title">Pular pedido hoje</div>
+    <input type="hidden" id="pp-pedido-id">
+    <div class="form-group"><label for="pp-motivo">Por que este pedido não vai ser produzido hoje?</label>
+      <input id="pp-motivo" list="pp-motivos" placeholder="ex.: faltou copo, máquina com outra cor">
+      <datalist id="pp-motivos"><option value="Faltou copo no estoque"><option value="Máquina com outra cor de tinta"><option value="Aguardando arte / confirmação do vendedor"><option value="Máquina parada"><option value="Falta de operador"></datalist></div>
+    <div style="font-size:12px;color:var(--muted)">O pedido vai para o fim da fila de hoje e volta na próxima programação. Fica registrado quem pulou e o motivo.</div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-prog-pular')">Cancelar</button>
+      <button class="btn btn-primary" onclick="confirmarPuloProg()">Pular hoje</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="modal-ped-detalhe">
   <div class="modal" style="max-width:700px;width:95vw">
     <div class="modal-title" id="modal-ped-det-title">Pedido</div>
@@ -3194,7 +3317,7 @@
 
 <script src="js/cotacao.js?v=20261109-tipovolume"></script>
 <script src="js/estoque-cliente.js?v=20261030-estcli"></script>
-<script src="js/app.js?v=20261110-extrato1"></script>
+<script src="js/app.js?v=20261110-prog2"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');
