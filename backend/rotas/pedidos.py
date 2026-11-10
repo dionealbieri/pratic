@@ -5,7 +5,7 @@ from database import get_conn
 import database as _database
 from fastapi.responses import FileResponse
 from auth_utils import get_current_user
-from rotas.producao import _reverter_estoque_producao
+from rotas.producao import _reverter_estoque_producao, _registrar_estorno, _efeito_mov
 from vendedores import vincular_pedido, vincular_pedidos_sem_vendedor, separar_nomes, juntar_nomes
 import httpx
 import os, re, tempfile, datetime
@@ -1287,6 +1287,21 @@ def deletar_cliente(id: int):
 
 # ─── PEDIDOS ──────────────────────────────────────────────────────────────────
 
+def _sql_marca_divergente(a: str) -> str:
+    """Quantos produtos a Produção lançou para o pedido que NÃO estão nele (ex.: lançou
+    ALTACOPO e o pedido é TOTALPLAST). Só enquanto o pedido está na produção: é o
+    momento de confirmar a troca de marca, senão o estoque baixa da marca errada."""
+    return f"""(CASE WHEN COALESCE({a}.status,'aberto') IN ('aberto','em_producao','produzido') THEN (
+        SELECT COUNT(DISTINCT COALESCE(pdi.produto_estoque_id, pd.produto_estoque_id))
+        FROM producao_diaria pd
+        LEFT JOIN producao_diaria_itens pdi ON pdi.producao_diaria_id = pd.id
+        WHERE pd.pedido_numero = {a}.numero_pedido
+          AND COALESCE(pdi.produto_estoque_id, pd.produto_estoque_id) IS NOT NULL
+          AND COALESCE(pdi.produto_estoque_id, pd.produto_estoque_id) NOT IN (
+              SELECT pi2.produto_id FROM pedidos_itens pi2 WHERE pi2.pedido_id = {a}.id AND pi2.produto_id IS NOT NULL)
+    ) ELSE 0 END)"""
+
+
 def _produzido_por_produto(cur, numero_pedido):
     """Soma o que foi lançado na Produção para este pedido (pelo número), por produto."""
     rows = cur.execute("""
@@ -1488,7 +1503,8 @@ def listar_pedidos(status: Optional[str] = None, cliente_id: Optional[int] = Non
                julianday(p.prazo_entrega) - julianday('now') as dias_restantes,
                uv.nome as vendedor_usuario_nome,
                """ + _sql_cliente_novo('p') + """ as cliente_novo,
-               CASE WHEN p.status = 'produzido' THEN """ + _sql_embalagem_pendente('p') + """ ELSE 0 END as embalagem_pendentes
+               CASE WHEN p.status = 'produzido' THEN """ + _sql_embalagem_pendente('p') + """ ELSE 0 END as embalagem_pendentes,
+               """ + _sql_marca_divergente('p') + """ as marca_divergente
         FROM pedidos p
         JOIN pedidos_clientes c ON p.cliente_id = c.id
         LEFT JOIN usuarios uv ON uv.id = p.vendedor_usuario_id
@@ -2726,23 +2742,45 @@ def trocar_produto_producao(id: int, body: TrocarProdutoProducaoIn, current_user
                 return 0.0
             return r["quantidade"] or 0
 
+        from datetime import date as _date
+        hoje = str(_date.today())
+        usuario = _nome_usuario(current_user)
+        num = ped["numero_pedido"]
         for l in lancs:
             tem_item = cur.execute("SELECT 1 FROM producao_diaria_itens WHERE producao_diaria_id=? AND produto_estoque_id=?",
                                    (l["id"], de)).fetchone()
             if not tem_item and l["produto_estoque_id"] != de:
                 continue
-            movs = cur.execute("""SELECT id, saldo_anterior, saldo_posterior, quantidade, tipo FROM estoque_movimentacoes
-                                  WHERE producao_diaria_id=? AND produto_id=?""", (l["id"], de)).fetchall()
+            movs = cur.execute("""SELECT * FROM estoque_movimentacoes
+                                  WHERE producao_diaria_id=? AND produto_id=? ORDER BY id""", (l["id"], de)).fetchall()
             if movs:
-                # efeito líquido no saldo (negativo = baixou); perda "sem baixa" tem efeito zero
-                efeito = sum((m["saldo_posterior"] or 0) - (m["saldo_anterior"] or 0) for m in movs)
-                s_de, s_para = _saldo(de), _saldo(para)
-                cur.execute("UPDATE estoque_saldo SET quantidade=?, ultima_atualizacao=datetime('now') WHERE produto_id=?",
-                            (s_de - efeito, de))
-                cur.execute("UPDATE estoque_saldo SET quantidade=?, ultima_atualizacao=datetime('now') WHERE produto_id=?",
-                            (s_para + efeito, para))
-                cur.execute("UPDATE estoque_movimentacoes SET produto_id=? WHERE producao_diaria_id=? AND produto_id=?",
-                            (para, l["id"], de))
+                # Com rastro no extrato (antes só trocava o produto da linha, e as duas marcas
+                # ficavam com o extrato sem explicação):
+                #  • marca antiga: as movimentações saem e entra UMA linha de estorno (devolvido);
+                #  • marca nova: as mesmas movimentações são lançadas de novo, com o saldo dela,
+                #    ainda ligadas ao lançamento (editar/excluir depois continua revertendo certo).
+                efeito = sum(_efeito_mov(m) for m in movs)
+                dt_prod = "/".join(reversed(str(movs[0]["data"] or "")[:10].split("-")))
+                for m in movs:
+                    cur.execute("DELETE FROM estoque_movimentacoes WHERE id=?", (m["id"],))
+                _registrar_estorno(cur, de, efeito,
+                                   f"🔁 Troca de marca · pedido {num}: passou para {prods[para]['nome']}",
+                                   usuario, f"Produção de {dt_prod} (lançamento #{l['id']})", hoje)
+                for m in movs:
+                    ef = _efeito_mov(m)
+                    s_para = _saldo(para)
+                    novo = max(0, s_para + ef)
+                    cur.execute("""INSERT INTO estoque_movimentacoes
+                                   (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior, motivo, tipo_perda,
+                                    responsavel, observacao, data, producao_diaria_id, pedido_numero)
+                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                (para, m["tipo"], m["quantidade"], s_para, novo,
+                                 f"{m['motivo'] or 'Produção'} · 🔁 troca de marca (era {prods[de]['nome']})",
+                                 m["tipo_perda"], m["responsavel"],
+                                 ((m["observacao"] + " · ") if m["observacao"] else "") + f"produção de {dt_prod}, trocada por {usuario}",
+                                 hoje, l["id"], m["pedido_numero"] if "pedido_numero" in m.keys() else num))
+                    cur.execute("UPDATE estoque_saldo SET quantidade=?, ultima_atualizacao=datetime('now') WHERE produto_id=?",
+                                (novo, para))
                 qtd_total += -efeito
             else:
                 sem_vinculo += 1
@@ -4042,7 +4080,7 @@ def deletar_pedido(id: int, current_user = Depends(get_current_user)):
         ).fetchall()
         for lanc in lancamentos:
             lanc_id = lanc["id"]
-            _reverter_estoque_producao(cur, lanc_id)
+            _reverter_estoque_producao(cur, lanc_id, _nome_usuario(current_user), f"excluído junto com o pedido {numero_pedido}")
             cur.execute("DELETE FROM producao_diaria_itens WHERE producao_diaria_id = ?", (lanc_id,))
             cur.execute("DELETE FROM producao_diaria WHERE id = ?", (lanc_id,))
 

@@ -137,7 +137,9 @@ def _movimentar_estoque_item(c, prod_id: int, produto_id: int, quantidade: float
     # falta na embalagem), cada uma com seu tipo e observação. Se a linha
     # estiver marcada "não baixar estoque", ela fica registrada do mesmo jeito
     # (pro histórico), só que o saldo antes/depois não muda — não desconta.
-    saldo_rodante = saldo_apos_consumo
+    # a perda vem DEPOIS da sobra no extrato: parte do saldo já com a sobra
+    # (antes partia do saldo pré-sobra e o "saldo anterior" da linha ficava errado)
+    saldo_rodante = saldo_apos_consumo + sobra
     for qtd, tipo, obs, nao_baixar in perdas:
         if nao_baixar:
             saldo_rodante_depois = saldo_rodante
@@ -329,10 +331,49 @@ def registrar(p: ProducaoIn, current_user = Depends(get_current_user)):
     conn.close()
     return {"id": prod_id, "excedente": excedente, "mensagem": "Produção registrada com sucesso"}
 
-def _reverter_estoque_producao(conn, prod_id: int):
+def _registrar_estorno(c, produto_id: int, efeito: float, motivo: str, usuario: str,
+                       observacao: str = None, data: str = None):
+    """Desfaz no saldo um efeito já aplicado (efeito = o que a movimentação original
+    fez no saldo: saída de 1000 => -1000) e grava uma linha 'estorno' no extrato,
+    com saldo antes/depois reais. Sem isso, excluir/editar uma movimentação fazia o
+    saldo "pular" sem nenhuma linha que explicasse. A linha de estorno não tem
+    producao_diaria_id: não é revertida de novo numa próxima edição."""
+    from datetime import date as _date
+    if not efeito:
+        return None
+    r = c.execute("SELECT quantidade FROM estoque_saldo WHERE produto_id=?", (produto_id,)).fetchone()
+    saldo_atual = (r["quantidade"] or 0) if r else 0
+    novo = max(0, saldo_atual - efeito)
+    if r:
+        c.execute("UPDATE estoque_saldo SET quantidade=?, ultima_atualizacao=datetime('now') WHERE produto_id=?",
+                  (novo, produto_id))
+    else:
+        c.execute("INSERT INTO estoque_saldo (produto_id, quantidade) VALUES (?, ?)", (produto_id, novo))
+    cur = c.execute("""INSERT INTO estoque_movimentacoes
+                 (produto_id, tipo, quantidade, saldo_anterior, saldo_posterior, motivo, responsavel, observacao, data)
+                 VALUES (?, 'estorno', ?, ?, ?, ?, ?, ?, ?)""",
+              (produto_id, abs(efeito), saldo_atual, novo, motivo, usuario, observacao, data or str(_date.today())))
+    return cur.lastrowid
+
+
+def _efeito_mov(m) -> float:
+    """O que a movimentação fez no saldo (negativo = baixou). Usa o antes/depois
+    gravado: uma perda "sem baixa" tem antes == depois e não devolve nada."""
+    sa, sp = m["saldo_anterior"], m["saldo_posterior"]
+    if sa is not None and sp is not None:
+        return sp - sa
+    q = m["quantidade"] or 0
+    return q if m["tipo"] in ("entrada", "sobra") else (-q if m["tipo"] in ("saida", "perda") else 0)
+
+
+def _reverter_estoque_producao(conn, prod_id: int, usuario: str = None, acao: str = "excluído"):
+    """Devolve ao estoque o que o lançamento movimentou e apaga as movimentações dele,
+    deixando no extrato UMA linha de estorno por produto (quem, quando, por quê).
+    Retorna {"estornos": [ids], "movs": [(produto_id, tipo, quantidade)]}."""
+    info = {"estornos": [], "movs": []}
     p = conn.execute("SELECT * FROM producao_diaria WHERE id = ?", (prod_id,)).fetchone()
     if not p:
-        return
+        return info
 
     colaborador_id = p["colaborador_id"]
     data = p["data"]
@@ -405,29 +446,43 @@ def _reverter_estoque_producao(conn, prod_id: int):
                 params = (data, col_nome)
                 movs = conn.execute(query, params).fetchall()
 
+    efeitos = {}
     for m in movs:
-        m_id = m["id"]
-        m_prod_id = m["produto_id"]
-        # Usa o saldo antes/depois que já está gravado em cada movimentação —
-        # mais confiável que assumir pelo tipo, porque uma perda marcada como
-        # "não baixar estoque" (abatimento resolvido com o cliente, não
-        # fisicamente) é registrada com saldo_anterior == saldo_posterior:
-        # ela nunca descontou nada, então reverter não deve devolver nada.
-        saldo_anterior_mov = m["saldo_anterior"]
-        saldo_posterior_mov = m["saldo_posterior"]
-        if saldo_anterior_mov is not None and saldo_posterior_mov is not None:
-            diff = saldo_posterior_mov - saldo_anterior_mov
-        else:
-            m_tipo = m["tipo"]
-            m_qtd = m["quantidade"]
-            diff = m_qtd if m_tipo in ("entrada", "sobra") else (-m_qtd if m_tipo in ("saida", "perda") else 0)
+        efeitos[m["produto_id"]] = efeitos.get(m["produto_id"], 0) + _efeito_mov(m)
+        info["movs"].append((m["produto_id"], m["tipo"], m["quantidade"]))
+        conn.execute("DELETE FROM estoque_movimentacoes WHERE id = ?", (m["id"],))
+    if efeitos:
+        try:
+            dt = "/".join(reversed(str(data or "")[:10].split("-")))
+        except Exception:
+            dt = data
+        ped = f" · pedido {p['pedido_numero']}" if p["pedido_numero"] else ""
+        motivo = f"Estorno: lançamento de produção #{prod_id} {acao}"
+        obs = f"Produção de {dt} ({col_nome}){ped}"
+        for pid, ef in efeitos.items():
+            eid = _registrar_estorno(conn, pid, ef, motivo, usuario or "sistema", obs)
+            if eid:
+                info["estornos"].append(eid)
+    return info
 
-        saldo_row = conn.execute("SELECT quantidade FROM estoque_saldo WHERE produto_id = ?", (m_prod_id,)).fetchone()
-        saldo_atual = saldo_row["quantidade"] if saldo_row else 0
-        novo_saldo = max(0, saldo_atual - diff)
+def _nome_usr(u) -> str:
+    return (u or {}).get("nome") or (u or {}).get("username") or "sistema"
 
-        conn.execute("UPDATE estoque_saldo SET quantidade = ?, ultima_atualizacao = datetime('now') WHERE produto_id = ?", (novo_saldo, m_prod_id))
-        conn.execute("DELETE FROM estoque_movimentacoes WHERE id = ?", (m_id,))
+
+def _produtos_do_lancamento(c, prod_id: int) -> set:
+    ids = {r[0] for r in c.execute("SELECT produto_estoque_id FROM producao_diaria_itens WHERE producao_diaria_id=? AND produto_estoque_id IS NOT NULL", (prod_id,))}
+    if not ids:
+        r = c.execute("SELECT produto_estoque_id FROM producao_diaria WHERE id=?", (prod_id,)).fetchone()
+        if r and r[0]:
+            ids = {r[0]}
+    return ids
+
+
+def _nomes_produtos(c, ids) -> str:
+    if not ids:
+        return "—"
+    ph = ",".join("?" * len(ids))
+    return ", ".join(r[0] for r in c.execute(f"SELECT nome FROM estoque_produtos WHERE id IN ({ph}) ORDER BY nome", tuple(ids)))
 
 @router.put("/{id}")
 def atualizar(id: int, p: ProducaoIn, current_user = Depends(get_current_user)):
@@ -443,8 +498,9 @@ def atualizar(id: int, p: ProducaoIn, current_user = Depends(get_current_user)):
         if current_user.get('role') in _perfis_exigidos and not (p.pedido_numero and str(p.pedido_numero).strip()):
             raise HTTPException(400, "Número do pedido é obrigatório para lançar produção (configuração ativada para o seu perfil em Controle de Acesso).")
             
-        # 1. Reverter estoque antigo
-        _reverter_estoque_producao(cur, id)
+        # 1. Reverter estoque antigo (fica uma linha de estorno no extrato)
+        prods_antes = _produtos_do_lancamento(cur, id)
+        rev = _reverter_estoque_producao(cur, id, _nome_usr(current_user), "editado")
         
         # 2. Atualizar registro de produção
         if current_user.get('role') != 'gestor':
@@ -507,6 +563,22 @@ def atualizar(id: int, p: ProducaoIn, current_user = Depends(get_current_user)):
                     cur.execute("UPDATE estoque_saldo SET quantidade=?, ultima_atualizacao=datetime('now') WHERE produto_id=?",
                                  (novo_saldo, primeiro_produto["id"]))
                                  
+        # Edição que não mudou nada no estoque (ex.: só a meta ou a máquina):
+        # tira o estorno, senão cada edição encheria o extrato de linhas que se anulam.
+        novas = [(r["produto_id"], r["tipo"], r["quantidade"]) for r in cur.execute(
+            "SELECT produto_id, tipo, quantidade FROM estoque_movimentacoes WHERE producao_diaria_id=?", (id,))]
+        if rev["estornos"] and sorted(novas) == sorted(rev["movs"]):
+            ph = ",".join("?" * len(rev["estornos"]))
+            cur.execute(f"DELETE FROM estoque_movimentacoes WHERE id IN ({ph})", tuple(rev["estornos"]))
+        # Marca trocada direto no lançamento: fica na Auditoria (antes não ficava registro)
+        prods_depois = _produtos_do_lancamento(cur, id)
+        if prods_antes and prods_depois and prods_antes != prods_depois:
+            cur.execute("""INSERT INTO auditoria (usuario, acao, entidade, entidade_id, descricao, valor_anterior, valor_novo)
+                           VALUES (?, 'trocar_produto_producao', 'producao', ?, ?, ?, ?)""",
+                        (_nome_usr(current_user), id,
+                         f"Lançamento de produção #{id} ({p.data}) teve o produto trocado na tela de Produção"
+                         + (f" · pedido {p.pedido_numero}" if p.pedido_numero else ""),
+                         _nomes_produtos(cur, prods_antes), _nomes_produtos(cur, prods_depois)))
         _sincronizar_pedido(cur, existe["pedido_numero"], p.pedido_numero)
         conn.commit()
         return {"mensagem": "Produção atualizada com sucesso"}
@@ -520,16 +592,23 @@ def atualizar(id: int, p: ProducaoIn, current_user = Depends(get_current_user)):
         conn.close()
 
 @router.delete("/{id}")
-def deletar(id: int):
+def deletar(id: int, current_user = Depends(get_current_user)):
     conn = get_conn()
     try:
         cur = conn.cursor()
-        existe = cur.execute("SELECT id, pedido_numero FROM producao_diaria WHERE id = ?", (id,)).fetchone()
+        existe = cur.execute("SELECT id, pedido_numero, data, producao FROM producao_diaria WHERE id = ?", (id,)).fetchone()
         if not existe:
             raise HTTPException(404, "Registro de produção não encontrado")
-            
-        # 1. Reverter e deletar lançamentos de estoque
-        _reverter_estoque_producao(cur, id)
+        prods = _produtos_do_lancamento(cur, id)
+
+        # 1. Reverter e deletar lançamentos de estoque (fica a linha de estorno no extrato)
+        _reverter_estoque_producao(cur, id, _nome_usr(current_user), "excluído")
+        cur.execute("""INSERT INTO auditoria (usuario, acao, entidade, entidade_id, descricao, valor_anterior)
+                       VALUES (?, 'excluir_producao', 'producao', ?, ?, ?)""",
+                    (_nome_usr(current_user), id,
+                     f"Lançamento de produção #{id} ({existe['data']}, {existe['producao'] or 0:g} un.) excluído"
+                     + (f" · pedido {existe['pedido_numero']}" if existe["pedido_numero"] else ""),
+                     _nomes_produtos(cur, prods)))
         
         # 2. Deletar registro de produção
         cur.execute("DELETE FROM producao_diaria_itens WHERE producao_diaria_id = ?", (id,))

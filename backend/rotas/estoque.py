@@ -1,4 +1,5 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from auth_utils import get_current_user
 import sqlite3
 import re
 import unicodedata
@@ -400,12 +401,31 @@ def listar_movimentacoes(produto_id: Optional[int] = None, tipo: Optional[str] =
     conn.close()
     return [dict(r) for r in rows]
 
+def _nome_usr(u) -> str:
+    return (u or {}).get("nome") or (u or {}).get("username") or "sistema"
+
+
 @router.post("/movimentacoes")
-def registrar_movimentacao(m: MovimentacaoIn):
+def registrar_movimentacao(m: MovimentacaoIn, current_user: dict = Depends(get_current_user)):
     from datetime import date
     import re as _re
     if m.tipo not in ("entrada", "saida", "perda", "ajuste", "sobra"):
         raise HTTPException(400, "Tipo inválido")
+    usuario = _nome_usr(current_user)
+    if m.tipo == "ajuste":
+        # Ajuste troca o saldo pelo número digitado: sem motivo e sem quem fez, ninguém
+        # consegue explicar depois o "pulo" no extrato. Quem fez = usuário logado, sempre.
+        motivo = (m.motivo or m.observacao or "").strip()
+        if len(motivo) < 3:
+            raise HTTPException(400, "Informe o motivo do ajuste (ex.: contagem física, quebra encontrada, correção de lançamento).")
+        m.motivo = motivo
+        if m.responsavel and m.responsavel.strip() and m.responsavel.strip() != usuario:
+            m.observacao = ((m.observacao + " · ") if m.observacao and m.observacao.strip() != motivo else "") + f"contado por {m.responsavel.strip()}"
+        elif (m.observacao or "").strip() == motivo:
+            m.observacao = None
+        m.responsavel = usuario
+    elif not (m.responsavel or "").strip():
+        m.responsavel = usuario
     chave = (m.nota_fiscal_chave or "").strip()
     if chave:
         chave_digitos = _re.sub(r"\D", "", chave)
@@ -428,6 +448,8 @@ def registrar_movimentacao(m: MovimentacaoIn):
         novo_saldo = saldo_atual - m.quantidade
     elif m.tipo == "ajuste":
         novo_saldo = m.quantidade
+        dif = novo_saldo - saldo_atual
+        m.motivo = f"{m.motivo} (de {saldo_atual:g} para {novo_saldo:g}: {'+' if dif >= 0 else ''}{dif:g})"
     else:
         novo_saldo = saldo_atual
 
@@ -452,7 +474,7 @@ def registrar_movimentacao(m: MovimentacaoIn):
     return {"id": id, "saldo_anterior": saldo_atual, "saldo_atual": novo_saldo, "mensagem": "Movimentação registrada"}
 
 @router.delete("/movimentacoes/{id}")
-def deletar_movimentacao(id: int):
+def deletar_movimentacao(id: int, current_user: dict = Depends(get_current_user)):
     conn = get_conn()
     try:
         mov = conn.execute("SELECT * FROM estoque_movimentacoes WHERE id = ?", (id,)).fetchone()
@@ -471,8 +493,18 @@ def deletar_movimentacao(id: int):
         if novo_saldo < 0:
             raise HTTPException(400, f"Não é possível excluir esta movimentação, pois o saldo do produto ficaria negativo ({novo_saldo})")
             
-        conn.execute("UPDATE estoque_saldo SET quantidade = ?, ultima_atualizacao = datetime('now') WHERE produto_id = ?", (novo_saldo, produto_id))
+        if mov["tipo"] == "estorno":
+            raise HTTPException(400, "Linha de estorno não pode ser excluída: ela é o registro de uma correção.")
+        if mov["producao_diaria_id"]:
+            raise HTTPException(400, "Esta movimentação é de um lançamento de produção: edite ou exclua o lançamento na tela de Produção.")
+        # Some a linha, mas fica o estorno no extrato explicando a volta do saldo
+        from rotas.producao import _registrar_estorno
         conn.execute("DELETE FROM estoque_movimentacoes WHERE id = ?", (id,))
+        dt = "/".join(reversed(str(mov["data"] or "")[:10].split("-")))
+        _registrar_estorno(conn, produto_id, diff,
+                           (f"Estorno: ajuste excluído (de {saldo_anterior:g} para {saldo_posterior:g}, em {dt})" if mov["tipo"] == "ajuste"
+                            else f"Estorno: movimentação excluída ({mov['tipo']} de {mov['quantidade'] or 0:g} em {dt})"),
+                           _nome_usr(current_user), (mov["motivo"] or mov["observacao"] or None))
         conn.commit()
         return {"mensagem": "Movimentação removida", "saldo_atual": novo_saldo}
     except HTTPException:
