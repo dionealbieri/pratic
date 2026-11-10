@@ -256,6 +256,8 @@
         <option value="saida">📤 Saídas</option>
         <option value="perda">⚠️ Perdas</option>
         <option value="ajuste">🔧 Ajustes</option>
+        <option value="sobra">✅ Sobras</option>
+        <option value="estorno">↩️ Estornos</option>
       </select>
     </div>
     <div id="lista-historico"><div class="empty"><div class="spinner"></div></div></div>
@@ -462,6 +464,7 @@ function abrirMovRapida(id, nome, tipo, saldoAtual) {
   document.getElementById('modal-perda-tipo-group').style.display = tipo === 'perda' ? '' : 'none';
   document.getElementById('modal-mov-qtd-label').textContent =
     tipo === 'ajuste' ? `Nova quantidade total (saldo atual: ${fmtNum(saldoAtual)})` : 'Quantidade';
+  document.getElementById('modal-mov-obs').placeholder = tipo === 'ajuste' ? 'Obrigatório: motivo do ajuste' : 'Opcional';
   openModal('modal-mov-rapida');
 }
 
@@ -524,6 +527,7 @@ async function confirmarMovRapida() {
 
   if (!qtd || qtd <= 0) { alertEl.innerHTML = '<div class="alert alert-danger">Informe a quantidade</div>'; return; }
   if (!resp) { alertEl.innerHTML = '<div class="alert alert-danger">Informe o responsável</div>'; return; }
+  if (movTipoAtual === 'ajuste' && obs.trim().length < 3) { alertEl.innerHTML = '<div class="alert alert-danger">Informe o motivo do ajuste (ex.: contagem física)</div>'; return; }
 
   const btn = document.getElementById('modal-mov-btn');
   btn.disabled = true; btn.textContent = 'Salvando...';
@@ -587,6 +591,7 @@ function toggleMovTipos() {
   document.getElementById('mov-perda-tipo-group').style.display = tipo === 'perda' ? '' : 'none';
   document.getElementById('mov-fornecedor-group').style.display = tipo === 'entrada' ? '' : 'none';
   document.getElementById('mov-qtd-label').textContent = tipo === 'ajuste' ? 'Nova quantidade total' : 'Quantidade';
+  document.getElementById('mov-obs').placeholder = tipo === 'ajuste' ? 'Obrigatório: motivo do ajuste' : 'Opcional';
 }
 
 async function confirmarMovimentacao() {
@@ -599,6 +604,7 @@ async function confirmarMovimentacao() {
   if (!prodId) { alertEl.innerHTML = '<div class="alert alert-danger">Selecione um produto</div>'; return; }
   if (!qtd || qtd <= 0) { alertEl.innerHTML = '<div class="alert alert-danger">Informe a quantidade</div>'; return; }
   if (!resp) { alertEl.innerHTML = '<div class="alert alert-danger">Informe o responsável</div>'; return; }
+  if (tipo === 'ajuste' && document.getElementById('mov-obs').value.trim().length < 3) { alertEl.innerHTML = '<div class="alert alert-danger">Informe o motivo do ajuste no campo Observação (ex.: contagem física)</div>'; return; }
 
   const btn = document.getElementById('mov-btn');
   btn.disabled = true; btn.textContent = 'Salvando...';
@@ -658,18 +664,19 @@ async function loadHistorico() {
   try {
     const rows = await req(url);
     if (!rows.length) { el.innerHTML = '<div class="empty">Nenhuma movimentação encontrada</div>'; return; }
-    const tipoIcon = { entrada:'📥', saida:'📤', perda:'⚠️', sobra:'✅', ajuste:'🔧' };
-    const tipoCor = { entrada:'var(--success)', saida:'var(--info)', perda:'var(--danger)', sobra:'var(--success)', ajuste:'var(--warn)' };
+    const tipoIcon = { entrada:'📥', saida:'📤', perda:'⚠️', sobra:'✅', ajuste:'🔧', estorno:'↩️' };
+    const tipoCor = { entrada:'var(--success)', saida:'var(--info)', perda:'var(--danger)', sobra:'var(--success)', ajuste:'var(--warn)', estorno:'var(--info)' };
     el.innerHTML = rows.slice(0,50).map(r => `
       <div class="mov-item">
         <div>
           <div style="font-weight:600">${tipoIcon[r.tipo]||''} ${r.produto_nome}</div>
           <div class="mov-tipo">${fmtDate(r.data)} ${r.responsavel ? '• '+r.responsavel : ''}</div>
-          ${r.observacao ? `<div style="font-size:11px;color:var(--muted)">${r.observacao}</div>` : ''}
+          ${(r.tipo === 'ajuste' || r.tipo === 'estorno') && r.motivo ? `<div style="font-size:11px;color:var(--muted)">${r.motivo}</div>` : ''}
+          ${r.observacao && r.observacao !== r.motivo ? `<div style="font-size:11px;color:var(--muted)">${r.observacao}</div>` : ''}
         </div>
         <div style="text-align:right">
           <div class="mov-qtd" style="color:${tipoCor[r.tipo]||'var(--text)'}">
-            ${r.tipo==='entrada'?'+':r.tipo==='ajuste'?'→':'-'}${fmtNum(r.quantidade)}
+            ${r.tipo==='entrada'||r.tipo==='sobra'||(r.tipo==='estorno'&&Number(r.saldo_posterior)>=Number(r.saldo_anterior))?'+':r.tipo==='ajuste'?'→':'-'}${fmtNum(r.quantidade)}
           </div>
           <div style="font-size:11px;color:var(--muted)">${r.unidade}</div>
         </div>
