@@ -58,6 +58,7 @@ const PAGINAS_SISTEMA = [
   { key:'premiacao',     label:'🏆 Premiação'          },
   { key:'pintura',       label:'🎨 Pintura'             },
   { key:'pedidos',       label:'🧾 Pedidos'            },
+  { key:'programacao',   label:'📋 Programação (fila da produção)' },
   { key:'estoque',       label:'📦 Estoque'            },
   { key:'graficos',      label:'📈 Gráficos'           },
   { key:'relatorios',    label:'📋 Relatórios'         },
@@ -162,6 +163,7 @@ const pageTitles = {
   'consumo-medio': 'Consumo Médio',
   'gerencial': 'Painel Gerencial',
   pedidos: 'Pedidos & Fila de Produção',
+  programacao: 'Programação da Produção',
   backup: 'Backup & Restauração',
   epi: 'Controle de EPI',
   empresa: 'Dados da Empresa',
@@ -223,6 +225,7 @@ const PAGE_META_MAIN = {
   pintura:       { icon:'🎨', label:'Pintura', section:'Lançamentos' },
   colaboradores: { icon:'👥', label:'Colaboradores', section:'Cadastros' },
   maquinas:      { icon:'⚙️', label:'Máquinas', section:'Cadastros' },
+  programacao:   { icon:'📋', label:'Programação', section:'Operações' },
   pedidos:       { icon:'🧾', label:'Pedidos', section:'Operações' },
   estoque:       { icon:'📦', label:'Estoque', section:'Operações' },
   epi:           { icon:'🦺', label:'EPI', section:'Operações' },
@@ -282,10 +285,19 @@ async function carregarAcessoPrincipal() {
     modoSimplificadoPerfil = me.permissions
       ? me.permissions.split(',').map(p => p.trim()).includes('producao_simplificada')
       : false;
+    // Programação da Produção: o gestor sempre vê; os outros só depois de liberada e com a página no perfil
+    if (perfilAtual === 'gestor' && !paginasLiberadas.includes('programacao')) {
+      const iPed = paginasLiberadas.indexOf('pedidos');
+      paginasLiberadas.splice(iPed >= 0 ? iPed : paginasLiberadas.length, 0, 'programacao');
+    }
+    if (paginasLiberadas.includes('programacao') && perfilAtual !== 'gestor') {
+      const stProg = await _progStatus(true);
+      if (!stProg.pode_ver) paginasLiberadas = paginasLiberadas.filter(p => p !== 'programacao');
+    }
     
     const path = window.location.pathname;
     const params = new URLSearchParams(window.location.search);
-    const temPaginaSolicitada = params.has('page') || params.has('pagina') || params.has('perfil') || params.has('setor') || params.has('importar') || params.has('editar');
+    const temPaginaSolicitada = params.has('page') || params.has('pagina') || params.has('perfil') || params.has('setor') || params.has('importar') || params.has('editar') || params.has('prog');
 
     if ((path === '/' || path === '/index.html') && !temPaginaSolicitada) {
       if (me.role === 'producao') {
@@ -329,6 +341,7 @@ async function carregarAcessoPrincipal() {
   }
 
   montarMenuPrincipal();
+  if (perfilAtual === 'gestor') { atualizarBadgeProgramacao(); setInterval(atualizarBadgeProgramacao, 60000); }
   // Perfil com uma página só (ex.: Expedição): a barra lateral não serve para nada — esconde
   const paginasNoMenu = paginasLiberadas.filter(k => document.getElementById('page-' + k));
   if (perfilAtual !== 'gestor' && paginasNoMenu.length <= 1) document.body.classList.add('sem-sidebar');
@@ -350,6 +363,7 @@ function montarMenuPrincipal() {
     ${items.map(item => `
       <a class="nav-item" data-page="${item.key}" onclick="showPage('${item.key}')" style="cursor:pointer">
         <span class="icon">${item.icon}</span> ${item.label}
+        ${item.key === 'programacao' ? '<span id="nav-prog-badge" title="Prioridades esperando a sua aprovação" style="display:none;background:#8b5cf6;color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">0</span>' : ''}
         ${item.key === 'pedidos' ? '<span id="nav-pedidos-badge" style="display:none;background:var(--danger);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">!</span>' : ''}
         ${item.key === 'estoque' ? '<span id="nav-alerta-badge" style="display:none;background:var(--danger);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">!</span>' : ''}
         ${item.key === 'epi' ? '<span id="nav-epi-badge" style="display:none;background:var(--danger);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">!</span>' : ''}
@@ -400,11 +414,12 @@ function showPage(name) {
     'consumo-medio': loadConsumoMedio,
     'gerencial': loadGerencial,
     pedidos: loadPedidos_init,
+    programacao: loadProgramacao,
     backup: () => { if (typeof carregarInfoBackup === 'function') carregarInfoBackup(); },
     epi: loadEPI,
     comunicacao: loadComunicacao,
     empresa: loadEmpresa,
-    permissoes: () => { loadPermissoes(); carregarVendedorDesde(); },
+    permissoes: () => { loadPermissoes(); carregarVendedorDesde(); carregarConfigProgramacao(); },
     'perm-usuarios': loadPermUsuarios
   };
   if (handlers[name]) handlers[name]();
@@ -6741,8 +6756,10 @@ async function verDetalhesPedido(id) {
     <div style="margin-top:12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:10px 14px;font-size:13px">
       <div style="font-weight:700;margin-bottom:4px">📦 Embalagens do pedido</div>
       <div id="ped-det-embalagem"></div>
-    </div>`;
+    </div>
+    <div id="ped-det-prog"></div>`;
   openModal('modal-ped-detalhe');
+  _carregarProgPedido(id);
   if (typeof resumoCotacaoHTML === 'function') resumoCotacaoHTML(id, document.getElementById('ped-det-embalagem'));
   const btnImprimir = document.getElementById('btn-imprimir-pedido-modal');
   if(btnImprimir) btnImprimir.onclick = () => { imprimirPedido(id); };
@@ -7618,6 +7635,7 @@ async function salvarPedido() {
     } else {
       if (window._pedidoArquivoToken) { body.arquivo_token = window._pedidoArquivoToken; body.arquivo_nome = window._pedidoArquivoNome; }
       const resp = await api('/pedidos/','POST',body);
+      window._ultimoPedidoCriadoId = resp && resp.id;
       window._pedidoArquivoToken = null; window._pedidoArquivoNome = null;
       const alertas = (resp && resp.alertas_estoque) || [];
       if (alertas.length) {
@@ -7629,6 +7647,10 @@ async function salvarPedido() {
     }
     window._impSalvou = true;
     closeModal('modal-pedido');
+    if (!id && window._ultimoPedidoCriadoId) {
+      const stP = await _progStatus();
+      if (stP.campos_pedido) { window._impOcupado = true; abrirProgInfo(window._ultimoPedidoCriadoId, true).finally(() => { window._impOcupado = false; }); }
+    }
     if (window._modoImportarVendedor) return;
     loadFila();
     loadPedidos();
@@ -8098,6 +8120,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     iniciarModoImportarVendedor(parseInt(params.get('editar')));
     return;
   }
+  if (params.get('prog') && window.usuarioLogado && window.usuarioLogado.role === 'comercial') {
+    iniciarModoImportarVendedor(null, parseInt(params.get('prog')));
+    return;
+  }
   const paginaSolicitada = params.get('page') || params.get('pagina');
   const paginaInicial = (paginaSolicitada && paginasLiberadas.includes(paginaSolicitada)) ? paginaSolicitada : (paginasLiberadas[0] || 'dashboard');
   showPage(paginaInicial);
@@ -8108,7 +8134,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 // mesma importação da tela de Pedidos (Importar e Cadastrar com a tela de
 // confirmação, ou Importar em lote). Ao terminar ou cancelar, volta para /comercial.
 window._impOcupado = false;
-function iniciarModoImportarVendedor(editarId) {
+function iniciarModoImportarVendedor(editarId, progId) {
   window._modoImportarVendedor = true;
   const editando = !!editarId;
   document.body.classList.add('sem-sidebar');
@@ -8132,7 +8158,8 @@ function iniciarModoImportarVendedor(editarId) {
   const titulo = document.getElementById('page-title');
   if (titulo) titulo.textContent = editando ? 'Editar Pedido' : 'Importar Pedido';
   const mostrarCartao = () => { const c = document.getElementById('vend-modo-cartao'); if (c) c.style.display = ''; };
-  if (editando) editPedido(editarId).catch(e => { showAlert(e.message || 'Não foi possível abrir o pedido', 'danger'); mostrarCartao(); });
+  if (progId) { abrirProgInfo(progId, false).catch(e => { showAlert(e.message || 'Não foi possível abrir', 'danger'); mostrarCartao(); }); }
+  else if (editando) editPedido(editarId).catch(e => { showAlert(e.message || 'Não foi possível abrir o pedido', 'danger'); mostrarCartao(); });
   else { try { openModalImportarPedido(); } catch (e) { mostrarCartao(); } }
   setTimeout(() => { if (!document.querySelector('.modal-overlay.open')) mostrarCartao(); }, 2500);
   let vazios = 0, abriu = false;
@@ -10420,6 +10447,226 @@ async function carregarVendedorDesde() {
   const cv = document.getElementById('cfg-cotacao-vencida'), ra = document.getElementById('cfg-retirada-alerta');
   if (cv) cv.value = pz.cotacao_vencida || 3;
   if (ra) ra.value = pz.retirada_alerta || 15;
+}
+
+// ===== Programação da Produção — etapa 1 =====
+// Enquanto não for liberada (Controle de Acesso), só o Gestor vê estes blocos.
+let _progStatusCache = null;
+async function _progStatus(forcar) {
+  if (_progStatusCache && !forcar) return _progStatusCache;
+  try { _progStatusCache = await api('/programacao/status'); } catch (e) { _progStatusCache = { campos_pedido: false, pode_ver: false }; }
+  return _progStatusCache;
+}
+const PROG_ARTE_LABEL = { nova: 'Arte nova', igual: 'Igual ao pedido', sem: 'Sem impressão' };
+const PROG_PAG_LABEL = { a_vista: 'À vista', entrada_restante: 'Entrada + restante na saída', a_prazo: 'A prazo', pago_total: 'Pago total', outro: 'Outro' };
+let _progDadosAtual = null;
+
+async function _carregarProgPedido(id) {
+  const box = document.getElementById('ped-det-prog');
+  if (!box) return;
+  const st = await _progStatus();
+  if (!st.campos_pedido) { box.innerHTML = ''; return; }
+  let d;
+  try { d = await api('/programacao/pedido/' + id); } catch (e) { box.innerHTML = ''; return; }
+  _progDadosAtual = d;
+  const i = d.info || {};
+  const esc = s => _escHtml(String(s == null ? '' : s));
+  const linha = (rot, val) => `<div><div style="font-size:11px;color:var(--muted)">${rot}</div><div style="font-weight:700">${val ? esc(val) : '<span style="color:var(--muted);font-weight:400">—</span>'}</div></div>`;
+  const arteModo = i.arte_modo ? (PROG_ARTE_LABEL[i.arte_modo] + (i.arte_modo === 'igual' && i.arte_ref ? ' ' + i.arte_ref : '')) : '';
+  let arteHtml = '<span style="color:var(--warn);font-size:13px">Sem arte anexada</span>';
+  if (d.arte) {
+    const thumb = d.arte.eh_pdf && !d.arte.tem_previa ? '' :
+      `<img src="${API}/programacao/pedido/${id}/arte-imagem?t=${Date.now()}" alt="Arte do pedido" style="max-height:90px;max-width:160px;border-radius:6px;border:1px solid var(--border);background:#fff">`;
+    arteHtml = `<div class="flex gap-2 items-center" style="flex-wrap:wrap">${thumb}
+      <a href="${API}/programacao/pedido/${id}/arte" target="_blank" style="font-size:13px;color:#7cc4ff">📎 ${esc(d.arte.nome || 'arte')}</a></div>`;
+  }
+  let pagHtml = '';
+  if (d.pode_pagamento && d.pagamento) {
+    const p = d.pagamento;
+    const partes = [];
+    if (p.condicao) partes.push(PROG_PAG_LABEL[p.condicao] || p.condicao);
+    if (p.valor_pago != null) partes.push('pago ' + Number(p.valor_pago).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
+    if (p.data) partes.push('em ' + fmtDate(p.data));
+    pagHtml = `<div style="border-top:1px solid var(--border);margin-top:10px;padding-top:8px;font-size:13px">
+      <b style="color:#3b82f6">💰 Pagamento:</b> ${partes.length ? esc(partes.join(' · ')) : '<span style="color:var(--muted)">não informado</span>'}
+      ${p.observacao ? `<div style="color:var(--muted);margin-top:2px">${esc(p.observacao)}</div>` : ''}</div>`;
+  }
+  box.innerHTML = `
+    <div style="margin-top:12px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;padding:12px 14px">
+      <div class="flex items-center" style="justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+        <div style="font-weight:700">🏭 Informações para a produção ${st.liberada ? '' : '<span class="pill" style="font-size:10px;margin-left:6px">em teste · só gestor</span>'}</div>
+        <div class="flex gap-2" style="flex-wrap:wrap">
+          ${d.pode_editar_info || d.pode_pagamento ? `<button class="btn btn-sm btn-secondary" data-cor="azul" onclick="abrirProgInfo(${id})">✏️ Editar / prioridade</button>` : ''}
+          <button class="btn btn-sm btn-secondary" data-cor="cinza" onclick="imprimirFichas([${id}])">🖨️ Ficha da produção</button>
+          ${d.pode_editar_info ? `<label class="btn btn-sm btn-secondary" data-cor="roxo" style="cursor:pointer">🖼️ ${d.arte ? 'Trocar arte' : 'Anexar arte'}<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" onchange="enviarArteProg(${id}, this)"></label>` : ''}
+          ${d.pode_editar_info && d.arte ? `<button class="btn btn-sm btn-danger" onclick="removerArteProg(${id})">Remover arte</button>` : ''}
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;font-size:13px">
+        ${linha('Cor da impressão', i.cor_impressao)}${linha('Marca do copo', i.marca)}${linha('Arte', arteModo)}
+      </div>
+      ${i.observacao ? `<div style="margin-top:8px;font-size:13px"><b>Observação:</b> ${esc(i.observacao)}</div>` : ''}
+      <div style="margin-top:10px"><div style="font-size:11px;color:var(--muted);margin-bottom:4px">Arte do verso da ficha</div>${arteHtml}</div>
+      ${pagHtml}
+      ${_prioLinhaHtml(d)}
+    </div>`;
+}
+
+function _prioLinhaHtml(d) {
+  const pr = d.prioridade || {};
+  if (!pr.status) return '';
+  const rot = { aprovada: '<span class="pill" style="background:rgba(139,92,246,.18);color:#a78bfa">PRIORIDADE</span>', pedida: '<span class="pill pill-warn">Prioridade aguardando o gestor</span>', recusada: '<span class="pill pill-danger">Prioridade recusada</span>' }[pr.status] || '';
+  return `<div style="border-top:1px solid var(--border);margin-top:10px;padding-top:8px;font-size:13px">${rot} ${_escHtml(pr.motivo || '')}${pr.status === 'recusada' && pr.obs_gestor ? ' — ' + _escHtml(pr.obs_gestor) : ''}</div>`;
+}
+
+async function abrirProgInfo(id, aposImportar) {
+  let d = _progDadosAtual;
+  if (!d || d.pedido_id !== id) { d = await api('/programacao/pedido/' + id); _progDadosAtual = d; }
+  const i = d.info || {};
+  document.getElementById('pi-pedido-id').value = id;
+  document.getElementById('modal-prog-info-title').textContent = (aposImportar ? 'Pedido ' + d.numero_pedido + ' importado — informações para a produção' : 'Pedido ' + d.numero_pedido + ' — informações');
+  document.getElementById('pi-cor').value = i.cor_impressao || '';
+  document.getElementById('pi-marca').value = i.marca || '';
+  document.getElementById('pi-arte-modo').value = i.arte_modo || '';
+  document.getElementById('pi-arte-ref').value = i.arte_ref || '';
+  document.getElementById('pi-arte-ref-wrap').style.display = i.arte_modo === 'igual' ? '' : 'none';
+  document.getElementById('pi-obs').value = i.observacao || '';
+  ['pi-cor','pi-marca','pi-arte-modo','pi-arte-ref','pi-obs'].forEach(k => { document.getElementById(k).disabled = !d.pode_editar_info; });
+  // Arte direto no modal (na importação o vendedor anexa aqui mesmo)
+  let arteBox = document.getElementById('pi-arte-box');
+  if (!arteBox) {
+    arteBox = document.createElement('div'); arteBox.id = 'pi-arte-box'; arteBox.className = 'form-group';
+    document.getElementById('pi-obs').closest('.form-group').after(arteBox);
+  }
+  arteBox.innerHTML = d.pode_editar_info ? `<label>Arte (verso da ficha)</label>
+    <div class="flex gap-2 items-center" style="flex-wrap:wrap">
+      <span style="font-size:13px;${d.arte ? 'color:var(--success)' : 'color:var(--muted)'}">${d.arte ? '✓ ' + _escHtml(d.arte.nome || 'arte anexada') : 'Nenhuma arte anexada'}</span>
+      <label class="btn btn-sm btn-secondary" data-cor="roxo" style="cursor:pointer">🖼️ ${d.arte ? 'Trocar' : 'Anexar'} arte (PDF ou foto)<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" onchange="enviarArteProg(${id}, this, true)"></label>
+    </div>` : '';
+  const pb = document.getElementById('pi-pag-bloco');
+  pb.style.display = d.pode_pagamento ? '' : 'none';
+  if (d.pode_pagamento) {
+    const p = d.pagamento || {};
+    document.getElementById('pi-pag-cond').value = p.condicao || '';
+    document.getElementById('pi-pag-valor').value = p.valor_pago != null ? p.valor_pago : '';
+    document.getElementById('pi-pag-data').value = p.data || '';
+    document.getElementById('pi-pag-obs').value = p.observacao || '';
+  }
+  // Prioridade
+  const st = await _progStatus();
+  const pr = d.prioridade || {};
+  const ckWrap = document.getElementById('pi-prio-ck-wrap'), ck = document.getElementById('pi-prio-ck');
+  const stEl = document.getElementById('pi-prio-status');
+  const prioBloco = document.getElementById('pi-prio-bloco');
+  prioBloco.style.display = d.pode_editar_info && ['aberto','em_producao'].includes(d.status) ? '' : 'none';
+  ck.checked = false; document.getElementById('pi-prio-motivo').value = '';
+  document.getElementById('pi-prio-motivo-wrap').style.display = 'none';
+  document.getElementById('pi-prio-ck-txt').textContent = st.gestor ? 'Dar prioridade a este pedido' : 'Pedir prioridade para este pedido';
+  document.getElementById('pi-prio-ajuda').textContent = st.gestor
+    ? 'Como gestor, a prioridade já fica aprovada e o pedido sobe para o topo da fila.'
+    : 'Vai para aprovação do gestor. Enquanto não for aprovado, o pedido segue na fila normal (pelo prazo).';
+  const tirar = `<button class="btn btn-sm btn-danger" style="margin-left:8px" onclick="removerPrioridadeProg(${id})">${st.gestor ? 'Tirar prioridade' : 'Cancelar pedido de prioridade'}</button>`;
+  if (pr.status === 'aprovada') { stEl.innerHTML = `<span class="pill" style="background:rgba(139,92,246,.18);color:#a78bfa">PRIORIDADE APROVADA</span> ${_escHtml(pr.motivo || '')}${st.gestor ? tirar : ''}`; ckWrap.style.display = 'none'; }
+  else if (pr.status === 'pedida') { stEl.innerHTML = `<span class="pill pill-warn">Aguardando o gestor</span> ${_escHtml(pr.motivo || '')}${tirar}`; ckWrap.style.display = st.gestor ? '' : 'none'; }
+  else if (pr.status === 'recusada') { stEl.innerHTML = `<span class="pill pill-danger">Recusada pelo gestor</span>${pr.obs_gestor ? ' — ' + _escHtml(pr.obs_gestor) : ''} <span style="color:var(--muted)">(pode pedir de novo)</span>`; ckWrap.style.display = ''; }
+  else { stEl.innerHTML = ''; ckWrap.style.display = ''; }
+  openModal('modal-prog-info');
+}
+
+async function salvarProgInfo() {
+  const id = parseInt(document.getElementById('pi-pedido-id').value, 10);
+  const d = _progDadosAtual || {};
+  try {
+    const querPrio = document.getElementById('pi-prio-ck').checked && document.getElementById('pi-prio-bloco').style.display !== 'none';
+    const motivo = document.getElementById('pi-prio-motivo').value.trim();
+    if (querPrio && motivo.length < 5) { showAlert('Escreva o motivo da prioridade', 'danger'); return; }
+    if (d.pode_editar_info) {
+      await api('/programacao/pedido/' + id + '/info', 'PUT', {
+        cor_impressao: document.getElementById('pi-cor').value,
+        marca: document.getElementById('pi-marca').value,
+        arte_modo: document.getElementById('pi-arte-modo').value,
+        arte_ref: document.getElementById('pi-arte-ref').value,
+        observacao: document.getElementById('pi-obs').value,
+      });
+    }
+    if (d.pode_pagamento) {
+      const v = document.getElementById('pi-pag-valor').value;
+      await api('/programacao/pedido/' + id + '/pagamento', 'PUT', {
+        condicao: document.getElementById('pi-pag-cond').value,
+        valor_pago: v === '' ? null : parseFloat(v),
+        data: document.getElementById('pi-pag-data').value,
+        observacao: document.getElementById('pi-pag-obs').value,
+      });
+    }
+    let msg = 'Informações salvas';
+    if (querPrio) { const r = await api('/programacao/pedido/' + id + '/prioridade', 'POST', { motivo }); msg += ' · ' + r.mensagem; }
+    closeModal('modal-prog-info');
+    showAlert(msg);
+    _progDadosAtual = null;
+    if (document.getElementById('ped-det-prog')) _carregarProgPedido(id);
+    if (document.getElementById('page-programacao') && document.getElementById('page-programacao').classList.contains('active')) loadProgramacao();
+    atualizarBadgeProgramacao();
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+
+async function removerPrioridadeProg(id) {
+  if (!confirm('Tirar a prioridade deste pedido? Ele volta para a fila normal (pelo prazo).')) return;
+  try { const r = await api('/programacao/pedido/' + id + '/prioridade', 'DELETE'); showAlert(r.mensagem); }
+  catch (e) { showAlert(e.message, 'danger'); return; }
+  closeModal('modal-prog-info'); _progDadosAtual = null;
+  if (document.getElementById('ped-det-prog')) _carregarProgPedido(id);
+  if (document.getElementById('page-programacao') && document.getElementById('page-programacao').classList.contains('active')) loadProgramacao();
+  atualizarBadgeProgramacao();
+}
+
+async function enviarArteProg(id, input, noModal) {
+  const f = input.files && input.files[0];
+  if (!f) return;
+  try {
+    const fd = new FormData(); fd.append('arquivo', f);
+    const r = await fetch(API + '/programacao/pedido/' + id + '/arte', { method: 'POST', body: fd, credentials: 'same-origin' });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || 'Erro ao enviar a arte');
+    showAlert(j.mensagem || 'Arte anexada');
+  } catch (e) { showAlert(e.message, 'danger'); }
+  input.value = '';
+  _progDadosAtual = null;
+  if (noModal) { try { _progDadosAtual = await api('/programacao/pedido/' + id); } catch (e) {} const keep = {}; ['pi-cor','pi-marca','pi-arte-modo','pi-arte-ref','pi-obs','pi-pag-cond','pi-pag-valor','pi-pag-data','pi-pag-obs','pi-prio-motivo'].forEach(k => keep[k] = document.getElementById(k).value); const ckv = document.getElementById('pi-prio-ck').checked; await abrirProgInfo(id); Object.entries(keep).forEach(([k, v]) => document.getElementById(k).value = v); document.getElementById('pi-prio-ck').checked = ckv; document.getElementById('pi-prio-motivo-wrap').style.display = ckv ? '' : 'none'; document.getElementById('pi-arte-ref-wrap').style.display = document.getElementById('pi-arte-modo').value === 'igual' ? '' : 'none'; }
+  if (document.getElementById('ped-det-prog')) _carregarProgPedido(id);
+}
+
+async function removerArteProg(id) {
+  if (!confirm('Remover a arte deste pedido?')) return;
+  try { await api('/programacao/pedido/' + id + '/arte', 'DELETE'); showAlert('Arte removida'); }
+  catch (e) { showAlert(e.message, 'danger'); }
+  _carregarProgPedido(id);
+}
+
+async function carregarConfigProgramacao() {
+  const ck = document.getElementById('cfg-prog-liberada');
+  if (!ck) return;
+  const st = await _progStatus(true);
+  ck.checked = !!st.liberada;
+  document.getElementById('cfg-urgencia-dias').value = st.urgencia_dias != null ? st.urgencia_dias : 3;
+  document.getElementById('cfg-prioridade-limite').value = st.prioridade_limite || 3;
+  const b = document.getElementById('cfg-prog-badge');
+  if (b) { b.textContent = st.liberada ? 'Liberada' : 'Em teste · só gestor'; b.className = 'pill ' + (st.liberada ? 'pill-success' : 'pill-warn'); }
+}
+
+async function salvarConfigProgramacao() {
+  const lib = document.getElementById('cfg-prog-liberada').checked;
+  const ud = parseInt(document.getElementById('cfg-urgencia-dias').value, 10);
+  const pl = parseInt(document.getElementById('cfg-prioridade-limite').value, 10);
+  if (isNaN(ud) || ud < 0 || isNaN(pl) || pl < 1) { showAlert('Informe os dias de urgência (0 ou mais) e o máximo de prioridades (1 ou mais)', 'danger'); return; }
+  if (lib && !(_progStatusCache && _progStatusCache.liberada) &&
+      !confirm('Liberar a Programação da Produção para os setores?\n\nOs vendedores passam a ver os campos novos do pedido, e os perfis com a página "📋 Programação" marcada passam a ver a fila.')) return;
+  try {
+    await api('/configuracoes/programacao_liberada', 'PUT', { valor: lib ? '1' : '0' });
+    await api('/configuracoes/urgencia_dias', 'PUT', { valor: String(ud) });
+    await api('/configuracoes/prioridade_limite', 'PUT', { valor: String(pl) });
+    showAlert(lib ? 'Programação liberada para os setores' : 'Programação em teste (só o gestor)');
+    carregarConfigProgramacao();
+  } catch (e) { showAlert(e.message, 'danger'); }
 }
 
 async function salvarPrazosAlerta() {
@@ -13480,3 +13727,259 @@ async function gerarRelatorioCategoriaEstoque() {
 }
 
 window.gerarListaComprasEstoque = gerarListaComprasEstoque;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PROGRAMAÇÃO DA PRODUÇÃO — fila do dia, prioridades, pulos e ficha impressa
+// ═══════════════════════════════════════════════════════════════════════════
+const PROG_SELO_ESTILO = {
+  prioridade: 'background:rgba(139,92,246,.18);color:#a78bfa',
+  atrasado:   'background:rgba(239,68,68,.15);color:#f87171',
+  urgente:    'background:rgba(249,115,22,.16);color:#fb923c',
+  no_prazo:   'background:rgba(16,185,129,.15);color:#34d399',
+};
+let _progFila = null;
+
+async function atualizarBadgeProgramacao() {
+  const b = document.getElementById('nav-prog-badge');
+  if (!b) return;
+  try {
+    const r = await api('/programacao/pendencias');
+    const n = r.prioridades_pendentes || 0;
+    b.textContent = n; b.style.display = n > 0 ? '' : 'none';
+  } catch (e) { b.style.display = 'none'; }
+}
+
+function _progDiasTxt(d) {
+  if (d == null) return { txt: 'sem prazo', cor: 'var(--muted)' };
+  if (d < 0) return { txt: `atrasado ${-d} dia${d === -1 ? '' : 's'}`, cor: '#f87171' };
+  if (d === 0) return { txt: 'vence hoje', cor: '#fb923c' };
+  return { txt: `faltam ${d} dia${d === 1 ? '' : 's'}`, cor: d <= ((_progFila && _progFila.urgencia_dias) || 3) ? '#fb923c' : 'var(--muted)' };
+}
+
+async function loadProgramacao() {
+  const inp = document.getElementById('prog-data');
+  const tb = document.getElementById('prog-tbody');
+  if (!tb) return;
+  let f;
+  try { f = await api('/programacao/fila' + (inp && inp.value ? '?data=' + inp.value : '')); }
+  catch (e) { tb.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--danger);padding:24px">${_escHtml(e.message)}</td></tr>`; return; }
+  _progFila = f;
+  if (inp && !inp.value) inp.value = f.data;
+  document.getElementById('prog-teste-badge').style.display = f.liberada ? 'none' : '';
+  document.getElementById('prog-urg-dias').textContent = f.urgencia_dias;
+  document.getElementById('prog-btn-regra').style.display = f.ordem_manual ? '' : 'none';
+  const c = f.contadores;
+  const card = (k, n, sub) => `<div class="card" style="padding:14px 16px"><span class="pill" style="${PROG_SELO_ESTILO[k]};font-weight:800">${{prioridade:'PRIORIDADE',atrasado:'ATRASADO',urgente:'URGENTE',no_prazo:'NO PRAZO'}[k]}</span>
+    <div style="font-family:var(--font-head);font-size:26px;font-weight:800;margin-top:6px">${n}${sub ? ` <span style="font-size:13px;font-weight:500;color:var(--muted)">${sub}</span>` : ''}</div></div>`;
+  document.getElementById('prog-contadores').innerHTML =
+    card('prioridade', f.prioridades_ativas, `de ${f.prioridade_limite} permitidas`) + card('atrasado', c.atrasado) +
+    card('urgente', c.urgente, `até ${f.urgencia_dias} dias`) + card('no_prazo', c.no_prazo);
+  document.getElementById('prog-confirmada').innerHTML = f.confirmada
+    ? `<div style="background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.35);border-radius:10px;padding:10px 14px;font-size:13px">✅ Programação de ${fmtDate(f.data)} confirmada por <b>${_escHtml(f.confirmada.confirmado_por || '')}</b> em ${_escHtml(String(f.confirmada.confirmado_em || '').slice(11, 16))}. Se mudar a ordem, confirme de novo.</div>`
+    : `<div style="background:rgba(240,180,41,.08);border:1px solid rgba(240,180,41,.35);border-radius:10px;padding:10px 14px;font-size:13px">Programação de ${fmtDate(f.data)} ainda <b>não confirmada</b>.</div>`;
+
+  if (!f.fila.length) {
+    tb.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:24px">Nenhum pedido com produção pendente.</td></tr>';
+  } else {
+    tb.innerHTML = f.fila.map((p, idx) => {
+      const dt = _progDiasTxt(p.dias);
+      const prods = p.itens.filter(i => i.a_produzir > 0).map(i => `<div style="font-size:12px;line-height:1.35"><span style="font-weight:600">${_escHtml(i.produto)}</span> · <b>${fmtNum(i.a_produzir)}</b></div>`).join('');
+      const rev = p.itens.filter(i => i.revenda).length;
+      const pul = p.pulo;
+      const ok = !pul;
+      return `<tr ${ok ? `draggable="true" ondragstart="_progDragStart(event, ${p.id})" ondragover="event.preventDefault()" ondrop="_progDrop(event, ${p.id})"` : ''} style="${pul ? 'opacity:.6;background:rgba(148,163,184,.06)' : p.selo === 'prioridade' ? 'background:rgba(139,92,246,.06)' : p.selo === 'atrasado' ? 'background:rgba(239,68,68,.04)' : ''}">
+        <td style="white-space:nowrap">${ok ? `<span style="cursor:grab;color:var(--muted)" title="Arraste para mudar a ordem">⠿</span> <b style="font-family:var(--font-head);font-size:18px;color:var(--accent)">${p.posicao}</b>` : '<span style="color:var(--muted)">—</span>'}</td>
+        <td><div style="font-weight:700">${_escHtml(p.numero)}</div><div style="font-size:12px;color:var(--muted)">${_escHtml(p.cliente || '')}</div><div style="font-size:11px;color:var(--muted)">Vend.: ${_escHtml(p.vendedor || '—')}</div></td>
+        <td>${prods}${rev ? `<div style="font-size:11px;color:var(--muted)">+ ${rev} item(ns) de revenda</div>` : ''}</td>
+        <td><div style="font-weight:600;font-size:13px">${_escHtml(p.cor_impressao || '—')}</div><div style="font-size:11px;color:${p.tem_arte ? '#34d399' : (p.arte_modo === 'igual' ? 'var(--muted)' : '#fb923c')}">${p.tem_arte ? 'Arte anexada' : (p.arte_modo === 'igual' ? 'Arte igual a pedido anterior' : (p.arte_modo === 'sem' ? 'Sem impressão' : 'Sem arte anexada'))}</div></td>
+        <td style="white-space:nowrap"><div style="font-weight:600">${p.prazo ? fmtDate(p.prazo) : '—'}</div><div style="font-size:12px;color:${dt.cor}">${dt.txt}</div></td>
+        <td><span class="pill" style="${pul ? 'background:rgba(148,163,184,.2);color:var(--text)' : PROG_SELO_ESTILO[p.selo]};font-weight:800;font-size:11px">${pul ? 'PULADO HOJE' : p.selo_rotulo}</span>
+          ${pul ? `<div style="font-size:11px;color:var(--muted);margin-top:3px">${_escHtml(pul.motivo || '')} · ${_escHtml(pul.usuario || '')}</div>` : ''}
+          ${p.selo === 'prioridade' && p.prioridade_motivo ? `<div style="font-size:11px;color:var(--muted);margin-top:3px" title="${_escHtml(p.prioridade_motivo)}">${_escHtml(p.prioridade_motivo.slice(0, 50))}</div>` : ''}</td>
+        <td style="text-align:right"><div style="display:flex;flex-wrap:wrap;gap:4px;justify-content:flex-end;min-width:150px;max-width:200px;margin-left:auto">
+          ${ok ? `<button class="btn btn-sm btn-secondary" data-cor="cinza" title="Subir" onclick="_progMover(${p.id},-1)" ${idx === 0 ? 'disabled' : ''}>▲</button><button class="btn btn-sm btn-secondary" data-cor="cinza" title="Descer" onclick="_progMover(${p.id},1)">▼</button>` : ''}
+          <button class="btn btn-sm btn-secondary" data-cor="azul" onclick="imprimirFichas([${p.id}])" title="Imprimir a ficha deste pedido">🖨️ Ficha</button>
+          ${ok ? `<button class="btn btn-sm btn-secondary" data-cor="laranja" onclick="abrirPuloProg(${p.id}, '${_escHtml(p.numero)}')">⏭ Pular</button>`
+               : `<button class="btn btn-sm btn-secondary" data-cor="verde" onclick="desfazerPuloProg(${p.id})">↩ Voltar</button>`}
+          ${f.gestor ? `<button class="btn btn-sm btn-secondary" data-cor="roxo" title="Informações / prioridade" onclick="abrirProgInfo(${p.id})">✏️</button>` : ''}
+        </div></td></tr>`;
+    }).join('');
+  }
+  const pc = document.getElementById('prog-card-prioridades');
+  if (f.gestor) {
+    pc.style.display = '';
+    const pend = f.prioridades_pendentes || [];
+    document.getElementById('prog-prioridades').innerHTML = pend.length ? pend.map(p => `
+      <div style="background:var(--surface2);border:1px solid rgba(139,92,246,.35);border-radius:10px;padding:12px;margin-bottom:10px">
+        <div class="flex" style="justify-content:space-between;gap:8px"><b>${_escHtml(p.numero)} · ${_escHtml(p.cliente || '')}</b><span style="font-size:12px;color:var(--muted)">${_escHtml(p.vendedor || p.pedida_por || '')}</span></div>
+        <div style="font-size:13px;margin:6px 0">Motivo: “${_escHtml(p.motivo || '')}”</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:8px">Prazo ${p.prazo ? fmtDate(p.prazo) : '—'}${p.posicao_atual ? ' · hoje seria a posição ' + p.posicao_atual : ''}</div>
+        <div class="flex gap-2"><button class="btn btn-sm btn-primary" style="flex:1;background:#8b5cf6;border-color:#8b5cf6;color:#fff" onclick="decidirPrioridadeProg(${p.id}, true)">Aprovar</button>
+          <button class="btn btn-sm btn-danger" style="flex:1" onclick="decidirPrioridadeProg(${p.id}, false)">Recusar</button></div>
+      </div>`).join('') + `<div style="font-size:12px;color:var(--muted)">Limite: ${f.prioridade_limite} ao mesmo tempo (${f.prioridades_ativas} em uso).</div>`
+      : `<div style="font-size:13px;color:var(--muted)">Nenhum pedido de prioridade esperando. Limite: ${f.prioridade_limite} ao mesmo tempo (${f.prioridades_ativas} em uso).</div>`;
+  } else pc.style.display = 'none';
+}
+
+function _progIdsAtivos() { return (_progFila ? _progFila.fila : []).filter(p => !p.pulo).map(p => p.id); }
+async function _progSalvarOrdem(ids) {
+  try { await api('/programacao/ordem', 'PUT', { data: _progFila.data, pedido_ids: ids }); }
+  catch (e) { showAlert(e.message, 'danger'); }
+  loadProgramacao();
+}
+let _progArrastando = null;
+function _progDragStart(ev, id) { _progArrastando = id; ev.dataTransfer.effectAllowed = 'move'; }
+function _progDrop(ev, alvo) {
+  ev.preventDefault();
+  if (!_progArrastando || _progArrastando === alvo) return;
+  const ids = _progIdsAtivos().filter(x => x !== _progArrastando);
+  const pos = ids.indexOf(alvo);
+  const origem = _progIdsAtivos().indexOf(_progArrastando), destino = _progIdsAtivos().indexOf(alvo);
+  ids.splice(origem < destino ? pos + 1 : pos, 0, _progArrastando);
+  _progArrastando = null;
+  _progSalvarOrdem(ids);
+}
+function _progMover(id, dir) {
+  const ids = _progIdsAtivos(); const i = ids.indexOf(id), j = i + dir;
+  if (i < 0 || j < 0 || j >= ids.length) return;
+  [ids[i], ids[j]] = [ids[j], ids[i]];
+  _progSalvarOrdem(ids);
+}
+async function voltarRegraProgramacao() {
+  if (!confirm('Desfazer os ajustes de ordem deste dia? A fila volta a seguir só a regra.')) return;
+  try { await api('/programacao/ordem?data=' + _progFila.data, 'DELETE'); } catch (e) { showAlert(e.message, 'danger'); }
+  loadProgramacao();
+}
+async function confirmarProgramacao() {
+  if (!_progFila) return;
+  try { const r = await api('/programacao/confirmar', 'POST', { data: _progFila.data, pedido_ids: _progIdsAtivos() }); showAlert('✅ ' + r.mensagem); }
+  catch (e) { showAlert(e.message, 'danger'); }
+  loadProgramacao();
+}
+function abrirPuloProg(id, numero) {
+  document.getElementById('pp-pedido-id').value = id;
+  document.getElementById('pp-motivo').value = '';
+  document.getElementById('modal-prog-pular-title').textContent = 'Pular o pedido ' + numero + ' hoje';
+  openModal('modal-prog-pular');
+}
+async function confirmarPuloProg() {
+  const id = parseInt(document.getElementById('pp-pedido-id').value, 10);
+  const motivo = document.getElementById('pp-motivo').value.trim();
+  if (motivo.length < 3) { showAlert('Informe o motivo', 'danger'); return; }
+  try { const r = await api('/programacao/pular', 'POST', { pedido_id: id, motivo, data: _progFila.data }); showAlert(r.mensagem); closeModal('modal-prog-pular'); }
+  catch (e) { showAlert(e.message, 'danger'); }
+  loadProgramacao();
+}
+async function desfazerPuloProg(id) {
+  try { await api('/programacao/pular/' + id + '?data=' + _progFila.data, 'DELETE'); } catch (e) { showAlert(e.message, 'danger'); }
+  loadProgramacao();
+}
+async function decidirPrioridadeProg(id, aprovar) {
+  let obs = null;
+  if (!aprovar) { obs = prompt('Motivo da recusa (o vendedor vai ver):', ''); if (obs === null) return; }
+  try { const r = await api('/programacao/pedido/' + id + '/prioridade/decidir', 'POST', { aprovar, obs }); showAlert(r.mensagem); }
+  catch (e) { showAlert(e.message, 'danger'); }
+  loadProgramacao(); atualizarBadgeProgramacao();
+}
+function imprimirFichasDoDia() {
+  const ids = _progIdsAtivos();
+  if (!ids.length) { showAlert('Nenhum pedido na fila do dia', 'danger'); return; }
+  imprimirFichas(ids);
+}
+
+// ── Ficha impressa: frente (pedido com todos os itens) e verso (arte) ──
+async function imprimirFichas(ids) {
+  const w = window.open('', '_blank');
+  if (!w) { showAlert('O navegador bloqueou a janela de impressão. Libere pop-ups para este site.', 'danger'); return; }
+  w.document.write('<p style="font-family:Arial;padding:30px">Montando as fichas...</p>');
+  let d;
+  try {
+    const dataQ = (_progFila && document.getElementById('page-programacao') && document.getElementById('page-programacao').classList.contains('active')) ? '&data=' + _progFila.data : '';
+    d = await api('/programacao/fichas?ids=' + ids.join(',') + dataQ);
+  } catch (e) { w.document.body.innerHTML = '<p style="font-family:Arial;padding:30px;color:#b00">' + _escHtml(e.message) + '</p>'; return; }
+  const esc = v => _escHtml(v == null ? '' : String(v));
+  const nfmt = n => Number(n || 0).toLocaleString('pt-BR');
+  const dfmt = s => s ? String(s).slice(0, 10).split('-').reverse().join('/') : '—';
+  const ARTE = { nova: 'Arte nova', igual: 'Igual ao pedido', sem: 'Sem impressão' };
+  const paginas = d.fichas.map(f => {
+    const i = f.info || {};
+    const prod = f.itens.filter(x => !x.revenda);
+    const totalProd = prod.reduce((a, x) => a + (x.a_produzir || 0), 0);
+    const diasTxt = f.dias == null ? '' : (f.dias < 0 ? `atrasado ${-f.dias} dia(s)` : f.dias === 0 ? 'vence hoje' : `faltam ${f.dias} dia(s)`);
+    const seloBox = f.selo === 'prioridade'
+      ? `<div class="box selo prio"><div class="big">★ PRIORIDADE</div><div class="sub">${f.prioridade_decidida_por ? 'Aprovada por ' + esc(f.prioridade_decidida_por) : ''}${f.prioridade_motivo ? ' · ' + esc(f.prioridade_motivo) : ''}</div></div>`
+      : `<div class="box selo ${f.selo}"><div class="big">${esc(f.selo_rotulo)}</div><div class="sub">${esc(diasTxt)}</div></div>`;
+    const arteModo = i.arte_modo ? ARTE[i.arte_modo] + (i.arte_modo === 'igual' && i.arte_ref ? ' ' + esc(i.arte_ref) : '') : '—';
+    const linhas = f.itens.map(x => `<tr class="${x.revenda ? 'rev' : ''}"><td>${esc(x.codigo)}</td><td class="pn">${esc(x.produto)}${x.descricao && x.descricao !== x.produto ? `<div class="desc">${esc(x.descricao)}</div>` : ''}</td>
+      <td class="r">${nfmt(x.quantidade)}</td><td class="r b">${x.revenda ? '—' : nfmt(x.a_produzir)}</td><td class="t">${x.revenda ? 'REVENDA' : 'PRODUÇÃO'}</td></tr>`).join('');
+    const frente = `<section class="folha">
+      <div class="topo"><div><div class="emp">PRATIC RIO PRETO</div><div class="tit">FICHA DE PRODUÇÃO</div><div class="mini">Impressa em ${esc(d.impresso_em)} por ${esc(d.impresso_por)}</div></div>
+        <div class="num"><div class="mini">Pedido</div><div class="n">${esc(f.numero)}</div></div></div>
+      <div class="linha3">
+        <div class="box pos"><div class="lab">POSIÇÃO NA FILA</div><div class="big">${f.posicao ? f.posicao + 'º' : '—'}</div></div>
+        ${seloBox}
+        <div class="box"><div class="lab">PRAZO</div><div class="big2">${dfmt(f.prazo)}</div><div class="sub">${esc(diasTxt)}</div></div>
+      </div>
+      <div class="cli"><span><b>Cliente:</b> ${esc(f.cliente)}${f.fantasia ? ' – ' + esc(f.fantasia) : ''}</span><span><b>Vendedor:</b> ${esc(f.vendedor || '—')}</span>
+        <span><b>Cidade:</b> ${esc(f.cidade || '—')}${f.uf ? '/' + esc(f.uf) : ''}</span><span><b>Lançamento:</b> ${dfmt(f.lancado_em)}</span></div>
+      <div class="box info"><div class="lab">INFORMAÇÕES PARA A PRODUÇÃO</div>
+        <div class="g3"><div><div class="mini">Marca do copo</div><div class="v">${esc(i.marca || '—')}</div></div>
+          <div><div class="mini">Cor da impressão</div><div class="v">${esc(i.cor_impressao || '—')}</div></div>
+          <div><div class="mini">Arte</div><div class="v">${arteModo}</div></div></div>
+        ${i.observacao ? `<div class="obs"><b>Observação:</b> ${esc(i.observacao)}</div>` : ''}
+        ${!i.marca && !i.cor_impressao && !i.observacao && !i.arte_modo ? '<div class="obs" style="color:#555">O vendedor não preencheu as informações para a produção.</div>' : ''}
+      </div>
+      <table class="itens"><thead><tr><th>CÓD.</th><th>PRODUTO</th><th class="r">PEDIDO</th><th class="r">A PRODUZIR</th><th>TIPO</th></tr></thead><tbody>${linhas}</tbody>
+        <tfoot><tr><td colspan="3">${f.itens.length} item(ns) · ${prod.length} para produzir</td><td class="r b">${nfmt(totalProd)}</td><td></td></tr></tfoot></table>
+      ${f.obs_pedido ? `<div class="obsped"><b>Obs. do pedido:</b> ${esc(f.obs_pedido)}</div>` : ''}
+      <div class="anot"><div class="lab">ANOTAÇÕES DA PRODUÇÃO</div></div>
+      <div class="rod"><span>Pagamento não sai nesta ficha (fica com o comercial).</span><span>VERSO: arte do pedido →</span></div>
+    </section>`;
+    const imgSrc = `${API}/programacao/pedido/${f.id}/arte-imagem`;
+    const verso = `<section class="folha">
+      <div class="topo"><div><div class="emp">VERSO · ARTE DO PEDIDO</div><div class="mini">${esc(f.cliente)}${f.vendedor ? ' · vendedor ' + esc(f.vendedor) : ''}</div></div><div class="num"><div class="n">${esc(f.numero)}</div></div></div>
+      <div class="linha2"><div class="box grosso"><div class="lab">COR DA IMPRESSÃO</div><div class="big2">${esc(i.cor_impressao || '—')}</div></div>
+        <div class="box"><div class="lab">COPO</div><div class="big2">${esc(i.marca || (prod[0] ? prod[0].produto : '—'))}</div></div></div>
+      <div class="arte">${f.arte.imagem ? `<img src="${imgSrc}" alt="Arte do pedido">`
+        : f.arte.tem ? '<div class="semarte">ARTE EM PDF — abrir no sistema (não foi possível gerar a imagem)</div>'
+        : i.arte_modo === 'igual' ? `<div class="semarte">ARTE IGUAL AO PEDIDO ${esc(i.arte_ref || 'ANTERIOR')}</div>`
+        : i.arte_modo === 'sem' ? '<div class="semarte">SEM IMPRESSÃO</div>'
+        : '<div class="semarte">SEM ARTE ANEXADA<br><span>confirmar com o vendedor</span></div>'}</div>
+    </section>`;
+    return frente + verso;
+  }).join('');
+  const css = `@page{size:A4;margin:9mm}*{box-sizing:border-box}body{margin:0;font-family:Arial,Helvetica,sans-serif;color:#111}
+    .folha{height:277mm;display:flex;flex-direction:column;gap:10px;page-break-after:always;overflow:hidden}
+    .folha:last-child{page-break-after:auto}
+    .topo{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #111;padding-bottom:8px}
+    .emp{font-size:12px;font-weight:800;letter-spacing:3px}.tit{font-size:26px;font-weight:800}.mini{font-size:10.5px;color:#444}
+    .num{text-align:right}.num .n{font-size:36px;font-weight:800;line-height:1}
+    .linha3{display:flex;gap:10px}.linha2{display:flex;gap:10px}
+    .box{border:1.5px solid #111;border-radius:7px;padding:8px 12px;flex:1}.box.pos,.box.grosso,.box.info{border-width:3px}.box.info{flex:none}
+    .selo{flex:2;display:flex;flex-direction:column;justify-content:center}.selo.prio{background:#111;color:#fff}.selo.atrasado,.selo.urgente{border-width:3px}
+    .lab{font-size:10.5px;font-weight:800;letter-spacing:1px}.big{font-size:26px;font-weight:800;line-height:1.1}.big2{font-size:21px;font-weight:800}.sub{font-size:11px}
+    .cli{display:grid;grid-template-columns:1fr 1fr;gap:3px 18px;font-size:12px}
+    .g3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:4px}.v{font-size:16px;font-weight:800}.obs{font-size:13px;margin-top:6px;line-height:1.4}
+    table.itens{width:100%;border-collapse:collapse;font-size:12px;border:2px solid #111}
+    .itens th{background:#e5e5e5;text-align:left;padding:5px 7px;font-size:10.5px}.itens td{padding:5px 7px;border-top:1px solid #bbb;vertical-align:top}
+    .itens .r{text-align:right}.itens .b{font-weight:800}.itens .t{font-size:10px;font-weight:700}.itens .pn{font-weight:700}.itens .desc{font-weight:400;font-size:10.5px;color:#444}
+    .itens tr.rev td{color:#666}.itens tr.rev .pn{font-weight:400}.itens tfoot td{border-top:2px solid #111;font-weight:700;font-size:11px}
+    .obsped{font-size:11.5px}
+    .anot{flex:1;min-height:70px;border:1.5px dashed #111;border-radius:7px;padding:6px 10px}
+    .rod{display:flex;justify-content:space-between;font-size:10px;color:#444;border-top:1px solid #bbb;padding-top:5px}
+    .arte{flex:1;min-height:0;border:1px solid #bbb;border-radius:7px;display:flex;align-items:center;justify-content:center;overflow:hidden}
+    .arte img{max-width:100%;max-height:100%;object-fit:contain}
+    .semarte{font-size:26px;font-weight:800;text-align:center}.semarte span{font-size:15px;font-weight:400}
+    @media screen{body{background:#888}.folha{background:#fff;width:210mm;margin:12px auto;padding:9mm;height:297mm}}`;
+  w.document.open();
+  w.document.write(`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Fichas de produção</title><style>${css}</style></head><body>${paginas || '<p>Nenhuma ficha.</p>'}</body></html>`);
+  w.document.close();
+  const imprimir = () => { try { w.focus(); w.print(); } catch (e) {} };
+  const imgs = Array.from(w.document.images);
+  if (!imgs.length) { setTimeout(imprimir, 300); return; }
+  let falta = imgs.length;
+  const pronto = () => { if (--falta <= 0) setTimeout(imprimir, 200); };
+  imgs.forEach(im => { if (im.complete) pronto(); else { im.onload = pronto; im.onerror = pronto; } });
+  setTimeout(() => { if (falta > 0) { falta = 0; imprimir(); } }, 8000);
+}
+window.imprimirFichas = imprimirFichas;
