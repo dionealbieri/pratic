@@ -12,6 +12,7 @@ CHAVES_SO_GESTOR = {
     "vendedor_mostrar_desde", "prazo_amarelo_dias", "prazo_vermelho_dias",
     "cotacao_vencida_dias", "retirada_alerta_dias",
     "exigir_pedido_producao_perfis", "chat_p2p_permitido",
+    "programacao_liberada", "urgencia_dias", "prioridade_limite",
 }
 # Chaves ligadas a uma página específica: quem tem a página liberada no perfil pode alterar
 CHAVE_PAGINA = {
