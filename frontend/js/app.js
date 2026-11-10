@@ -13904,6 +13904,8 @@ async function imprimirFichas(ids) {
   const paginas = d.fichas.map(f => {
     const i = f.info || {};
     const prod = f.itens.filter(x => !x.revenda);
+    // tira a anotação técnica "Arquivo importado: ..." que o sistema grava no fim da observação
+    const obsPed = String(f.obs_pedido || '').replace(/\s*Arquivo importado:.*$/is, '').trim();
     const totalProd = prod.reduce((a, x) => a + (x.a_produzir || 0), 0);
     const diasTxt = f.dias == null ? '' : (f.dias < 0 ? `atrasado ${-f.dias} dia(s)` : f.dias === 0 ? 'vence hoje' : `faltam ${f.dias} dia(s)`);
     const seloBox = f.selo === 'prioridade'
@@ -13931,15 +13933,13 @@ async function imprimirFichas(ids) {
       </div>
       <table class="itens"><thead><tr><th>CÓD.</th><th>PRODUTO</th><th class="r">PEDIDO</th><th class="r">A PRODUZIR</th><th>TIPO</th></tr></thead><tbody>${linhas}</tbody>
         <tfoot><tr><td colspan="3">${f.itens.length} item(ns) · ${prod.length} para produzir</td><td class="r b">${nfmt(totalProd)}</td><td></td></tr></tfoot></table>
-      ${f.obs_pedido ? `<div class="obsped"><b>Obs. do pedido:</b> ${esc(f.obs_pedido)}</div>` : ''}
+      ${obsPed ? `<div class="obsped"><b>Obs. do pedido:</b> ${esc(obsPed)}</div>` : ''}
       <div class="anot"><div class="lab">ANOTAÇÕES DA PRODUÇÃO</div></div>
       <div class="rod"><span>Pagamento não sai nesta ficha (fica com o comercial).</span><span>VERSO: arte do pedido →</span></div>
     </section>`;
     const imgSrc = `${API}/programacao/pedido/${f.id}/arte-imagem`;
     const verso = `<section class="folha">
       <div class="topo"><div><div class="emp">VERSO · ARTE DO PEDIDO</div><div class="mini">${esc(f.cliente)}${f.vendedor ? ' · vendedor ' + esc(f.vendedor) : ''}</div></div><div class="num"><div class="n">${esc(f.numero)}</div></div></div>
-      <div class="linha2"><div class="box grosso"><div class="lab">COR DA IMPRESSÃO</div><div class="big2">${esc(i.cor_impressao || '—')}</div></div>
-        <div class="box"><div class="lab">COPO</div><div class="big2">${esc(i.marca || (prod[0] ? prod[0].produto : '—'))}</div></div></div>
       <div class="arte">${f.arte.imagem ? `<img src="${imgSrc}" alt="Arte do pedido">`
         : f.arte.tem ? '<div class="semarte">ARTE EM PDF — abrir no sistema (não foi possível gerar a imagem)</div>'
         : i.arte_modo === 'igual' ? `<div class="semarte">ARTE IGUAL AO PEDIDO ${esc(i.arte_ref || 'ANTERIOR')}</div>`
@@ -13959,16 +13959,16 @@ async function imprimirFichas(ids) {
     .selo{flex:2;display:flex;flex-direction:column;justify-content:center}.selo.prio{background:#111;color:#fff}.selo.atrasado,.selo.urgente{border-width:3px}
     .lab{font-size:10.5px;font-weight:800;letter-spacing:1px}.big{font-size:26px;font-weight:800;line-height:1.1}.big2{font-size:21px;font-weight:800}.sub{font-size:11px}
     .cli{display:grid;grid-template-columns:1fr 1fr;gap:3px 18px;font-size:12px}
-    .g3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:4px}.v{font-size:16px;font-weight:800}.obs{font-size:13px;margin-top:6px;line-height:1.4}
+    .g3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:4px}.v{font-size:16px;font-weight:800}.obs{font-size:15px;margin-top:6px;line-height:1.45}
     table.itens{width:100%;border-collapse:collapse;font-size:12px;border:2px solid #111}
     .itens th{background:#e5e5e5;text-align:left;padding:5px 7px;font-size:10.5px}.itens td{padding:5px 7px;border-top:1px solid #bbb;vertical-align:top}
     .itens .r{text-align:right}.itens .b{font-weight:800}.itens .t{font-size:10px;font-weight:700}.itens .pn{font-weight:700}.itens .desc{font-weight:400;font-size:10.5px;color:#444}
     .itens tr.rev td{color:#666}.itens tr.rev .pn{font-weight:400}.itens tfoot td{border-top:2px solid #111;font-weight:700;font-size:11px}
-    .obsped{font-size:11.5px}
+    .obsped{font-size:15px;line-height:1.45;border:1.5px solid #111;border-radius:7px;padding:8px 12px}
     .anot{flex:1;min-height:70px;border:1.5px dashed #111;border-radius:7px;padding:6px 10px}
     .rod{display:flex;justify-content:space-between;font-size:10px;color:#444;border-top:1px solid #bbb;padding-top:5px}
-    .arte{flex:1;min-height:0;border:1px solid #bbb;border-radius:7px;display:flex;align-items:center;justify-content:center;overflow:hidden}
-    .arte img{max-width:100%;max-height:100%;object-fit:contain}
+    .arte{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden}
+    .arte img{width:100%;height:100%;object-fit:contain;image-rendering:auto}
     .semarte{font-size:26px;font-weight:800;text-align:center}.semarte span{font-size:15px;font-weight:400}
     @media screen{body{background:#888}.folha{background:#fff;width:210mm;margin:12px auto;padding:9mm;height:297mm}}`;
   w.document.open();
