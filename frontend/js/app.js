@@ -4583,56 +4583,110 @@ async function deletarEPI(id) {
   loadEPILista();
 }
 
-async function openModalEntrega() {
-  const [cols,epis] = await Promise.all([api('/colaboradores/'),api('/epi/epis')]);
-  document.getElementById('entrega-colaborador').innerHTML=cols.map(c=>`<option value="${c.id}" data-tipo="${c.tipo}">${c.nome} (${formatTipoColaborador(c.tipo)})</option>`).join('');
-  document.getElementById('entrega-epi').innerHTML=epis.map(e=>`<option value="${e.id}">${e.nome} — ${e.categoria||'—'}</option>`).join('');
-  document.getElementById('entrega-data').value=new Date().toISOString().split('T')[0];
-  document.getElementById('entrega-validade').value='';
-  document.getElementById('entrega-responsavel').value='';
-  document.getElementById('entrega-obs').value='';
-  document.getElementById('entrega-sugestoes').style.display='none';
+// ── Registrar entrega: vários EPIs de uma vez; na entrega inicial os da função vêm marcados ──
+let _entregaEpis = [], _entregaFuncaoIds = new Set();
+async function openModalEntrega(preMarcar) {
+  const [cols, epis] = await Promise.all([api('/colaboradores/'), api('/epi/epis')]);
+  _entregaEpis = epis;
+  const selCol = document.getElementById('entrega-colaborador');
+  selCol.innerHTML = cols.map(c => `<option value="${c.id}" data-tipo="${c.tipo}" data-cargo="${_escHtml(c.cargo || '')}">${c.nome} (${formatTipoColaborador(c.tipo)}${c.cargo ? ' · ' + _escHtml(c.cargo) : ''})</option>`).join('');
+  const filtro = document.getElementById('epi-filtro-col');
+  if (filtro && filtro.value && cols.some(c => String(c.id) === filtro.value)) selCol.value = filtro.value;
+  document.getElementById('entrega-data').value = new Date().toISOString().split('T')[0];
+  document.getElementById('entrega-validade').value = '';
+  document.getElementById('entrega-responsavel').value = '';
+  document.getElementById('entrega-obs').value = '';
+  document.getElementById('entrega-motivo').value = 'Entrega inicial';
+  document.getElementById('entrega-epi-busca').value = '';
+  document.getElementById('entrega-sugestoes').style.display = 'none';
+  _entregaRender();
   openModal('modal-entrega-epi');
+  if (preMarcar) { _entregaLimpar(); preMarcar.forEach(id => { const ck = document.querySelector(`#entrega-epis-lista input[data-epi="${id}"]`); if (ck) ck.checked = true; }); _entregaContar(); await sugerirEPIs(false); }
+  else await sugerirEPIs(true);
+}
+function _entregaRender() {
+  const box = document.getElementById('entrega-epis-lista');
+  box.innerHTML = _entregaEpis.map(e => `
+    <label class="entrega-epi-row" data-nome="${_escHtml((e.nome + ' ' + (e.categoria || '')).toLowerCase())}" style="display:flex;align-items:center;gap:10px;padding:6px 2px;border-bottom:1px solid var(--border);cursor:pointer">
+      <input type="checkbox" data-epi="${e.id}" onchange="_entregaContar()" style="width:18px;height:18px;flex-shrink:0">
+      <span style="flex:1"><b>${_escHtml(e.nome)}</b> <span style="color:var(--muted);font-size:12px">${_escHtml(e.categoria || '')}${e.ca ? ' · CA ' + _escHtml(e.ca) : ''}</span>
+        <span class="entrega-tag-funcao" data-epi="${e.id}" style="display:none;font-size:11px;color:var(--accent);margin-left:4px">★ da função</span></span>
+      <span style="font-size:12px;color:var(--muted)">Qtd</span>
+      <input type="number" min="1" value="1" data-qtd="${e.id}" style="width:64px;height:32px" onclick="event.stopPropagation()">
+    </label>`).join('') || '<div style="padding:10px;color:var(--muted)">Nenhum EPI cadastrado.</div>';
+  _entregaContar();
+}
+function _entregaFiltrar() {
+  const t = document.getElementById('entrega-epi-busca').value.toLowerCase().trim();
+  document.querySelectorAll('#entrega-epis-lista .entrega-epi-row').forEach(r => { r.style.display = !t || r.dataset.nome.includes(t) ? 'flex' : 'none'; });
+}
+function _entregaContar() {
+  const n = document.querySelectorAll('#entrega-epis-lista input[data-epi]:checked').length;
+  document.getElementById('entrega-epis-contador').textContent = n ? `— ${n} marcado(s)` : '';
+}
+function _entregaLimpar() { document.querySelectorAll('#entrega-epis-lista input[data-epi]').forEach(c => c.checked = false); _entregaContar(); }
+function _entregaMarcarFuncao(avisar) {
+  if (!_entregaFuncaoIds.size) { if (avisar) showAlert('Nenhum EPI cadastrado para a função deste funcionário (veja "EPIs por Função")', 'danger'); return; }
+  _entregaFuncaoIds.forEach(id => { const ck = document.querySelector(`#entrega-epis-lista input[data-epi="${id}"]`); if (ck) ck.checked = true; });
+  _entregaContar();
+}
+function _entregaMotivoMudou() {
+  const m = document.getElementById('entrega-motivo').value;
+  if (m === 'Entrega inicial' || m === 'Novo colaborador') _entregaMarcarFuncao(false);
+}
+async function sugerirEPIs(autoMarcar) {
+  const sel = document.getElementById('entrega-colaborador').selectedOptions[0];
+  const tipo = sel?.getAttribute('data-tipo') || '';
+  const cargo = sel?.getAttribute('data-cargo') || '';
+  _entregaFuncaoIds = new Set();
+  document.querySelectorAll('.entrega-tag-funcao').forEach(t => t.style.display = 'none');
+  // EPIs por Função: procura pelo cargo do cadastro completo e, se não achar, pelo tipo
+  for (const f of [cargo, tipo].filter(Boolean)) {
+    try { (await api('/epi/epis-por-funcao/' + encodeURIComponent(f))).forEach(e => _entregaFuncaoIds.add(e.id)); } catch (e) {}
+    if (_entregaFuncaoIds.size) break;
+  }
+  _entregaFuncaoIds.forEach(id => { const t = document.querySelector(`.entrega-tag-funcao[data-epi="${id}"]`); if (t) t.style.display = ''; });
+  const m = document.getElementById('entrega-motivo').value;
+  if (autoMarcar !== false && (m === 'Entrega inicial' || m === 'Novo colaborador')) { _entregaLimpar(); _entregaMarcarFuncao(false); }
 }
 
-async function sugerirEPIs() {
-  const sel=document.getElementById('entrega-colaborador').selectedOptions[0];
-  const tipo=sel?.getAttribute('data-tipo')||'';
-  if(!tipo) return;
-  try {
-    const epis=await api('/epi/epis-por-funcao/'+encodeURIComponent(tipo));
-    if(epis.length){
-      document.getElementById('entrega-sugestoes').style.display='';
-      document.getElementById('entrega-sugestoes-lista').textContent=epis.map(e=>e.nome).join(', ');
-    } else document.getElementById('entrega-sugestoes').style.display='none';
-  } catch(e){}
-}
-
-async function salvarEntrega() {
-  const body={
-    colaborador_id:+document.getElementById('entrega-colaborador').value,
-    epi_id:+document.getElementById('entrega-epi').value,
-    data_entrega:document.getElementById('entrega-data').value,
-    data_validade:document.getElementById('entrega-validade').value,
-    motivo:document.getElementById('entrega-motivo').value,
-    responsavel:document.getElementById('entrega-responsavel').value,
-    observacao:document.getElementById('entrega-obs').value
+async function salvarEntrega(imprimir) {
+  const colId = +document.getElementById('entrega-colaborador').value;
+  const marcados = [...document.querySelectorAll('#entrega-epis-lista input[data-epi]:checked')];
+  const base = {
+    colaborador_id: colId,
+    data_entrega: document.getElementById('entrega-data').value,
+    data_validade: document.getElementById('entrega-validade').value,
+    motivo: document.getElementById('entrega-motivo').value,
+    responsavel: document.getElementById('entrega-responsavel').value,
+    observacao: document.getElementById('entrega-obs').value
   };
-  if(!body.data_validade){showAlert('Informe a data de validade','danger');return;}
+  if (!marcados.length) { showAlert('Marque pelo menos um EPI', 'danger'); return; }
+  if (!base.data_validade) { showAlert('Informe a data de validade', 'danger'); return; }
+  let ok = 0;
   try {
-    await api('/epi/entregas','POST',body);
-    showAlert('Entrega registrada!');
-    closeModal('modal-entrega-epi');
-    loadEntregas();
-    checkAlertasEPI();
-  } catch(e){showAlert(e.message,'danger');}
+    for (const ck of marcados) {
+      const id = +ck.dataset.epi;
+      const q = parseInt((document.querySelector(`#entrega-epis-lista input[data-qtd="${id}"]`) || {}).value, 10);
+      await api('/epi/entregas', 'POST', { ...base, epi_id: id, quantidade: q > 0 ? q : 1 });
+      ok++;
+    }
+  } catch (e) { showAlert(`${ok} EPI(s) registrados; erro no próximo: ${e.message}`, 'danger'); loadEntregas(); return; }
+  showAlert(ok === 1 ? 'Entrega registrada!' : `${ok} EPIs registrados!`);
+  closeModal('modal-entrega-epi');
+  loadEntregas();
+  checkAlertasEPI();
+  if (imprimir) gerarFichaEPI({ colId, incluirEntregas: true });
 }
 
 async function renovarEPI(id,colId,epiId) {
   await openModalEntrega();
   document.getElementById('entrega-colaborador').value=colId;
-  document.getElementById('entrega-epi').value=epiId;
   document.getElementById('entrega-motivo').value='Troca periódica';
+  await sugerirEPIs(false);
+  _entregaLimpar();
+  const ck = document.querySelector(`#entrega-epis-lista input[data-epi="${epiId}"]`); if (ck) ck.checked = true;
+  _entregaContar();
 }
 
 async function deletarEntrega(id) {
@@ -4642,7 +4696,7 @@ async function deletarEntrega(id) {
   loadEntregas();
 }
 
-async function gerarComprovante(colaboradorId = null) {
+async function _gerarComprovanteAntigo(colaboradorId = null) {
   let colId = colaboradorId || document.getElementById('epi-filtro-col')?.value || '';
 
   if (!colId) {
@@ -14067,57 +14121,88 @@ async function imprimirFichaEPI() {
   try { localStorage.setItem('epi_ficha_empresa', empresa); } catch (e) {}
   let linhasBranco = parseInt(document.getElementById('epi-ficha-linhas').value, 10);
   if (isNaN(linhasBranco) || linhasBranco < 5) linhasBranco = 18;
-  linhasBranco = Math.min(linhasBranco, 60);
-  let nome = '', funcao = '', entregas = [], dataFicha = '';
+  const opt = { empresa, linhasBranco: Math.min(linhasBranco, 60) };
   if (modo === 'preenchida') {
-    const colId = document.getElementById('epi-ficha-col').value;
-    if (!colId) { showAlert('Escolha o funcionário', 'danger'); return; }
-    const c = (_epiFichaCols || []).find(x => String(x.id) === String(colId)) || {};
-    nome = c.nome_completo || c.nome || '';
-    funcao = document.getElementById('epi-ficha-funcao').value.trim();
-    if (document.getElementById('epi-ficha-entregas').checked) {
-      try { entregas = await api('/epi/entregas?colaborador_id=' + colId); } catch (e) { showAlert(e.message, 'danger'); return; }
-      entregas = (entregas || []).filter(e => e.status !== 'extraviado' || true)
-        .sort((a, b) => String(a.data_entrega || '').localeCompare(String(b.data_entrega || '')));
-    }
+    opt.colId = document.getElementById('epi-ficha-col').value;
+    if (!opt.colId) { showAlert('Escolha o funcionário', 'danger'); return; }
+    opt.funcao = document.getElementById('epi-ficha-funcao').value.trim();
+    opt.incluirEntregas = document.getElementById('epi-ficha-entregas').checked;
+  }
+  closeModal('modal-epi-ficha');
+  gerarFichaEPI(opt);
+}
+
+// Comprovante = a ficha individual preenchida do funcionário (modelo da empresa)
+async function gerarComprovante(colaboradorId = null) {
+  let colId = colaboradorId || document.getElementById('epi-filtro-col')?.value || '';
+  if (!colId) {
+    const ids = [...new Set((EPI_ENTREGAS_ATUAIS || []).map(r => String(r.colaborador_id)).filter(Boolean))];
+    if (ids.length === 1) colId = ids[0];
+  }
+  if (!colId) { showAlert('Selecione um funcionário no filtro ou clique no botão de comprovante da linha do funcionário.', 'danger'); return; }
+  gerarFichaEPI({ colId, incluirEntregas: true });
+}
+
+async function gerarFichaEPI(opt) {
+  opt = opt || {};
+  let empresa = opt.empresa;
+  if (!empresa) { empresa = EPI_FICHA_EMPRESA_PADRAO; try { empresa = localStorage.getItem('epi_ficha_empresa') || empresa; } catch (e) {} }
+  const linhasBranco = opt.linhasBranco || (opt.colId ? 10 : 18);
+  const w = window.open('', '_blank');
+  if (!w) { showAlert('O navegador bloqueou a janela de impressão. Libere pop-ups para este site.', 'danger'); return; }
+  w.document.write('<p style="font-family:Arial;padding:30px">Montando a ficha...</p>');
+  let nome = '', funcao = opt.funcao || '', entregas = [], dataFicha = '';
+  if (opt.colId) {
+    try {
+      const c = await api('/colaboradores/' + opt.colId);
+      nome = c.nome_completo || c.nome || '';
+      if (!funcao) funcao = String(c.cargo || c.tipo || '').toUpperCase();
+      if (opt.incluirEntregas !== false) {
+        entregas = (await api('/epi/entregas?colaborador_id=' + opt.colId)) || [];
+        entregas.sort((a, b) => String(a.data_entrega || '').localeCompare(String(b.data_entrega || '')) || (a.id - b.id));
+      }
+    } catch (e) { w.document.body.innerHTML = '<p style="font-family:Arial;padding:30px;color:#b00">' + _escHtml(e.message) + '</p>'; return; }
     dataFicha = new Date().toLocaleDateString('pt-BR');
   }
   const esc = v => _escHtml(v == null ? '' : String(v));
   const df = s => s ? String(s).slice(0, 10).split('-').reverse().join('/') : '';
-  const linhas = entregas.map(e => `<tr><td class="tl">${esc(e.epi_nome)}</td><td>${esc(e.epi_ca || '')}</td><td>1</td><td>${df(e.data_entrega)}</td><td>${e.status === 'devolvido' ? 'devolvido' : ''}</td><td></td></tr>`);
+  const linhas = entregas.map(e => `<tr><td class="tl">${esc(e.epi_nome)}</td><td>${esc(e.epi_ca || '')}</td><td>${esc(e.quantidade || 1)}</td><td>${df(e.data_entrega)}</td><td>${df(e.data_devolucao)}</td><td></td></tr>`);
   for (let k = 0; k < linhasBranco; k++) linhas.push('<tr><td class="tl">&nbsp;</td><td></td><td></td><td></td><td></td><td></td></tr>');
   const declaracao = 'Recebi o(s) Equipamento(s) de Proteção Individual abaixo discriminados para serem usados no exercício de minhas funções, de acordo com a portaria nº 3214 - NR-06, tendo sido devidamente treinado para usar os mesmos. Estou ciente de que o uso incorreto ou não uso, implicará em insubordinação sujeita às sanções disciplinares conforme normas estabelecidas na CLT. A perda, destruição precoce, por mau uso ou falta de cuidado do EPI, fica a Empresa com o direito a efetuar o desconto em seu salário na forma estabelecida do art. 462 da CLT. Minhas assinaturas apostas ou rubrica no local indicado nesta ficha conforme minha concordância.';
+  // Layout igual à ficha de papel: empresa / título / Nome | Função / declaração em toda a largura /
+  // Data | Assinatura do colaborador / tabela
   const css = `@page{size:A4 landscape;margin:8mm}*{box-sizing:border-box}body{margin:0;font-family:Arial,Helvetica,sans-serif;color:#111}
     .cab{border:1.5px solid #111;border-bottom:none}
-    .emp{text-align:center;font-size:26px;padding:8px 6px 4px;letter-spacing:.5px}
-    .tit{text-align:center;font-size:13px;font-weight:700;padding:2px 6px 8px;letter-spacing:.3px}
-    .lin{display:grid;grid-template-columns:62% 38%;border-top:1.5px solid #111}
-    .lin>div{padding:5px 8px;font-size:12px;min-height:26px}.lin>div+div{border-left:1.5px solid #111}
+    .topo{height:14px;border-bottom:1px solid #111}
+    .emp{text-align:center;font-size:27px;padding:8px 6px 6px;border-bottom:1px solid #111}
+    .tit{text-align:center;font-size:12.5px;font-weight:700;padding:5px 6px;letter-spacing:.3px;border-bottom:1.5px solid #111}
+    .row{display:grid;grid-template-columns:64% 36%}
+    .row>div{padding:4px 8px;font-size:12px}.row>div+div{border-left:1.5px solid #111}
     .lab{font-weight:700}.val{font-size:14px;margin-left:6px}
-    .dec{font-size:10.5px;line-height:1.35;text-align:justify;text-indent:28px}
-    .ass{display:flex;flex-direction:column;justify-content:flex-end;align-items:center;font-size:12px}
-    .ass .traco{width:85%;border-top:1px solid #111;margin-top:34px;padding-top:3px;text-align:center}
+    .dec{font-size:10.5px;line-height:1.4;text-align:justify;text-indent:40px;padding:6px 8px;border-top:1.5px solid #111}
+    .row.dt{border-top:1.5px solid #111}.row.dt>div{min-height:34px;display:flex;align-items:flex-end}
+    .ass{justify-content:center}.ass .traco{width:90%;border-top:1px solid #111;padding-top:2px;text-align:center;font-size:12px}
     table{width:100%;border-collapse:collapse;border:1.5px solid #111;table-layout:fixed}
-    th{font-size:11.5px;border:1px solid #111;padding:4px;background:#fff}
-    td{border:1px solid #111;height:24px;font-size:11.5px;text-align:center;padding:2px 5px}
+    th{font-size:11.5px;border:1px solid #111;padding:3px 4px;background:#fff}
+    td{border:1px solid #111;height:23px;font-size:11.5px;text-align:center;padding:2px 5px}
     td.tl{text-align:left}
     thead{display:table-header-group}tr{page-break-inside:avoid}
     @media screen{body{background:#888}.folha{background:#fff;width:297mm;min-height:210mm;margin:12px auto;padding:8mm}}`;
   const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Ficha de EPI${nome ? ' - ' + esc(nome) : ''}</title><style>${css}</style></head><body><div class="folha">
-    <div class="cab"><div class="emp">${esc(empresa)}</div><div class="tit">FICHA INDIVIDUAL DE CONTROLE DE FORNECIMENTO DE EPI´S</div>
-      <div class="lin"><div><span class="lab">NOME:</span><span class="val">${esc(nome)}</span></div><div><span class="lab">FUNÇÃO:</span><span class="val">${esc(funcao)}</span></div></div>
-      <div class="lin"><div><div class="dec">${declaracao}</div><div style="margin-top:8px"><span class="lab">Data:</span><span class="val">${dataFicha || '______ / ______ / __________'}</span></div></div>
+    <div class="cab">
+      <div class="emp">${esc(empresa)}</div>
+      <div class="tit">FICHA INDIVIDUAL DE CONTROLE DE FORNECIMENTO DE EPI´S</div>
+      <div class="row"><div><span class="lab">NOME:</span><span class="val">${esc(nome)}</span></div><div><span class="lab">FUNÇÃO:</span><span class="val">${esc(funcao)}</span></div></div>
+      <div class="dec">${declaracao}</div>
+      <div class="row dt"><div><span class="lab">Data:</span><span class="val">${dataFicha || '______ / ______ / __________'}</span></div>
         <div class="ass"><div class="traco">Assinatura do Colaborador</div></div></div>
     </div>
     <table>
-      <colgroup><col style="width:34%"><col style="width:9%"><col style="width:7%"><col style="width:11%"><col style="width:11%"><col style="width:28%"></colgroup>
+      <colgroup><col style="width:33%"><col style="width:9%"><col style="width:7%"><col style="width:11%"><col style="width:11%"><col style="width:29%"></colgroup>
       <thead><tr><th rowspan="2">TIPO DE EPI</th><th rowspan="2">CA</th><th rowspan="2">QUANT.</th><th colspan="2">DATA</th><th rowspan="2">ASSINATURA</th></tr>
         <tr><th>ENTREGA</th><th>DEVOLUÇÃO</th></tr></thead>
       <tbody>${linhas.join('')}</tbody>
     </table></div></body></html>`;
-  const w = window.open('', '_blank');
-  if (!w) { showAlert('O navegador bloqueou a janela de impressão. Libere pop-ups para este site.', 'danger'); return; }
   w.document.open(); w.document.write(html); w.document.close();
-  closeModal('modal-epi-ficha');
   setTimeout(() => { try { w.focus(); w.print(); } catch (e) {} }, 300);
 }
