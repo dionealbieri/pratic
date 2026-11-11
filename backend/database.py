@@ -1533,6 +1533,8 @@ def init_db():
     _corrigir_revenda_marcada_entregue(conn)
     _migrar_arquivo_original(conn)
     _migrar_programacao(conn)
+    _migrar_epi_ca(conn)
+    _migrar_cadastro_colaborador(conn)
     conn.commit()
     conn.close()
 
@@ -2115,4 +2117,24 @@ def _migrar_programacao(conn):
         ("prioridade_limite", "3", "Máximo de pedidos com prioridade aprovada ao mesmo tempo"),
     ):
         conn.execute("INSERT OR IGNORE INTO configuracoes (chave, valor, descricao) VALUES (?, ?, ?)", (chave, valor, desc))
+    conn.commit()
+
+
+def _migrar_epi_ca(conn):
+    """Nº do CA (Certificado de Aprovação) do EPI, para a ficha de controle de EPI."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(epis)").fetchall()]
+    if "ca" not in cols:
+        conn.execute("ALTER TABLE epis ADD COLUMN ca TEXT")
+    conn.commit()
+
+
+def _migrar_cadastro_colaborador(conn):
+    """Cadastro completo do funcionário (todos os campos opcionais). O `nome` atual
+    continua sendo o nome curto da produção; o nome do documento fica em nome_completo."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(colaboradores)").fetchall()]
+    for c in ("nome_completo", "cpf", "rg", "data_nascimento", "data_admissao", "cargo", "setor",
+              "telefone", "email", "cep", "logradouro", "numero", "bairro", "cidade", "uf",
+              "pis", "ctps", "contato_emergencia", "observacoes"):
+        if c not in cols:
+            conn.execute(f"ALTER TABLE colaboradores ADD COLUMN {c} TEXT")
     conn.commit()
