@@ -5,11 +5,58 @@ from database import get_conn
 
 router = APIRouter()
 
+# Cadastro completo do funcionário: tudo opcional. O campo `nome` continua sendo o
+# nome curto usado na produção/premiação (não muda); o nome do documento vai em
+# `nome_completo`.
+CAMPOS_CADASTRO = (
+    "nome_completo", "cpf", "rg", "data_nascimento", "data_admissao", "cargo", "setor",
+    "telefone", "email", "cep", "logradouro", "numero", "bairro", "cidade", "uf",
+    "pis", "ctps", "contato_emergencia", "observacoes",
+)
+# Dados pessoais só saem na consulta de um colaborador (GET /{id}), não nas listas
+CAMPOS_PRIVADOS = ("cpf", "rg", "data_nascimento", "pis", "ctps", "cep", "logradouro",
+                   "numero", "bairro", "contato_emergencia", "observacoes", "email", "telefone")
+
+
 class ColaboradorIn(BaseModel):
     nome: str
     tipo: str
     maquina_id: Optional[int] = None
     ativo: Optional[int] = 1
+    nome_completo: Optional[str] = None
+    cpf: Optional[str] = None
+    rg: Optional[str] = None
+    data_nascimento: Optional[str] = None
+    data_admissao: Optional[str] = None
+    cargo: Optional[str] = None
+    setor: Optional[str] = None
+    telefone: Optional[str] = None
+    email: Optional[str] = None
+    cep: Optional[str] = None
+    logradouro: Optional[str] = None
+    numero: Optional[str] = None
+    bairro: Optional[str] = None
+    cidade: Optional[str] = None
+    uf: Optional[str] = None
+    pis: Optional[str] = None
+    ctps: Optional[str] = None
+    contato_emergencia: Optional[str] = None
+    observacoes: Optional[str] = None
+
+
+def _campos_enviados(col) -> set:
+    return set(getattr(col, "model_fields_set", None) or getattr(col, "__fields_set__", set()))
+
+
+def _limpo(v):
+    v = (v or "").strip() if isinstance(v, str) else v
+    return v or None
+
+
+def _sem_privados(d: dict) -> dict:
+    for k in CAMPOS_PRIVADOS:
+        d.pop(k, None)
+    return d
 
 class TipoColaboradorIn(BaseModel):
     nome: str
@@ -149,7 +196,7 @@ def listar(tipo: Optional[str] = None, contexto: Optional[str] = None):
             ORDER BY c.nome
         """).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    return [_sem_privados(dict(r)) for r in rows]
 
 @router.get("/{id}")
 def buscar(id: int):
@@ -174,8 +221,12 @@ def criar(col: ColaboradorIn):
     c = conn.cursor()
     c.execute("INSERT INTO colaboradores (nome, tipo, maquina_id, ativo) VALUES (?, ?, ?, ?)",
               (col.nome.strip(), tipo, col.maquina_id, col.ativo))
-    conn.commit()
     id = c.lastrowid
+    extras = [k for k in CAMPOS_CADASTRO if k in _campos_enviados(col)]
+    if extras:
+        c.execute(f"UPDATE colaboradores SET {', '.join(k + '=?' for k in extras)} WHERE id=?",
+                  [_limpo(getattr(col, k)) for k in extras] + [id])
+    conn.commit()
     conn.close()
     return {"id": id, "mensagem": "Colaborador cadastrado com sucesso"}
 
@@ -187,6 +238,12 @@ def atualizar(id: int, col: ColaboradorIn):
     conn.execute("INSERT OR IGNORE INTO colaborador_tipos (nome, ativo) VALUES (?, 1)", (tipo,))
     conn.execute("UPDATE colaboradores SET nome=?, tipo=?, maquina_id=?, ativo=? WHERE id=?",
                  (col.nome.strip(), tipo, col.maquina_id, col.ativo, id))
+    # Só grava os campos do cadastro completo que vieram na chamada: outras telas que
+    # salvam só nome/tipo/máquina não apagam o cadastro.
+    extras = [k for k in CAMPOS_CADASTRO if k in _campos_enviados(col)]
+    if extras:
+        conn.execute(f"UPDATE colaboradores SET {', '.join(k + '=?' for k in extras)} WHERE id=?",
+                     [_limpo(getattr(col, k)) for k in extras] + [id])
     conn.commit()
     conn.close()
     return {"mensagem": "Colaborador atualizado"}

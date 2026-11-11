@@ -12,6 +12,7 @@ class EPIIn(BaseModel):
     categoria: Optional[str] = None
     descricao: Optional[str] = None
     ativo: Optional[int] = 1
+    ca: Optional[str] = None   # Certificado de Aprovação (sai na ficha de EPI)
 
 class FuncaoEPIIn(BaseModel):
     funcao: str
@@ -49,8 +50,8 @@ def listar_epis(ativo: Optional[int] = 1):
 def criar_epi(e: EPIIn):
     conn = get_conn()
     cur = conn.cursor()
-    cur.execute("INSERT INTO epis (nome, categoria, descricao, ativo) VALUES (?,?,?,?)",
-                (e.nome, e.categoria, e.descricao, e.ativo))
+    cur.execute("INSERT INTO epis (nome, categoria, descricao, ativo, ca) VALUES (?,?,?,?,?)",
+                (e.nome, e.categoria, e.descricao, e.ativo, (e.ca or "").strip() or None))
     conn.commit()
     id = cur.lastrowid
     conn.close()
@@ -59,8 +60,8 @@ def criar_epi(e: EPIIn):
 @router.put("/epis/{id}")
 def atualizar_epi(id: int, e: EPIIn):
     conn = get_conn()
-    conn.execute("UPDATE epis SET nome=?, categoria=?, descricao=?, ativo=? WHERE id=?",
-                 (e.nome, e.categoria, e.descricao, e.ativo, id))
+    conn.execute("UPDATE epis SET nome=?, categoria=?, descricao=?, ativo=?, ca=? WHERE id=?",
+                 (e.nome, e.categoria, e.descricao, e.ativo, (e.ca or "").strip() or None, id))
     conn.commit()
     conn.close()
     return {"mensagem": "EPI atualizado"}
@@ -122,7 +123,7 @@ def listar_entregas(colaborador_id: Optional[int] = None, status: Optional[str] 
     hoje = datetime.date.today().isoformat()
     query = """
         SELECT ee.*, c.nome as colaborador_nome, c.tipo as colaborador_tipo,
-               e.nome as epi_nome, e.categoria as epi_categoria,
+               e.nome as epi_nome, e.categoria as epi_categoria, e.ca as epi_ca,
                CASE
                  WHEN ee.status = 'devolvido' THEN 'devolvido'
                  WHEN ee.status = 'extraviado' THEN 'extraviado'
