@@ -1198,7 +1198,7 @@
           </div>
           <div class="flex gap-2">
             <button class="btn btn-secondary" data-cor="azul" onclick="abrirFichaEPI()">📄 Ficha de EPI</button>
-            <button class="btn btn-secondary" onclick="gerarComprovante()">🖨️ Comprovante</button>
+            <button class="btn btn-secondary" title="Ficha de EPI preenchida do funcionário selecionado" onclick="gerarComprovante()">🖨️ Comprovante</button>
             <button class="btn btn-primary" onclick="openModalEntrega()" data-perm-criar="epi">+ Registrar Entrega</button>
           </div>
         </div>
@@ -3010,7 +3010,7 @@
 
 <!-- MODAL ENTREGA EPI -->
 <div class="modal-overlay" id="modal-entrega-epi">
-  <div class="modal" style="max-width:560px">
+  <div class="modal" style="max-width:720px;width:96vw">
     <div class="modal-title">Registrar Entrega de EPI</div>
     <div class="form-grid">
       <div class="form-group" style="grid-column:1/-1">
@@ -3018,20 +3018,28 @@
         <select id="entrega-colaborador" onchange="sugerirEPIs()"></select>
       </div>
       <div class="form-group" style="grid-column:1/-1">
-        <label>EPI</label>
-        <select id="entrega-epi"></select>
+        <div class="flex items-center" style="justify-content:space-between;gap:8px;flex-wrap:wrap">
+          <label style="margin:0">EPIs entregues <span id="entrega-epis-contador" style="font-weight:400;color:var(--muted);font-size:12px"></span></label>
+          <div class="flex gap-2">
+            <button type="button" class="btn btn-sm btn-secondary" data-cor="azul" onclick="_entregaMarcarFuncao(true)">★ Marcar os da função</button>
+            <button type="button" class="btn btn-sm btn-secondary" data-cor="cinza" onclick="_entregaLimpar()">Limpar</button>
+          </div>
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin:4px 0 6px">Na entrega inicial os EPIs da função já vêm marcados. Marque outros se precisar.</div>
+        <input type="text" id="entrega-epi-busca" placeholder="🔍 Buscar EPI..." oninput="_entregaFiltrar()" style="margin-bottom:6px">
+        <div id="entrega-epis-lista" style="max-height:260px;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:4px 8px"></div>
       </div>
       <div class="form-group">
         <label>Data de Entrega</label>
         <input type="date" id="entrega-data">
       </div>
       <div class="form-group">
-        <label>Validade / Próxima Troca</label>
+        <label>Validade / Próxima troca <span style="font-weight:400;color:var(--muted);font-size:11px">(vale para todos)</span></label>
         <input type="date" id="entrega-validade">
       </div>
       <div class="form-group">
         <label>Motivo</label>
-        <select id="entrega-motivo">
+        <select id="entrega-motivo" onchange="_entregaMotivoMudou()">
           <option value="Entrega inicial">Entrega inicial</option>
           <option value="Troca periódica">Troca periódica</option>
           <option value="Substituição por dano">Substituição por dano</option>
@@ -3054,6 +3062,7 @@
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal('modal-entrega-epi')">Cancelar</button>
+      <button class="btn btn-secondary" data-cor="azul" onclick="salvarEntrega(true)">Registrar e imprimir ficha</button>
       <button class="btn btn-primary" onclick="salvarEntrega()">Registrar</button>
     </div>
   </div>
@@ -3381,7 +3390,7 @@
 
 <script src="js/cotacao.js?v=20261109-tipovolume"></script>
 <script src="js/estoque-cliente.js?v=20261030-estcli"></script>
-<script src="js/app.js?v=20261111-col1"></script>
+<script src="js/app.js?v=20261111-epi2"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');
