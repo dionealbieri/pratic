@@ -3337,9 +3337,47 @@ async function loadColaboradores() {
   `).join('');
 }
 
+const COL_CAMPOS_CADASTRO = {
+  nome_completo: 'col-nome-completo', cpf: 'col-cpf', rg: 'col-rg', data_nascimento: 'col-data-nascimento',
+  data_admissao: 'col-data-admissao', cargo: 'col-cargo', setor: 'col-setor', telefone: 'col-telefone',
+  email: 'col-email', cep: 'col-cep', logradouro: 'col-logradouro', numero: 'col-numero', bairro: 'col-bairro',
+  cidade: 'col-cidade', uf: 'col-uf', pis: 'col-pis', ctps: 'col-ctps', contato_emergencia: 'col-contato-emergencia',
+  observacoes: 'col-observacoes',
+};
+function _colPreencherCadastro(c) {
+  Object.entries(COL_CAMPOS_CADASTRO).forEach(([k, id]) => { const el = document.getElementById(id); if (el) el.value = (c && c[k]) || ''; });
+  const det = document.getElementById('col-cadastro-completo');
+  if (det) det.open = !!(c && Object.keys(COL_CAMPOS_CADASTRO).some(k => c[k]));
+}
+// O nome da produção não muda por engano: ao editar fica travado, com botão para destravar
+function _colTravarNome(travar) {
+  const el = document.getElementById('col-nome'), bt = document.getElementById('col-nome-destravar');
+  el.readOnly = travar; el.style.opacity = travar ? '.75' : '';
+  bt.style.display = travar ? '' : 'none';
+}
+function destravarNomeColaborador() {
+  if (!confirm('Este nome aparece em Produção Diária, Premiação e relatórios.\n\nAlterar mesmo assim? (para o nome do documento, use "Nome completo" no cadastro completo)')) return;
+  _colTravarNome(false);
+  document.getElementById('col-nome').focus();
+}
+async function buscarCepColaborador() {
+  const cep = (document.getElementById('col-cep').value || '').replace(/\D/g, '');
+  if (cep.length !== 8) return;
+  try {
+    const r = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+    const d = await r.json();
+    if (d.erro) return;
+    const set = (id, v) => { const el = document.getElementById(id); if (el && !el.value) el.value = v || ''; };
+    set('col-logradouro', d.logradouro); set('col-bairro', d.bairro); set('col-cidade', d.localidade); set('col-uf', d.uf);
+  } catch (e) { /* sem internet: preenche à mão */ }
+}
+
 async function openModalColaborador() {
   document.getElementById('col-id').value = '';
   document.getElementById('col-nome').value = '';
+  document.getElementById('modal-colaborador-title').textContent = 'Cadastrar Colaborador';
+  _colTravarNome(false);
+  _colPreencherCadastro(null);
   await carregarTiposColaborador('operador');
   const mqs = await api('/maquinas/');
   document.getElementById('col-maquina').innerHTML =
@@ -3358,6 +3396,9 @@ async function editColaborador(id) {
   const mqs = await api('/maquinas/');
   document.getElementById('col-id').value = c.id;
   document.getElementById('col-nome').value = c.nome;
+  document.getElementById('modal-colaborador-title').textContent = 'Editar Colaborador';
+  _colTravarNome(true);
+  _colPreencherCadastro(c);
   await carregarTiposColaborador(c.tipo);
   document.getElementById('col-maquina').innerHTML =
     mqs.filter(m => m.ativa).map(m =>
@@ -3383,6 +3424,8 @@ async function salvarColaborador() {
     maquina_id: tipo === 'operador' && maquinaVal ? +maquinaVal : null,
     ativo: 1
   };
+  Object.entries(COL_CAMPOS_CADASTRO).forEach(([k, idc]) => { const el = document.getElementById(idc); if (el) body[k] = el.value.trim(); });
+  if (body.uf) body.uf = body.uf.toUpperCase().slice(0, 2);
   const btn = document.getElementById('btn-salvar-colaborador');
   if (btn) btn.disabled = true;
   try {
@@ -4436,10 +4479,11 @@ async function loadEntregas() {
 
 async function loadEPILista() {
   const rows = await api('/epi/epis');
+  window._epiListaCache = rows;
   const tbody = document.getElementById('epi-lista-tbody');
   if(!tbody) return;
   tbody.innerHTML = rows.map(r=>`<tr>
-    <td><strong>${r.nome}</strong></td>
+    <td><strong>${r.nome}</strong>${r.ca ? `<div style="font-size:11px;color:var(--muted)">CA ${_escHtml(r.ca)}</div>` : ''}</td>
     <td><span class="pill pill-info">${r.categoria||'—'}</span></td>
     <td style="color:var(--muted)">${r.descricao||'—'}</td>
     <td><span class="pill ${r.ativo?'pill-success':'pill-danger'}">${r.ativo?'Ativo':'Inativo'}</span></td>
@@ -4504,6 +4548,7 @@ function openModalEPI() {
   document.getElementById('epi-id').value='';
   document.getElementById('epi-nome').value='';
   document.getElementById('epi-descricao').value='';
+  document.getElementById('epi-ca').value='';
   document.getElementById('modal-epi-title').textContent='Cadastrar EPI';
   openModal('modal-epi');
 }
@@ -4513,13 +4558,15 @@ function editEPI(id,nome,cat,desc) {
   document.getElementById('epi-nome').value=nome;
   document.getElementById('epi-categoria').value=cat;
   document.getElementById('epi-descricao').value=desc;
+  const ep = (window._epiListaCache || []).find(x => x.id === id);
+  document.getElementById('epi-ca').value = (ep && ep.ca) || '';
   document.getElementById('modal-epi-title').textContent='Editar EPI';
   openModal('modal-epi');
 }
 
 async function salvarEPI() {
   const id=document.getElementById('epi-id').value;
-  const body={nome:document.getElementById('epi-nome').value,categoria:document.getElementById('epi-categoria').value,descricao:document.getElementById('epi-descricao').value,ativo:1};
+  const body={nome:document.getElementById('epi-nome').value,categoria:document.getElementById('epi-categoria').value,descricao:document.getElementById('epi-descricao').value,ca:document.getElementById('epi-ca').value,ativo:1};
   try {
     if(id) await api('/epi/epis/'+id,'PUT',body);
     else await api('/epi/epis','POST',body);
@@ -13987,3 +14034,90 @@ async function imprimirFichas(ids) {
   setTimeout(() => { if (falta > 0) { falta = 0; imprimir(); } }, 8000);
 }
 window.imprimirFichas = imprimirFichas;
+
+
+// ═══ Ficha individual de controle de fornecimento de EPI (modelo padrão da empresa) ═══
+const EPI_FICHA_EMPRESA_PADRAO = 'PEDRO M BUENO E ROSSINI LTDA';
+let _epiFichaCols = [];
+function _epiFichaModo() {
+  const m = (document.querySelector('input[name="epi-ficha-modo"]:checked') || {}).value;
+  document.getElementById('epi-ficha-preenchida').style.display = m === 'preenchida' ? '' : 'none';
+}
+async function abrirFichaEPI() {
+  try { _epiFichaCols = await api('/colaboradores/'); } catch (e) { _epiFichaCols = []; }
+  const sel = document.getElementById('epi-ficha-col');
+  const ativos = (_epiFichaCols || []).filter(c => c.ativo !== 0).sort((a, b) => String(a.nome).localeCompare(String(b.nome), 'pt-BR'));
+  sel.innerHTML = ativos.map(c => `<option value="${c.id}">${_escHtml(c.nome)}${c.nome_completo && c.nome_completo !== c.nome ? ' — ' + _escHtml(c.nome_completo) : ''}</option>`).join('');
+  sel.onchange = () => { const c = ativos.find(x => String(x.id) === sel.value); document.getElementById('epi-ficha-funcao').value = c ? String(c.cargo || c.tipo || '').toUpperCase() : ''; };
+  const filtro = document.getElementById('epi-filtro-col');
+  if (filtro && filtro.value) {
+    sel.value = filtro.value;
+    document.querySelector('input[name="epi-ficha-modo"][value="preenchida"]').checked = true;
+  }
+  sel.onchange();
+  let emp = EPI_FICHA_EMPRESA_PADRAO;
+  try { emp = localStorage.getItem('epi_ficha_empresa') || emp; } catch (e) {}
+  document.getElementById('epi-ficha-empresa').value = emp;
+  _epiFichaModo();
+  openModal('modal-epi-ficha');
+}
+async function imprimirFichaEPI() {
+  const modo = (document.querySelector('input[name="epi-ficha-modo"]:checked') || {}).value || 'branco';
+  const empresa = document.getElementById('epi-ficha-empresa').value.trim() || EPI_FICHA_EMPRESA_PADRAO;
+  try { localStorage.setItem('epi_ficha_empresa', empresa); } catch (e) {}
+  let linhasBranco = parseInt(document.getElementById('epi-ficha-linhas').value, 10);
+  if (isNaN(linhasBranco) || linhasBranco < 5) linhasBranco = 18;
+  linhasBranco = Math.min(linhasBranco, 60);
+  let nome = '', funcao = '', entregas = [], dataFicha = '';
+  if (modo === 'preenchida') {
+    const colId = document.getElementById('epi-ficha-col').value;
+    if (!colId) { showAlert('Escolha o funcionário', 'danger'); return; }
+    const c = (_epiFichaCols || []).find(x => String(x.id) === String(colId)) || {};
+    nome = c.nome_completo || c.nome || '';
+    funcao = document.getElementById('epi-ficha-funcao').value.trim();
+    if (document.getElementById('epi-ficha-entregas').checked) {
+      try { entregas = await api('/epi/entregas?colaborador_id=' + colId); } catch (e) { showAlert(e.message, 'danger'); return; }
+      entregas = (entregas || []).filter(e => e.status !== 'extraviado' || true)
+        .sort((a, b) => String(a.data_entrega || '').localeCompare(String(b.data_entrega || '')));
+    }
+    dataFicha = new Date().toLocaleDateString('pt-BR');
+  }
+  const esc = v => _escHtml(v == null ? '' : String(v));
+  const df = s => s ? String(s).slice(0, 10).split('-').reverse().join('/') : '';
+  const linhas = entregas.map(e => `<tr><td class="tl">${esc(e.epi_nome)}</td><td>${esc(e.epi_ca || '')}</td><td>1</td><td>${df(e.data_entrega)}</td><td>${e.status === 'devolvido' ? 'devolvido' : ''}</td><td></td></tr>`);
+  for (let k = 0; k < linhasBranco; k++) linhas.push('<tr><td class="tl">&nbsp;</td><td></td><td></td><td></td><td></td><td></td></tr>');
+  const declaracao = 'Recebi o(s) Equipamento(s) de Proteção Individual abaixo discriminados para serem usados no exercício de minhas funções, de acordo com a portaria nº 3214 - NR-06, tendo sido devidamente treinado para usar os mesmos. Estou ciente de que o uso incorreto ou não uso, implicará em insubordinação sujeita às sanções disciplinares conforme normas estabelecidas na CLT. A perda, destruição precoce, por mau uso ou falta de cuidado do EPI, fica a Empresa com o direito a efetuar o desconto em seu salário na forma estabelecida do art. 462 da CLT. Minhas assinaturas apostas ou rubrica no local indicado nesta ficha conforme minha concordância.';
+  const css = `@page{size:A4 landscape;margin:8mm}*{box-sizing:border-box}body{margin:0;font-family:Arial,Helvetica,sans-serif;color:#111}
+    .cab{border:1.5px solid #111;border-bottom:none}
+    .emp{text-align:center;font-size:26px;padding:8px 6px 4px;letter-spacing:.5px}
+    .tit{text-align:center;font-size:13px;font-weight:700;padding:2px 6px 8px;letter-spacing:.3px}
+    .lin{display:grid;grid-template-columns:62% 38%;border-top:1.5px solid #111}
+    .lin>div{padding:5px 8px;font-size:12px;min-height:26px}.lin>div+div{border-left:1.5px solid #111}
+    .lab{font-weight:700}.val{font-size:14px;margin-left:6px}
+    .dec{font-size:10.5px;line-height:1.35;text-align:justify;text-indent:28px}
+    .ass{display:flex;flex-direction:column;justify-content:flex-end;align-items:center;font-size:12px}
+    .ass .traco{width:85%;border-top:1px solid #111;margin-top:34px;padding-top:3px;text-align:center}
+    table{width:100%;border-collapse:collapse;border:1.5px solid #111;table-layout:fixed}
+    th{font-size:11.5px;border:1px solid #111;padding:4px;background:#fff}
+    td{border:1px solid #111;height:24px;font-size:11.5px;text-align:center;padding:2px 5px}
+    td.tl{text-align:left}
+    thead{display:table-header-group}tr{page-break-inside:avoid}
+    @media screen{body{background:#888}.folha{background:#fff;width:297mm;min-height:210mm;margin:12px auto;padding:8mm}}`;
+  const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><title>Ficha de EPI${nome ? ' - ' + esc(nome) : ''}</title><style>${css}</style></head><body><div class="folha">
+    <div class="cab"><div class="emp">${esc(empresa)}</div><div class="tit">FICHA INDIVIDUAL DE CONTROLE DE FORNECIMENTO DE EPI´S</div>
+      <div class="lin"><div><span class="lab">NOME:</span><span class="val">${esc(nome)}</span></div><div><span class="lab">FUNÇÃO:</span><span class="val">${esc(funcao)}</span></div></div>
+      <div class="lin"><div><div class="dec">${declaracao}</div><div style="margin-top:8px"><span class="lab">Data:</span><span class="val">${dataFicha || '______ / ______ / __________'}</span></div></div>
+        <div class="ass"><div class="traco">Assinatura do Colaborador</div></div></div>
+    </div>
+    <table>
+      <colgroup><col style="width:34%"><col style="width:9%"><col style="width:7%"><col style="width:11%"><col style="width:11%"><col style="width:28%"></colgroup>
+      <thead><tr><th rowspan="2">TIPO DE EPI</th><th rowspan="2">CA</th><th rowspan="2">QUANT.</th><th colspan="2">DATA</th><th rowspan="2">ASSINATURA</th></tr>
+        <tr><th>ENTREGA</th><th>DEVOLUÇÃO</th></tr></thead>
+      <tbody>${linhas.join('')}</tbody>
+    </table></div></body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) { showAlert('O navegador bloqueou a janela de impressão. Libere pop-ups para este site.', 'danger'); return; }
+  w.document.open(); w.document.write(html); w.document.close();
+  closeModal('modal-epi-ficha');
+  setTimeout(() => { try { w.focus(); w.print(); } catch (e) {} }, 300);
+}
