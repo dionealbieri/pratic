@@ -1197,6 +1197,7 @@
             </select>
           </div>
           <div class="flex gap-2">
+            <button class="btn btn-secondary" data-cor="azul" onclick="abrirFichaEPI()">📄 Ficha de EPI</button>
             <button class="btn btn-secondary" onclick="gerarComprovante()">🖨️ Comprovante</button>
             <button class="btn btn-primary" onclick="openModalEntrega()" data-perm-criar="epi">+ Registrar Entrega</button>
           </div>
@@ -2337,13 +2338,16 @@
 </div>
 
 <div class="modal-overlay" id="modal-colaborador">
-  <div class="modal">
-    <div class="modal-title">Cadastrar Colaborador</div>
+  <div class="modal" style="max-width:760px;width:96vw">
+    <div class="modal-title" id="modal-colaborador-title">Cadastrar Colaborador</div>
     <input type="hidden" id="col-id">
     <div class="form-grid">
       <div class="form-group" style="grid-column:1/-1">
-        <label>Nome</label>
-        <input type="text" id="col-nome">
+        <label for="col-nome">Nome na produção <span style="font-weight:400;color:var(--muted);font-size:12px">— é o nome que aparece em Produção Diária, Premiação e relatórios</span></label>
+        <div class="flex gap-2 items-center">
+          <input type="text" id="col-nome" style="flex:1">
+          <button type="button" class="btn btn-sm btn-secondary" data-cor="cinza" id="col-nome-destravar" style="display:none;white-space:nowrap" onclick="destravarNomeColaborador()">🔒 Alterar</button>
+        </div>
       </div>
       <div class="form-group">
         <label>Tipo</label>
@@ -2357,6 +2361,40 @@
         <select id="col-maquina"></select>
       </div>
     </div>
+
+    <details id="col-cadastro-completo" style="margin-top:14px;border:1px solid var(--border);border-radius:10px;padding:10px 14px">
+      <summary style="cursor:pointer;font-family:var(--font-head);font-weight:700">📋 Cadastro completo do funcionário <span style="font-weight:400;color:var(--muted);font-size:12px">(opcional)</span></summary>
+      <div style="font-size:12px;color:var(--muted);margin:8px 0 10px">Todos os campos são opcionais. O nome completo e o cargo saem na ficha de EPI.</div>
+      <div style="font-size:12px;font-weight:700;color:var(--accent);margin:4px 0 6px">DADOS PESSOAIS</div>
+      <div class="form-grid">
+        <div class="form-group" style="grid-column:1/-1"><label for="col-nome-completo">Nome completo</label><input type="text" id="col-nome-completo" placeholder="Como está no documento"></div>
+        <div class="form-group"><label for="col-cpf">CPF</label><input type="text" id="col-cpf" placeholder="000.000.000-00"></div>
+        <div class="form-group"><label for="col-rg">RG</label><input type="text" id="col-rg"></div>
+        <div class="form-group"><label for="col-data-nascimento">Data de nascimento</label><input type="date" id="col-data-nascimento"></div>
+        <div class="form-group"><label for="col-telefone">Telefone</label><input type="text" id="col-telefone" placeholder="(17) 99999-9999"></div>
+        <div class="form-group"><label for="col-email">E-mail</label><input type="text" id="col-email"></div>
+        <div class="form-group"><label for="col-contato-emergencia">Contato de emergência</label><input type="text" id="col-contato-emergencia" placeholder="Nome e telefone"></div>
+      </div>
+      <div style="font-size:12px;font-weight:700;color:var(--accent);margin:10px 0 6px">TRABALHO</div>
+      <div class="form-grid">
+        <div class="form-group"><label for="col-cargo">Cargo / função (sai na ficha de EPI)</label><input type="text" id="col-cargo" placeholder="Ex.: Operador de máquina"></div>
+        <div class="form-group"><label for="col-setor">Setor</label><input type="text" id="col-setor" placeholder="Ex.: Produção"></div>
+        <div class="form-group"><label for="col-data-admissao">Data de admissão</label><input type="date" id="col-data-admissao"></div>
+        <div class="form-group"><label for="col-pis">PIS</label><input type="text" id="col-pis"></div>
+        <div class="form-group"><label for="col-ctps">CTPS (nº / série)</label><input type="text" id="col-ctps"></div>
+      </div>
+      <div style="font-size:12px;font-weight:700;color:var(--accent);margin:10px 0 6px">ENDEREÇO</div>
+      <div class="form-grid">
+        <div class="form-group"><label for="col-cep">CEP</label><input type="text" id="col-cep" placeholder="00000-000" onblur="buscarCepColaborador()"></div>
+        <div class="form-group" style="grid-column:span 2"><label for="col-logradouro">Rua</label><input type="text" id="col-logradouro"></div>
+        <div class="form-group"><label for="col-numero">Número</label><input type="text" id="col-numero"></div>
+        <div class="form-group"><label for="col-bairro">Bairro</label><input type="text" id="col-bairro"></div>
+        <div class="form-group"><label for="col-cidade">Cidade</label><input type="text" id="col-cidade"></div>
+        <div class="form-group"><label for="col-uf">UF</label><input type="text" id="col-uf"></div>
+      </div>
+      <div class="form-group"><label for="col-observacoes">Observações</label><textarea id="col-observacoes" rows="2"></textarea></div>
+    </details>
+
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal('modal-colaborador')">Cancelar</button>
       <button type="button" class="btn btn-primary" id="btn-salvar-colaborador" onclick="salvarColaborador()">Salvar</button>
@@ -2909,6 +2947,28 @@
   </div>
 </div>
 
+<!-- MODAL FICHA DE EPI (padrão da empresa) -->
+<div class="modal-overlay" id="modal-epi-ficha">
+  <div class="modal" style="max-width:520px;width:95vw">
+    <div class="modal-title">📄 Ficha de controle de EPI</div>
+    <div class="form-group">
+      <label style="display:flex;gap:8px;align-items:center;cursor:pointer;font-weight:600"><input type="radio" name="epi-ficha-modo" value="branco" checked onchange="_epiFichaModo()"> Só a ficha (em branco, para preencher à mão)</label>
+      <label style="display:flex;gap:8px;align-items:center;cursor:pointer;font-weight:600;margin-top:8px"><input type="radio" name="epi-ficha-modo" value="preenchida" onchange="_epiFichaModo()"> Preenchida com os dados do funcionário</label>
+    </div>
+    <div id="epi-ficha-preenchida" style="display:none">
+      <div class="form-group"><label for="epi-ficha-col">Funcionário</label><select id="epi-ficha-col"></select></div>
+      <div class="form-group"><label for="epi-ficha-funcao">Função</label><input id="epi-ficha-funcao" placeholder="Função que sai na ficha"></div>
+      <label style="display:flex;gap:8px;align-items:center;cursor:pointer;font-size:14px"><input type="checkbox" id="epi-ficha-entregas" checked> Incluir os EPIs já entregues a ele (tipo, CA, quantidade e datas)</label>
+    </div>
+    <div class="form-group" style="margin-top:12px"><label for="epi-ficha-empresa">Empresa (cabeçalho da ficha)</label><input id="epi-ficha-empresa"></div>
+    <div class="form-group"><label for="epi-ficha-linhas">Linhas em branco na tabela</label><input id="epi-ficha-linhas" type="number" min="5" max="60" value="18" style="max-width:110px"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('modal-epi-ficha')">Cancelar</button>
+      <button class="btn btn-primary" onclick="imprimirFichaEPI()">🖨️ Imprimir ficha</button>
+    </div>
+  </div>
+</div>
+
 <!-- MODAL EPI -->
 <div class="modal-overlay" id="modal-epi">
   <div class="modal">
@@ -2935,6 +2995,10 @@
       <div class="form-group">
         <label>Descrição</label>
         <input type="text" id="epi-descricao" placeholder="Detalhes opcionais">
+      </div>
+      <div class="form-group">
+        <label for="epi-ca">Nº do CA (Certificado de Aprovação)</label>
+        <input type="text" id="epi-ca" placeholder="Ex: 12345 — sai na ficha de EPI">
       </div>
     </div>
     <div class="modal-footer">
@@ -3317,7 +3381,7 @@
 
 <script src="js/cotacao.js?v=20261109-tipovolume"></script>
 <script src="js/estoque-cliente.js?v=20261030-estcli"></script>
-<script src="js/app.js?v=20261111-lc1"></script>
+<script src="js/app.js?v=20261111-col1"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');
