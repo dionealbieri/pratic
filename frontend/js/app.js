@@ -11298,9 +11298,10 @@ function _parseNomeProdutoCompras(nome, marca) {
   // sem separador próprio, ex: "TAMPA BOLHA C/FURO 330ML"). Se não achar unidade,
   // cai pra uma sequência de números separados por barra (ex: "350/400/500/700").
   let tamanho = '—';
-  let m = work.match(/\d+(?:\s*\/\s*\d+)*\s*(ML|MM)\b/);
+  // aceita também o plural/variações: "110 MLS", "110MLS", "110 ML."
+  let m = work.match(/\d+(?:\s*\/\s*\d+)*\s*(ML|MM)S?\b/);
   if (m) {
-    tamanho = m[0].replace(/\s+/g, '');
+    tamanho = m[0].replace(/\s+/g, '').replace(/(ML|MM)S$/, '$1');
     work = work.slice(0, m.index) + ' ' + work.slice(m.index + m[0].length);
   } else {
     m = work.match(/\d+(?:\s*\/\s*\d+){1,}/);
@@ -11322,7 +11323,9 @@ function _parseNomeProdutoCompras(nome, marca) {
   // 3. marca — remove como palavra inteira (aceita plural com S no final, ex:
   // "CRISTALCOPOS" no nome vs "CRISTALCOPO" cadastrado como marca)
   if (marcaU) {
-    work = work.replace(new RegExp('\\b' + marcaU + 'S?\\b', 'g'), ' ');
+    // tolera a marca escrita com espaço/ponto entre as letras (ex.: "F N S" ou "F.N.S." para FNS)
+    const letras = marcaU.replace(/[\s.]+/g, '').split('').map(c => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    work = work.replace(new RegExp('\\b' + letras.join('[\\s.]*') + 'S?\\b', 'g'), ' ');
   }
 
   // 4. o que sobrar: limpa separadores e descarta código numérico solto (ex: "451")
@@ -11331,6 +11334,7 @@ function _parseNomeProdutoCompras(nome, marca) {
     .map(s => s.trim())
     .filter(s => s && !/^\d+$/.test(s))
     .join(' ')
+    .replace(/\b(DE|DA|DO)\b/g, ' ')   // "COPO DE PAPEL" e "COPO PAPEL" ficam no mesmo grupo
     .replace(/\s+/g, ' ')
     .trim() || 'OUTROS';
 
@@ -11436,7 +11440,7 @@ function renderListaAvulsa() {
       ${itens.map(p => {
         const id = 'lcavqtd' + (lcAvulsaSeq++);
         return `
-        <div class="lc-row" style="padding:5px 0;max-width:360px">
+        <div class="lc-row" style="padding:5px 0;max-width:460px">
           <label style="display:flex;align-items:center;gap:10px;font-size:15px;cursor:pointer">
             <input type="checkbox" class="lc-avulsa-chk" data-marca="${m}" data-produto="${(p.nome || '').replace(/"/g, '&quot;')}" data-unidade="${p.unidade || ''}" onchange="toggleQtdLC(this, '${id}')" style="margin:0;flex-shrink:0;width:20px;height:20px;cursor:pointer">
             <span style="flex:1">${p.nome}</span>
@@ -11628,11 +11632,11 @@ function _cardMarcaLC(g, ocultoPadrao) {
               const id = 'lcqtd' + (lcSeq++);
               const produtoLabel = st.subtipo + (f.furo ? ' — ' + f.furo : '');
               return `
-              <div class="lc-row" style="padding:5px 0;max-width:360px">
+              <div class="lc-row" style="padding:5px 0;max-width:460px">
                 <label style="display:flex;align-items:center;gap:10px;font-size:17px;cursor:pointer">
                   <input type="checkbox" class="lc-chk" data-marca="${g.marca}" data-produto="${produtoLabel}" data-tamanho="${t.tamanho}" data-unidade="${t.unidade || ''}" onchange="toggleQtdLC(this, '${id}')" style="margin:0;flex-shrink:0;width:20px;height:20px;cursor:pointer">
                   <span style="flex:1">${t.tamanho}</span>
-                  <span style="display:flex;align-items:baseline;gap:6px">
+                  <span style="display:flex;align-items:baseline;gap:6px;white-space:nowrap">
                     <span style="color:${!t.urgente ? 'var(--text)' : (t.situacao === 'critico' ? 'var(--danger)' : 'var(--warn)')};font-weight:${t.urgente ? 600 : 400}">Saldo: ${fmtNum(t.saldo)} ${t.unidade || ''}</span>
                     ${t.semPedido ? '<span style="font-size:12px;color:var(--muted);font-weight:400">(sem pedido)</span>' : ''}
                   </span>
@@ -11781,7 +11785,7 @@ function imprimirListaCompras() {
             ${f.tamanhos.map(t => `
               <div style="display:flex;justify-content:space-between;align-items:baseline;gap:14px;padding:3px 0;font-size:14px;max-width:380px">
                 <span>${t.tamanho}</span>
-                <span style="display:flex;align-items:baseline;gap:6px">
+                <span style="display:flex;align-items:baseline;gap:6px;white-space:nowrap">
                   <span style="color:${!t.urgente ? '#111' : (t.situacao === 'critico' ? '#b91c1c' : '#92400e')};font-weight:${t.urgente ? 600 : 400}">Saldo: ${fmtNum(t.saldo)} ${t.unidade || ''}</span>
                   ${t.semPedido ? '<span style="font-size:10px;color:#777;font-weight:400">(sem pedido)</span>' : ''}
                 </span>
