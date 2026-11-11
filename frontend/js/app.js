@@ -4455,26 +4455,73 @@ async function loadEntregas() {
   const tbody = document.getElementById('epi-entregas-tbody');
   if(!tbody) return;
   if(!rows.length){tbody.innerHTML='<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:28px">Nenhum registro</td></tr>';return;}
-  tbody.innerHTML = rows.map(r=>{
-    const sc=r.status_calculado||r.status;
-    const st=EPI_STATUS[sc]||{label:sc,pill:'pill-info'};
-    const dias=r.dias_restantes;
-    const cor=dias<0?'var(--danger)':dias<=30?'var(--warn)':'var(--success)';
-    return `<tr>
-      <td><strong>${r.colaborador_nome}</strong></td>
-      <td>${r.epi_nome}</td>
-      <td style="color:var(--muted)">${r.epi_categoria||'—'}</td>
-      <td>${fmtDate(r.data_entrega)}</td>
-      <td>${fmtDate(r.data_validade)}</td>
-      <td style="color:${cor};font-weight:600">${dias<0?'Vencido':dias+'d'}</td>
-      <td><span class="pill ${st.pill}">${st.label}</span></td>
-      <td class="flex gap-2">
-        <button class="btn btn-sm btn-secondary" title="Gerar comprovante deste funcionário" onclick="gerarComprovante(${r.colaborador_id})">🖨️</button>
-        ${temPermissao('epi', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="renovarEPI(${r.id},${r.colaborador_id},${r.epi_id})">🔄</button>` : ''}
-        ${temPermissao('epi', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="deletarEntrega(${r.id})">✕</button>` : ''}
-      </td>
-    </tr>`;
+  // Uma linha por funcionário; os EPIs ficam embutidos e abrem ao clicar (como os pedidos na Produção)
+  const grupos = {};
+  rows.forEach(r => { (grupos[r.colaborador_id] = grupos[r.colaborador_id] || { id: r.colaborador_id, nome: r.colaborador_nome, itens: [] }).itens.push(r); });
+  const ordemSt = { vencido: 0, vencendo: 1, ativo: 2, extraviado: 3, devolvido: 4 };
+  const lista = Object.values(grupos).map(g => {
+    g.itens.sort((a, b) => (ordemSt[a.status_calculado] ?? 9) - (ordemSt[b.status_calculado] ?? 9) || (a.dias_restantes ?? 99999) - (b.dias_restantes ?? 99999));
+    const ativos = g.itens.filter(r => ['ativo', 'vencendo', 'vencido'].includes(r.status_calculado));
+    g.minDias = ativos.length ? Math.min(...ativos.map(r => r.dias_restantes ?? 99999)) : null;
+    g.venc = g.itens.filter(r => r.status_calculado === 'vencido').length;
+    g.vcdo = g.itens.filter(r => r.status_calculado === 'vencendo').length;
+    g.ultima = g.itens.map(r => r.data_entrega || '').sort().pop();
+    g.proxVal = ativos.map(r => r.data_validade || '').filter(Boolean).sort()[0] || '';
+    return g;
+  }).sort((a, b) => (b.venc - a.venc) || (b.vcdo - a.vcdo) || String(a.nome).localeCompare(String(b.nome), 'pt-BR'));
+  if (!window._epiExpandidos) window._epiExpandidos = new Set();
+  if (lista.length === 1) window._epiExpandidos.add(String(lista[0].id));
+  const podeEditar = temPermissao('epi', 'editar'), podeDel = temPermissao('epi', 'deletar');
+  tbody.innerHTML = lista.map(g => {
+    const aberto = window._epiExpandidos.has(String(g.id));
+    const cor = g.minDias == null ? 'var(--muted)' : g.minDias < 0 ? 'var(--danger)' : g.minDias <= 30 ? 'var(--warn)' : 'var(--success)';
+    const resumo = g.venc ? `<span class="pill pill-danger">⛔ ${g.venc} vencido(s)</span>` : g.vcdo ? `<span class="pill pill-warn">⚠ ${g.vcdo} vencendo</span>` : `<span class="pill pill-success">✓ Em dia</span>`;
+    const pai = `<tr style="cursor:pointer" onclick="toggleEpiColaborador('${g.id}')">
+      <td><span style="display:inline-block;width:14px;color:var(--muted)">${aberto ? '▾' : '▸'}</span> <strong>${_escHtml(g.nome)}</strong></td>
+      <td>${g.itens.length} EPI${g.itens.length === 1 ? '' : 's'}</td>
+      <td style="color:var(--muted)">—</td>
+      <td>${fmtDate(g.ultima)}</td>
+      <td>${g.proxVal ? fmtDate(g.proxVal) : '—'}</td>
+      <td style="color:${cor};font-weight:600">${g.minDias == null ? '—' : g.minDias < 0 ? 'Vencido' : g.minDias + 'd'}</td>
+      <td>${resumo}</td>
+      <td class="flex gap-2" onclick="event.stopPropagation()">
+        <button class="btn btn-sm btn-secondary" title="Ficha / comprovante deste funcionário" onclick="gerarComprovante(${g.id})">🖨️</button>
+        ${temPermissao('epi', 'criar') ? `<button class="btn btn-sm btn-secondary" data-cor="verde" title="Registrar entrega para este funcionário" onclick="novaEntregaColaborador(${g.id})">＋</button>` : ''}
+      </td></tr>`;
+    const filhos = aberto ? g.itens.map(r => {
+      const sc = r.status_calculado || r.status;
+      const st = EPI_STATUS[sc] || { label: sc, pill: 'pill-info' };
+      const dias = r.dias_restantes;
+      const c2 = dias < 0 ? 'var(--danger)' : dias <= 30 ? 'var(--warn)' : 'var(--success)';
+      const fim = ['devolvido', 'extraviado'].includes(sc);
+      return `<tr style="background:rgba(148,163,184,.04)">
+        <td style="padding-left:34px;color:var(--muted)">↳</td>
+        <td>${_escHtml(r.epi_nome)}${(r.quantidade || 1) > 1 ? ` <span style="color:var(--muted);font-size:12px">× ${r.quantidade}</span>` : ''}</td>
+        <td style="color:var(--muted)">${r.epi_categoria || '—'}</td>
+        <td>${fmtDate(r.data_entrega)}</td>
+        <td>${fmtDate(r.data_validade)}</td>
+        <td style="color:${fim ? 'var(--muted)' : c2};font-weight:600">${fim ? '—' : dias < 0 ? 'Vencido' : dias + 'd'}</td>
+        <td><span class="pill ${st.pill}">${st.label}</span></td>
+        <td class="flex gap-2">
+          ${podeEditar ? `<button class="btn btn-sm btn-secondary" title="Renovar / trocar" onclick="renovarEPI(${r.id},${r.colaborador_id},${r.epi_id})">🔄</button>` : ''}
+          ${podeDel ? `<button class="btn btn-sm btn-danger" onclick="deletarEntrega(${r.id})">✕</button>` : ''}
+        </td></tr>`;
+    }).join('') : '';
+    return pai + filhos;
   }).join('');
+}
+
+function toggleEpiColaborador(id) {
+  if (!window._epiExpandidos) window._epiExpandidos = new Set();
+  const k = String(id);
+  if (window._epiExpandidos.has(k)) window._epiExpandidos.delete(k); else window._epiExpandidos.add(k);
+  loadEntregas();
+}
+
+async function novaEntregaColaborador(colId) {
+  await openModalEntrega();
+  document.getElementById('entrega-colaborador').value = colId;
+  await sugerirEPIs(true);
 }
 
 async function loadEPILista() {
@@ -14180,11 +14227,11 @@ async function gerarFichaEPI(opt) {
     .row>div{padding:4px 8px;font-size:12px}.row>div+div{border-left:1.5px solid #111}
     .lab{font-weight:700}.val{font-size:14px;margin-left:6px}
     .dec{font-size:10.5px;line-height:1.4;text-align:justify;text-indent:40px;padding:6px 8px;border-top:1.5px solid #111}
-    .row.dt{border-top:1.5px solid #111}.row.dt>div{min-height:34px;display:flex;align-items:flex-end}
-    .ass{justify-content:center}.ass .traco{width:90%;border-top:1px solid #111;padding-top:2px;text-align:center;font-size:12px}
+    .row.dt{border-top:1.5px solid #111}.row.dt>div{min-height:70px;display:flex;align-items:flex-end;padding-bottom:6px}
+    .ass{justify-content:center}.ass .traco{width:92%;border-top:1px solid #111;padding-top:3px;text-align:center;font-size:12px}
     table{width:100%;border-collapse:collapse;border:1.5px solid #111;table-layout:fixed}
     th{font-size:11.5px;border:1px solid #111;padding:3px 4px;background:#fff}
-    td{border:1px solid #111;height:23px;font-size:11.5px;text-align:center;padding:2px 5px}
+    td{border:1px solid #111;height:28px;font-size:11.5px;text-align:center;padding:2px 5px}
     td.tl{text-align:left}
     thead{display:table-header-group}tr{page-break-inside:avoid}
     @media screen{body{background:#888}.folha{background:#fff;width:297mm;min-height:210mm;margin:12px auto;padding:8mm}}`;
@@ -14198,7 +14245,7 @@ async function gerarFichaEPI(opt) {
         <div class="ass"><div class="traco">Assinatura do Colaborador</div></div></div>
     </div>
     <table>
-      <colgroup><col style="width:33%"><col style="width:9%"><col style="width:7%"><col style="width:11%"><col style="width:11%"><col style="width:29%"></colgroup>
+      <colgroup><col style="width:30%"><col style="width:8%"><col style="width:6%"><col style="width:10%"><col style="width:10%"><col style="width:36%"></colgroup>
       <thead><tr><th rowspan="2">TIPO DE EPI</th><th rowspan="2">CA</th><th rowspan="2">QUANT.</th><th colspan="2">DATA</th><th rowspan="2">ASSINATURA</th></tr>
         <tr><th>ENTREGA</th><th>DEVOLUÇÃO</th></tr></thead>
       <tbody>${linhas.join('')}</tbody>
