@@ -14139,6 +14139,7 @@ window.imprimirFichas = imprimirFichas;
 
 // ═══ Ficha individual de controle de fornecimento de EPI (modelo padrão da empresa) ═══
 const EPI_FICHA_EMPRESA_PADRAO = 'PEDRO M BUENO E ROSSINI LTDA';
+const EPI_FICHA_LINHAS = 18;   // linhas da tabela que enchem uma folha A4 deitada
 let _epiFichaCols = [];
 function _epiFichaModo() {
   const m = (document.querySelector('input[name="epi-ficha-modo"]:checked') || {}).value;
@@ -14166,9 +14167,9 @@ async function imprimirFichaEPI() {
   const modo = (document.querySelector('input[name="epi-ficha-modo"]:checked') || {}).value || 'branco';
   const empresa = document.getElementById('epi-ficha-empresa').value.trim() || EPI_FICHA_EMPRESA_PADRAO;
   try { localStorage.setItem('epi_ficha_empresa', empresa); } catch (e) {}
-  let linhasBranco = parseInt(document.getElementById('epi-ficha-linhas').value, 10);
-  if (isNaN(linhasBranco) || linhasBranco < 5) linhasBranco = 18;
-  const opt = { empresa, linhasBranco: Math.min(linhasBranco, 60) };
+  let totalLinhas = parseInt(document.getElementById('epi-ficha-linhas').value, 10);
+  if (isNaN(totalLinhas) || totalLinhas < 5) totalLinhas = EPI_FICHA_LINHAS;
+  const opt = { empresa, totalLinhas: Math.min(totalLinhas, 80) };
   if (modo === 'preenchida') {
     opt.colId = document.getElementById('epi-ficha-col').value;
     if (!opt.colId) { showAlert('Escolha o funcionário', 'danger'); return; }
@@ -14194,7 +14195,6 @@ async function gerarFichaEPI(opt) {
   opt = opt || {};
   let empresa = opt.empresa;
   if (!empresa) { empresa = EPI_FICHA_EMPRESA_PADRAO; try { empresa = localStorage.getItem('epi_ficha_empresa') || empresa; } catch (e) {} }
-  const linhasBranco = opt.linhasBranco || (opt.colId ? 10 : 18);
   const w = window.open('', '_blank');
   if (!w) { showAlert('O navegador bloqueou a janela de impressão. Libere pop-ups para este site.', 'danger'); return; }
   w.document.write('<p style="font-family:Arial;padding:30px">Montando a ficha...</p>');
@@ -14202,7 +14202,16 @@ async function gerarFichaEPI(opt) {
   if (opt.colId) {
     try {
       const c = await api('/colaboradores/' + opt.colId);
-      nome = c.nome_completo || c.nome || '';
+      nome = (c.nome_completo || '').trim();
+      // A ficha é documento: precisa do nome completo. Se o cadastro não tem, pede agora e já grava.
+      if (!nome) {
+        const inf = (w.prompt ? w : window).prompt(`A ficha de EPI é um documento e precisa do NOME COMPLETO.\n\nO cadastro de "${c.nome}" ainda não tem. Digite o nome completo (fica salvo no cadastro):`, c.nome || '');
+        if (inf === null) { w.close(); return; }
+        nome = inf.trim() || c.nome || '';
+        if (inf.trim() && inf.trim() !== c.nome) {
+          try { await api('/colaboradores/' + c.id, 'PUT', { nome: c.nome, tipo: c.tipo, maquina_id: c.maquina_id, ativo: c.ativo == null ? 1 : c.ativo, nome_completo: inf.trim() }); } catch (e) {}
+        }
+      }
       if (!funcao) funcao = String(c.cargo || c.tipo || '').toUpperCase();
       if (opt.incluirEntregas !== false) {
         entregas = (await api('/epi/entregas?colaborador_id=' + opt.colId)) || [];
@@ -14214,6 +14223,9 @@ async function gerarFichaEPI(opt) {
   const esc = v => _escHtml(v == null ? '' : String(v));
   const df = s => s ? String(s).slice(0, 10).split('-').reverse().join('/') : '';
   const linhas = entregas.map(e => `<tr><td class="tl">${esc(e.epi_nome)}</td><td>${esc(e.epi_ca || '')}</td><td>${esc(e.quantidade || 1)}</td><td>${df(e.data_entrega)}</td><td>${df(e.data_devolucao)}</td><td></td></tr>`);
+  // Folha A4 deitada cheia: total fixo de linhas; o que não tem EPI fica em branco
+  const total = opt.totalLinhas || EPI_FICHA_LINHAS;
+  const linhasBranco = Math.max(total - entregas.length, 2);
   for (let k = 0; k < linhasBranco; k++) linhas.push('<tr><td class="tl">&nbsp;</td><td></td><td></td><td></td><td></td><td></td></tr>');
   const declaracao = 'Recebi o(s) Equipamento(s) de Proteção Individual abaixo discriminados para serem usados no exercício de minhas funções, de acordo com a portaria nº 3214 - NR-06, tendo sido devidamente treinado para usar os mesmos. Estou ciente de que o uso incorreto ou não uso, implicará em insubordinação sujeita às sanções disciplinares conforme normas estabelecidas na CLT. A perda, destruição precoce, por mau uso ou falta de cuidado do EPI, fica a Empresa com o direito a efetuar o desconto em seu salário na forma estabelecida do art. 462 da CLT. Minhas assinaturas apostas ou rubrica no local indicado nesta ficha conforme minha concordância.';
   // Layout igual à ficha de papel: empresa / título / Nome | Função / declaração em toda a largura /
@@ -14231,7 +14243,7 @@ async function gerarFichaEPI(opt) {
     .ass{justify-content:center}.ass .traco{width:92%;border-top:1px solid #111;padding-top:3px;text-align:center;font-size:12px}
     table{width:100%;border-collapse:collapse;border:1.5px solid #111;table-layout:fixed}
     th{font-size:11.5px;border:1px solid #111;padding:3px 4px;background:#fff}
-    td{border:1px solid #111;height:28px;font-size:11.5px;text-align:center;padding:2px 5px}
+    td{border:1px solid #111;height:26px;font-size:11.5px;text-align:center;padding:2px 5px}
     td.tl{text-align:left}
     thead{display:table-header-group}tr{page-break-inside:avoid}
     @media screen{body{background:#888}.folha{background:#fff;width:297mm;min-height:210mm;margin:12px auto;padding:8mm}}`;
