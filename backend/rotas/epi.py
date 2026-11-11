@@ -26,6 +26,7 @@ class EntregaIn(BaseModel):
     motivo: Optional[str] = "Entrega inicial"
     responsavel: Optional[str] = None
     observacao: Optional[str] = None
+    quantidade: Optional[int] = 1
 
 class StatusEntregaIn(BaseModel):
     status: str
@@ -110,7 +111,7 @@ def epis_por_funcao(funcao: str):
     rows = conn.execute("""
         SELECT e.* FROM funcao_epis fe
         JOIN epis e ON fe.epi_id = e.id
-        WHERE fe.funcao = ? AND e.ativo = 1
+        WHERE LOWER(TRIM(fe.funcao)) = LOWER(TRIM(?)) AND e.ativo = 1
     """, (funcao,)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
@@ -153,11 +154,12 @@ def listar_entregas(colaborador_id: Optional[int] = None, status: Optional[str] 
 def registrar_entrega(e: EntregaIn):
     conn = get_conn()
     cur = conn.cursor()
+    qtd = e.quantidade if (e.quantidade or 0) > 0 else 1
     cur.execute("""INSERT INTO epi_entregas
-        (colaborador_id, epi_id, data_entrega, data_validade, motivo, responsavel, observacao, status)
-        VALUES (?,?,?,?,?,?,?,'ativo')""",
+        (colaborador_id, epi_id, data_entrega, data_validade, motivo, responsavel, observacao, status, quantidade)
+        VALUES (?,?,?,?,?,?,?,'ativo',?)""",
         (e.colaborador_id, e.epi_id, e.data_entrega, e.data_validade,
-         e.motivo, e.responsavel, e.observacao))
+         e.motivo, e.responsavel, e.observacao, qtd))
     conn.commit()
     id = cur.lastrowid
     conn.close()
@@ -166,8 +168,12 @@ def registrar_entrega(e: EntregaIn):
 @router.put("/entregas/{id}/status")
 def atualizar_status(id: int, body: StatusEntregaIn):
     conn = get_conn()
-    conn.execute("UPDATE epi_entregas SET status=?, observacao=? WHERE id=?",
-                 (body.status, body.motivo, id))
+    # Data de devolução (sai na ficha de EPI); volta a vazio se reativar
+    conn.execute("""UPDATE epi_entregas SET status=?, observacao=?,
+                    data_devolucao = CASE WHEN ?='devolvido' THEN COALESCE(data_devolucao, date('now','localtime'))
+                                          WHEN ?='ativo' THEN NULL ELSE data_devolucao END
+                    WHERE id=?""",
+                 (body.status, body.motivo, body.status, body.status, id))
     conn.commit()
     conn.close()
     return {"mensagem": "Status atualizado"}
