@@ -2125,6 +2125,11 @@ def _migrar_epi_ca(conn):
     cols = [r[1] for r in conn.execute("PRAGMA table_info(epis)").fetchall()]
     if "ca" not in cols:
         conn.execute("ALTER TABLE epis ADD COLUMN ca TEXT")
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(epi_entregas)").fetchall()]
+    if "quantidade" not in cols:
+        conn.execute("ALTER TABLE epi_entregas ADD COLUMN quantidade INTEGER DEFAULT 1")
+    if "data_devolucao" not in cols:
+        conn.execute("ALTER TABLE epi_entregas ADD COLUMN data_devolucao TEXT")
     conn.commit()
 
 
