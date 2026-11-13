@@ -1298,10 +1298,23 @@ function mpFilaInfo(p) {
 }
 const mpSeloNovo = p => Number(p.cliente_novo) ? ' <span class="mp-novo" title="Cliente novo: primeiro pedido dele">NOVO</span>' : '';
 const mpNomeCli = o => o && o.cliente_id ? `<button type="button" class="mp-cli" title="Ver a ficha do cliente" onclick="mpAbrirFicha(${o.cliente_id})">${esc(o.cliente_nome)}</button>` : esc((o && o.cliente_nome) || '—');
+// Chave de acesso da NF (44 dígitos), lida sozinha do PDF da nota anexado pela Expedição
+function mpChaveNf(ch) {
+  if (!ch) return '';
+  const fmt = String(ch).replace(/(\d{4})(?=\d)/g, '$1 ');
+  return `<div class="mp-chave" style="font-size:11px;margin-top:3px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+    <span style="color:var(--muted)">Chave NF:</span><span style="font-family:monospace;letter-spacing:.3px">${esc(fmt)}</span>
+    <button type="button" class="btn btn-sm btn-secondary" data-cor="cinza" style="padding:2px 8px;font-size:11px" title="Copiar a chave" onclick="event.stopPropagation();mpCopiarChave('${esc(ch)}', this)">📋 Copiar</button></div>`;
+}
+async function mpCopiarChave(ch, bt) {
+  try { await navigator.clipboard.writeText(ch); }
+  catch (e) { const t = document.createElement('textarea'); t.value = ch; document.body.appendChild(t); t.select(); try { document.execCommand('copy'); } catch (e2) {} t.remove(); }
+  if (bt) { const o = bt.textContent; bt.textContent = '✓ Copiada'; setTimeout(() => { bt.textContent = o; }, 1500); }
+}
 function mpCelCliente(it) {
-  if (it.t === 'r') return `${mpNomeCli(it.o)}<div style="font-size:11px;color:var(--muted)">${(it.o.itens || []).map(i => fmtNum(i.quantidade) + ' ' + esc(i.descricao || '')).join('<br>')}</div>`;
+  if (it.t === 'r') return `${mpNomeCli(it.o)}<div style="font-size:11px;color:var(--muted)">${(it.o.itens || []).map(i => fmtNum(i.quantidade) + ' ' + esc(i.descricao || '')).join('<br>')}</div>` + mpChaveNf(it.o.nf_chave);
   const p = it.o;
-  return mpNomeCli(p) + ((p.revenda_pendentes || 0) > 0 ? `<div style="font-size:11px;color:var(--warn)">⚠ ${p.revenda_pendentes} item(ns) de revenda a separar</div>` : '')
+  return mpNomeCli(p) + mpChaveNf(p.nf_chave) + ((p.revenda_pendentes || 0) > 0 ? `<div style="font-size:11px;color:var(--warn)">⚠ ${p.revenda_pendentes} item(ns) de revenda a separar</div>` : '')
     + (p.status === 'produzido' && (p.embalagem_pendentes || 0) > 0 ? `<div style="font-size:11px;color:var(--warn)">⚠ embalagem de ${p.embalagem_pendentes} item(ns) ainda não informada</div>` : '');
 }
 function mpCelSaida(it) {
@@ -1410,7 +1423,7 @@ function renderSecoesMeus() {
       fatia.map(it => {
         const p = it.o, dias = Math.round(p.dias_restantes);
         const cor = dias < 0 ? 'var(--danger)' : dias <= 3 ? 'var(--warn)' : 'var(--success)';
-        return `<tr><td>${mpCelPedido(it)}</td><td>${mpNomeCli(p)}</td><td>${fmtDate(p.prazo_entrega)}</td>
+        return `<tr><td>${mpCelPedido(it)}</td><td>${mpNomeCli(p)}${mpChaveNf(p.nf_chave)}</td><td>${fmtDate(p.prazo_entrega)}</td>
           <td style="color:${cor};font-weight:700">${isNaN(dias) ? '—' : dias < 0 ? 'Vencido' : dias + 'd'}</td>
           <td style="color:var(--muted)">${p.itens_entregues != null ? p.itens_entregues + '/' + p.total_itens : '—'}</td>
           <td><span class="pill ${STATUS_PILL_PEDIDO[p.status] || ''}">${STATUS_LABEL_PEDIDO[p.status] || esc(p.status)}</span></td><td>${mpAcoesLinha(it)}</td></tr>`;
@@ -1454,7 +1467,7 @@ function renderSecoesMeus() {
         ultimo = mes; const g = grupos[mes] || {};
         linhas.push(`<tr class="mp-grupo"><td colspan="5">${mpNomeMes(mes)} <span>— ${g.qtd || 0} pedido(s) · ${fmtBRL(g.valor || 0)}</span></td></tr>`);
       }
-      linhas.push(`<tr><td>${mpCelPedido(it)}</td><td>${mpNomeCli(p)}</td><td>${fmtDate(String(p.created_at || '').slice(0, 10))}</td>
+      linhas.push(`<tr><td>${mpCelPedido(it)}</td><td>${mpNomeCli(p)}${mpChaveNf(p.nf_chave)}</td><td>${fmtDate(String(p.created_at || '').slice(0, 10))}</td>
         <td><span class="pill ${STATUS_PILL_PEDIDO[p.status] || ''}">${(p.status === 'produzido' && Number(p.revenda_bloqueado)) ? '📦 Aguardando separação' : (STATUS_LABEL_PEDIDO[p.status] || esc(p.status))}</span></td>
         <td>${mpAcoes((et === 'producao' ? `<button class="btn btn-sm btn-secondary" onclick="verDetalhe(${p.id})">Ver</button>` : '') + mpBtnNf(p) + mpBtnMais('p', p.id))}</td></tr>`);
     });
@@ -1508,7 +1521,7 @@ function mpRenderMes() {
     ${bloco('Faturado', 'pedidos que saíram / foram entregues', a.faturado.qtd, a.faturado.valor, b.faturado.qtd, b.faturado.valor)}
     ${bloco('Clientes novos', 'primeiro pedido do cliente', a.clientes_novos, null, b.clientes_novos, null)}
   </div>`;
-  const novos = (d.novos || []).map(p => `<tr><td><strong>${esc(p.numero_pedido)}</strong> <span class="mp-novo">NOVO</span></td><td>${mpNomeCli(p)}</td>
+  const novos = (d.novos || []).map(p => `<tr><td><strong>${esc(p.numero_pedido)}</strong> <span class="mp-novo">NOVO</span></td><td>${mpNomeCli(p)}${mpChaveNf(p.nf_chave)}</td>
     <td>${fmtDate(String(p.created_at || '').slice(0, 10))}</td><td>${fmtBRL(p.valor_total)}</td>
     <td><span class="pill ${STATUS_PILL_PEDIDO[p.status] || ''}">${STATUS_LABEL_PEDIDO[p.status] || esc(p.status)}</span></td></tr>`);
   return `<div class="table-wrap" style="margin-bottom:18px">
