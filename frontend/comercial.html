@@ -1446,7 +1446,7 @@ function renderSecoesMeus() {
       ['Pedido', 'Cliente', 'Saída', 'NF', 'Data', ''],
       fatia.map(it => {
         const o = it.o, data = it.t === 'p' ? (o.data_ref || mpDataConcl(o)) : (o.data_despacho || o.concluido_em || '');
-        return `<tr><td>${mpCelPedido(it)}</td><td>${it.t === 'p' ? mpNomeCli(o) : mpCelCliente(it)}</td>
+        return `<tr><td>${mpCelPedido(it)}</td><td>${it.t === 'p' ? mpNomeCli(o) + mpChaveNf(o.nf_chave) : mpCelCliente(it)}</td>
           <td>${it.t === 'p' ? `<span class="pill ${STATUS_PILL_PEDIDO[o.status] || ''}">${STATUS_LABEL_PEDIDO[o.status] || esc(o.status)}</span>${o.status === 'enviado' && o.transportadora ? ' <span style="color:var(--muted);font-size:12px">' + esc(o.transportadora) + '</span>' : ''}` : mpCelSaida(it)}</td>
           <td style="white-space:nowrap">${esc(o.nota_fiscal || '—')}</td><td>${data ? fmtDate(String(data).slice(0, 10)) : '—'}</td><td>${mpAcoesLinha(it)}</td></tr>`;
       }), hc ? `Nenhum pedido concluído em ${mpNomeMes(mpConclMes || mpHoje())}` : 'Carregando...', rodape, mpNavMes(mpConclMes || mpHoje(), 'mpConclNav'));
@@ -1495,7 +1495,7 @@ function mpRenderBusca() {
       else if (et === 'producao') txt = STATUS_LABEL_PEDIDO[o.status] || txt;
       else if (et === 'concluidos') txt = (STATUS_LABEL_PEDIDO[o.status] || 'Concluído') + (o.nota_fiscal ? ' · NF ' + esc(o.nota_fiscal) : '');
       else if (et === 'expedicao' && o.status) txt = 'Com a Expedição · ' + (o.status === 'aguardando_retirada' ? 'retirada' : 'aguardando NF');
-      return `<tr><td>${mpCelPedido(it)}</td><td>${it.t === 'p' ? mpNomeCli(o) : mpCelCliente(it)}</td><td>${mpPillEtapa(et, txt)}</td>
+      return `<tr><td>${mpCelPedido(it)}</td><td>${it.t === 'p' ? mpNomeCli(o) + mpChaveNf(o.nf_chave) : mpCelCliente(it)}</td><td>${mpPillEtapa(et, txt)}</td>
         <td>${it.t === 'p' && o.valor_total != null ? fmtBRL(o.valor_total) : (it.t === 'r' ? fmtNum(o.total_qtd) + ' un.' : '—')}</td><td>${mpAcoesLinha(it)}</td></tr>`;
     }), mpBuscaRes.erro ? esc(mpBuscaRes.erro) : 'Nada encontrado com esse número, cliente ou NF', rodape);
 }
