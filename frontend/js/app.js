@@ -5429,6 +5429,9 @@ function _nfPdfWidget(elId, pedidoId, p, inputNfId, base) {
       <a class="btn btn-sm btn-secondary" href="${url}" target="_blank" rel="noopener" style="text-decoration:none">👁 Ver</a>
       ${pode ? `<label class="btn btn-sm btn-secondary" style="cursor:pointer;margin:0">🔄 Trocar<input type="file" accept="application/pdf,.pdf" style="display:none" onchange="_nfPdfEnviar(this,'${elId}',${pedidoId},${inputNfId ? `'${inputNfId}'` : 'null'})"></label>
       <button type="button" class="btn btn-sm btn-secondary" onclick="_nfPdfRemover('${elId}',${pedidoId},${inputNfId ? `'${inputNfId}'` : 'null'})">🗑</button>` : ''}
+      <div style="flex-basis:100%;font-size:12px">${p.nf_chave
+        ? `<span style="color:var(--muted)">Chave NF:</span> <span style="font-family:monospace">${_escHtml(String(p.nf_chave).replace(/(\d{4})(?=\d)/g, '$1 '))}</span> <button type="button" class="btn btn-sm btn-secondary" style="padding:2px 8px;font-size:11px" onclick="navigator.clipboard && navigator.clipboard.writeText('${_escHtml(p.nf_chave)}').then(()=>showAlert('Chave copiada'))">📋 Copiar</button>`
+        : '<span style="color:var(--warn)">Não consegui ler a chave de acesso neste PDF.</span>'}</div>
     </div>`;
   } else if (pode) {
     html = `<label class="btn btn-secondary" style="cursor:pointer;margin:0;display:inline-flex;align-items:center;gap:6px">📎 Anexar PDF da NF<input type="file" accept="application/pdf,.pdf" style="display:none" onchange="_nfPdfEnviar(this,'${elId}',${pedidoId},${inputNfId ? `'${inputNfId}'` : 'null'})"></label>
@@ -5470,10 +5473,11 @@ async function _nfPdfEnviar(input, elId, pedidoId, inputNfId) {
     const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d.detail || 'Erro ao enviar o PDF');
     const nfEl = inputNfId ? document.getElementById(inputNfId) : null;
+    const msgChave = d.chave ? ' Chave de acesso lida do PDF.' : ' (não achei a chave de acesso no PDF)';
     if (nfEl && !nfEl.value.trim() && d.numero_nf) {
       nfEl.value = d.numero_nf;
-      showAlert('PDF anexado. Número da NF preenchido pelo PDF: ' + d.numero_nf + ' — confira.');
-    } else showAlert('PDF da nota fiscal anexado.');
+      showAlert('PDF anexado. Número da NF preenchido pelo PDF: ' + d.numero_nf + ' — confira.' + msgChave);
+    } else showAlert('PDF da nota fiscal anexado.' + msgChave);
   } catch (e) { showAlert(e.message, 'danger'); }
   await _nfPdfRecarregar(elId, pedidoId, inputNfId);
 }
