@@ -60,6 +60,14 @@ app.mount("/js", StaticFiles(directory=js_path), name="js")
 app.mount("/css", StaticFiles(directory=css_path), name="css")
 
 # Rota de login (aberta)
+@app.get("/api/ambiente")
+def ambiente():
+    """Em que servidor estamos (variável PRATIC_AMBIENTE no Coolify): treinamento,
+    teste ou produção. As telas mostram uma faixa colorida fora da produção."""
+    amb = (os.environ.get("PRATIC_AMBIENTE") or "producao").strip().lower()
+    return {"ambiente": amb if amb in ("treinamento", "teste") else "producao"}
+
+
 @app.get("/login")
 def login_page(request: Request):
     session_id = request.cookies.get("session_id")
