@@ -75,6 +75,18 @@
           };
           faixa.appendChild(btn);
         });
+        // Atualizar os dados do treino com uma cópia do servidor de origem
+        var sep = el('span', 'width:1px;height:20px;background:rgba(255,255,255,.5);margin:0 4px');
+        faixa.appendChild(sep);
+        var bt = el('button',
+          'font:700 12px Arial,Helvetica,sans-serif;padding:4px 10px;border-radius:14px;cursor:pointer;' +
+          'border:2px solid #fff;background:#7c2d12;color:#fff', '🔄 Atualizar dados');
+        bt.type = 'button';
+        bt.title = d.dados_de ? 'Dados copiados de ' + d.origem + ' em ' + d.dados_de : 'Copiar os dados atuais de ' + d.origem;
+        bt.onclick = function (ev) { ev.stopPropagation(); atualizarDados(d, bt); };
+        faixa.appendChild(bt);
+        if (d.dados_de) faixa.appendChild(el('span', 'font-size:11px;font-weight:600;opacity:.9', 'dados de ' + d.dados_de));
+
         document.body.style.paddingBottom = faixa.offsetHeight + 'px';
         window.addEventListener('resize', function () { document.body.style.paddingBottom = faixa.offsetHeight + 'px'; });
       })
@@ -137,6 +149,36 @@
       .catch(function (e) {
         alert(e.message);
         if (btn) { btn.disabled = false; btn.style.opacity = ''; }
+      });
+  }
+
+  function atualizarDados(d, bt) {
+    fecharMenu();
+    if (!d.copia_configurada) {
+      alert('A cópia automática ainda não está configurada.\n\nFalta a variável PRATIC_SYNC_TOKEN no Coolify (igual no app de treino e no app de teste).');
+      return;
+    }
+    if (!confirm('Copiar agora os dados de ' + d.origem + ' para o treinamento?\n\n' +
+                 '• Tudo o que foi feito aqui no treino será apagado e substituído.\n' +
+                 '• ' + d.origem + ' não é alterado (só é lido).\n' +
+                 '• Pode levar alguns minutos.')) return;
+    var ov = el('div', 'position:fixed;inset:0;z-index:2147483002;background:rgba(0,0,0,.7);display:flex;align-items:center;' +
+      'justify-content:center;font:700 18px Arial,Helvetica,sans-serif;color:#fff;text-align:center;padding:20px',
+      '🔄 Copiando os dados de ' + d.origem + '…\nNão feche esta tela.');
+    ov.style.whiteSpace = 'pre-line';
+    document.body.appendChild(ov);
+    bt.disabled = true;
+    fetch('/api/treino/atualizar-dados', { method: 'POST', credentials: 'same-origin' })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        if (!res.ok) throw new Error((res.j && res.j.detail) || 'Não foi possível copiar os dados.');
+        alert('✅ ' + res.j.mensagem + (res.j.continua_logado ? '' : '\n\nSeu usuário não existe na origem: entre de novo.'));
+        try { localStorage.removeItem('user_nome'); localStorage.removeItem('user_role'); localStorage.removeItem('user_username'); } catch (e) {}
+        window.location.href = res.j.continua_logado ? '/' : '/login';
+      })
+      .catch(function (e) {
+        ov.remove(); bt.disabled = false;
+        alert('❌ ' + e.message);
       });
   }
 
