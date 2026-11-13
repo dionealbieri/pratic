@@ -1535,6 +1535,7 @@ def init_db():
     _migrar_programacao(conn)
     _migrar_epi_ca(conn)
     _migrar_cadastro_colaborador(conn)
+    _migrar_nf_chave(conn)
     conn.commit()
     conn.close()
 
@@ -2143,3 +2144,29 @@ def _migrar_cadastro_colaborador(conn):
         if c not in cols:
             conn.execute(f"ALTER TABLE colaboradores ADD COLUMN {c} TEXT")
     conn.commit()
+
+
+def _migrar_nf_chave(conn):
+    """Chave de acesso da NF-e (44 dígitos), lida automaticamente do PDF anexado.
+    Na primeira vez, preenche também os PDFs que já estavam anexados."""
+    for tabela in ("pedidos", "pedidos_remessas"):
+        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({tabela})").fetchall()]
+        if cols and "nf_chave" not in cols:
+            conn.execute(f"ALTER TABLE {tabela} ADD COLUMN nf_chave TEXT")
+    conn.commit()
+    if conn.execute("SELECT 1 FROM configuracoes WHERE chave='nf_chave_backfill_v1'").fetchone():
+        return
+    try:
+        from rotas.pedidos import _ler_chave_nf
+        pasta = os.path.join(os.path.dirname(os.path.abspath(DB_PATH)), "notas_fiscais")
+        for tabela in ("pedidos", "pedidos_remessas"):
+            for r in conn.execute(f"SELECT id, nf_arquivo FROM {tabela} WHERE nf_arquivo IS NOT NULL AND nf_arquivo != '' AND (nf_chave IS NULL OR nf_chave = '')").fetchall():
+                caminho = os.path.join(pasta, os.path.basename(r[1]))
+                if os.path.isfile(caminho):
+                    ch = _ler_chave_nf(caminho)
+                    if ch:
+                        conn.execute(f"UPDATE {tabela} SET nf_chave=? WHERE id=?", (ch, r[0]))
+        conn.execute("INSERT OR IGNORE INTO configuracoes (chave, valor, descricao) VALUES ('nf_chave_backfill_v1', '1', 'Chaves de NF lidas dos PDFs já anexados')")
+        conn.commit()
+    except Exception:
+        conn.rollback()
