@@ -3,14 +3,19 @@ from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timedelta
 import secrets
+import os
 
 from database import get_conn
-from auth_utils import verify_password, hash_password, get_current_user
+from auth_utils import verify_password, hash_password, get_current_user, validar_sessao_db
 from vendedores import juntar_nomes, separar_nomes, vincular_pedidos_sem_vendedor
 
 router = APIRouter()
 
 PERFIS_VALIDOS = ['gestor', 'producao', 'comercial', 'estoque', 'expedicao']
+
+# Modo treinador (só no servidor de treinamento): guarda a sessão do gestor que
+# está conduzindo o treino, para ele poder "ver como" outro perfil e voltar.
+TREINO_COOKIE = "treino_origem"
 
 class LoginIn(BaseModel):
     username: str
@@ -73,6 +78,8 @@ def login(data: LoginIn, response: Response):
             max_age=86400,
             path="/"
         )
+        # Login novo encerra qualquer "Trocar perfil" do treinamento neste navegador
+        response.delete_cookie(key=TREINO_COOKIE, path="/")
         
         return {
             "mensagem": "Autenticado com sucesso",
@@ -104,6 +111,7 @@ def logout(response: Response, current_user = Depends(get_current_user)):
         
     # Limpa o cookie no navegador
     response.delete_cookie(key="session_id", path="/")
+    response.delete_cookie(key=TREINO_COOKIE, path="/")
     return {"mensagem": "Sessão encerrada com sucesso"}
 
 @router.get("/me")
@@ -397,3 +405,120 @@ def get_minhas_permissoes(current_user = Depends(get_current_user)):
 
     # Sem permissões definidas — retornar tudo negado
     return {modulo: {acao: False for acao in acoes} for modulo, acoes in MODULOS_ACOES.items()}
+
+
+# ─── MODO TREINADOR: TROCAR DE PERFIL COM UM CLIQUE ─────────────────────────────
+# Só existe quando PRATIC_AMBIENTE=treinamento (Coolify). Na produção as rotas
+# respondem 404 e nada muda. Quem pode trocar: um Gestor logado (ou o Gestor que
+# começou a troca, guardado no cookie treino_origem).
+
+ROTULOS_PERFIL = [
+    ("gestor", "🖥️ Gestor"),
+    ("comercial", "🏢 Comercial"),
+    ("producao", "🏭 Produção"),
+    ("estoque", "📦 Estoque"),
+    ("expedicao", "🚚 Expedição"),
+]
+
+
+def _em_treinamento() -> bool:
+    return (os.environ.get("PRATIC_AMBIENTE") or "").strip().lower() == "treinamento"
+
+
+def _treinador(request: Request):
+    """Devolve (usuario_gestor, session_id_do_gestor) ou (None, None)."""
+    for sid in (request.cookies.get(TREINO_COOKIE), request.cookies.get("session_id")):
+        u = validar_sessao_db(sid) if sid else None
+        if u and u.get("role") == "gestor":
+            return u, sid
+    return None, None
+
+
+def _exigir_treinador(request: Request):
+    if not _em_treinamento():
+        raise HTTPException(status_code=404, detail="Disponível só no ambiente de treinamento.")
+    treinador, sid = _treinador(request)
+    if not treinador:
+        raise HTTPException(status_code=403, detail="Só o Gestor que conduz o treinamento pode trocar de perfil.")
+    return treinador, sid
+
+
+@router.get("/treino/perfis")
+def treino_perfis(request: Request):
+    treinador, _sid = _exigir_treinador(request)
+    atual = validar_sessao_db(request.cookies.get("session_id")) or treinador
+    conn = get_conn()
+    try:
+        rows = conn.execute("""
+            SELECT id, nome, username, role FROM usuarios
+            WHERE ativo = 1 ORDER BY nome COLLATE NOCASE
+        """).fetchall()
+    finally:
+        conn.close()
+    perfis = []
+    for role, rotulo in ROTULOS_PERFIL:
+        perfis.append({
+            "role": role,
+            "rotulo": rotulo,
+            "usuarios": [{"id": r["id"], "nome": r["nome"], "username": r["username"]}
+                         for r in rows if r["role"] == role],
+        })
+    return {
+        "treinador": {"id": treinador["id"], "nome": treinador["nome"]},
+        "atual": {"id": atual["id"], "nome": atual["nome"], "role": atual["role"]},
+        "perfis": perfis,
+    }
+
+
+class TreinoEntrarIn(BaseModel):
+    usuario_id: Optional[int] = None
+    role: Optional[str] = None
+
+
+@router.post("/treino/entrar")
+def treino_entrar(data: TreinoEntrarIn, request: Request, response: Response):
+    treinador, sid_treinador = _exigir_treinador(request)
+    conn = get_conn()
+    try:
+        alvo = None
+        if data.usuario_id:
+            alvo = conn.execute("SELECT id, nome, username, role, ativo FROM usuarios WHERE id = ?",
+                                (data.usuario_id,)).fetchone()
+            if not alvo or not alvo["ativo"]:
+                raise HTTPException(status_code=404, detail="Usuário não encontrado ou desativado.")
+        elif data.role in PERFIS_VALIDOS:
+            alvo = conn.execute("""SELECT id, nome, username, role, ativo FROM usuarios
+                                   WHERE role = ? AND ativo = 1 ORDER BY id LIMIT 1""", (data.role,)).fetchone()
+            if not alvo:
+                # Nenhum usuário com esse perfil no treino: cria um só para o treinamento
+                rotulo = dict(ROTULOS_PERFIL).get(data.role, data.role).split(" ", 1)[-1]
+                username = f"treino.{data.role}"
+                conn.execute("""INSERT OR IGNORE INTO usuarios (username, password_hash, role, nome, deve_alterar_senha)
+                                VALUES (?, ?, ?, ?, 0)""",
+                             (username, hash_password(secrets.token_hex(16)), data.role, f"Treino {rotulo}"))
+                alvo = conn.execute("SELECT id, nome, username, role, ativo FROM usuarios WHERE username = ?",
+                                    (username,)).fetchone()
+        else:
+            raise HTTPException(status_code=400, detail="Informe o usuário ou o perfil.")
+
+        sid_atual = request.cookies.get("session_id")
+        # Sessão "emprestada" anterior (não é a do treinador): descarta
+        if sid_atual and sid_atual != sid_treinador:
+            conn.execute("DELETE FROM sessoes WHERE session_id = ?", (sid_atual,))
+
+        if alvo["id"] == treinador["id"]:
+            nova_sid = sid_treinador          # voltou para o próprio usuário
+        else:
+            # No treino ninguém fica preso na tela de "troque a senha"
+            conn.execute("UPDATE usuarios SET deve_alterar_senha = 0 WHERE id = ?", (alvo["id"],))
+            nova_sid = secrets.token_hex(32)
+            expira_em = (datetime.now() + timedelta(hours=12)).strftime("%Y-%m-%d %H:%M:%S")
+            conn.execute("INSERT INTO sessoes (session_id, usuario_id, expira_em) VALUES (?, ?, ?)",
+                         (nova_sid, alvo["id"], expira_em))
+        conn.commit()
+    finally:
+        conn.close()
+
+    response.set_cookie(key="session_id", value=nova_sid, httponly=True, samesite="lax", max_age=86400, path="/")
+    response.set_cookie(key=TREINO_COOKIE, value=sid_treinador, httponly=True, samesite="lax", max_age=86400, path="/")
+    return {"usuario": {"id": alvo["id"], "nome": alvo["nome"], "username": alvo["username"], "role": alvo["role"]}}
