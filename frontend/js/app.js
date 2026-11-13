@@ -1616,7 +1616,7 @@ async function loadProducao() {
         const r = g.itens[0];
         return `<tr>
           <td><span style="display:inline-block;width:14px"></span>${fmtDate(g.data)}</td>
-          <td><strong>${g.colaborador_nome}</strong></td>
+          <td><strong>${g.colaborador_nome}</strong><div style="font-size:12px;color:var(--muted);margin-top:2px">↳ ${r.pedido_numero ? ('Pedido ' + r.pedido_numero) : 'Manual'}</div></td>
           <td>${maq}</td>
           <td>${fmtNum(g.meta)}</td>
           <td>${fmtNum(g.producao)}</td>
