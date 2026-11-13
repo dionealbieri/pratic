@@ -203,9 +203,8 @@ def info_backup():
             "tamanho_arquivos": tamanho, "tamanho_banco": tam_db}
 
 
-@app.get("/api/backup/completo", dependencies=[Depends(_so_gestor_ou_pagina("backup"))])
-def fazer_backup_completo():
-    from starlette.background import BackgroundTask
+def _gerar_zip_completo():
+    """Monta o .zip completo (banco + PDFs) numa pasta temporária. Devolve (caminho, nome)."""
     now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     tmp_db = os.path.join(tempfile.gettempdir(), f"pratic_bk_{now}.db")
     zip_name = f"pratic_backup_completo_{now}.zip"
@@ -233,13 +232,101 @@ def fazer_backup_completo():
     finally:
         if os.path.exists(tmp_db):
             os.remove(tmp_db)
+    return zip_path, zip_name
+
+
+@app.get("/api/backup/completo", dependencies=[Depends(_so_gestor_ou_pagina("backup"))])
+def fazer_backup_completo():
+    from starlette.background import BackgroundTask
+    zip_path, zip_name = _gerar_zip_completo()
     return FileResponse(path=zip_path, filename=zip_name, media_type="application/zip",
                         background=BackgroundTask(lambda: os.path.exists(zip_path) and os.remove(zip_path)))
 
 
+# ─── CÓPIA DOS DADOS PARA O SERVIDOR DE TREINAMENTO ─────────────────────────────
+# O servidor de origem (hoje pratic.criadorpro.com.br) entrega o backup completo ao treino, sem login, SÓ para quem
+# mandar a chave PRATIC_SYNC_TOKEN (variável no Coolify, igual nos dois apps).
+# Sem a variável configurada esta rota responde 404 — nada fica exposto.
+def _token_sync() -> str:
+    t = (os.environ.get("PRATIC_SYNC_TOKEN") or "").strip()
+    return t if len(t) >= 24 else ""
+
+
+@app.get("/api/sync/backup-completo", include_in_schema=False)
+def sync_backup_completo(request: Request):
+    import secrets as _sec
+    from fastapi import HTTPException
+    from starlette.background import BackgroundTask
+    token = _token_sync()
+    enviado = request.headers.get("X-Pratic-Sync") or ""
+    if not token or not _sec.compare_digest(token, enviado):
+        raise HTTPException(status_code=404, detail="Not Found")
+    zip_path, zip_name = _gerar_zip_completo()
+    return FileResponse(path=zip_path, filename=zip_name, media_type="application/zip",
+                        background=BackgroundTask(lambda: os.path.exists(zip_path) and os.remove(zip_path)))
+
+
+@app.post("/api/treino/atualizar-dados", include_in_schema=False)
+def treino_atualizar_dados(request: Request):
+    """Botão "Atualizar dados" da faixa do treinamento: baixa o backup completo do
+    servidor de origem (PRATIC_ORIGEM_URL) e restaura aqui. Só no treinamento e só para o Gestor treinador."""
+    import httpx
+    from fastapi import HTTPException
+    from fastapi.responses import JSONResponse
+    from rotas.auth import _exigir_treinador, TREINO_COOKIE
+    treinador, sid_treinador = _exigir_treinador(request)
+    token = _token_sync()
+    if not token:
+        raise HTTPException(status_code=400, detail="Falta configurar a variável PRATIC_SYNC_TOKEN no Coolify (treino e origem).")
+    origem = (os.environ.get("PRATIC_ORIGEM_URL") or "https://pratic.criadorpro.com.br").strip().rstrip("/")
+
+    now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    temp_up = os.path.join(tempfile.gettempdir(), f"sync_{now}.zip")
+    try:
+        with httpx.stream("GET", origem + "/api/sync/backup-completo", headers={"X-Pratic-Sync": token},
+                          timeout=httpx.Timeout(600.0, connect=15.0), follow_redirects=True) as r:
+            if r.status_code == 404:
+                raise HTTPException(status_code=502, detail="O servidor de origem recusou a cópia: confira se a PRATIC_SYNC_TOKEN é igual nos dois apps e se os dois foram reimplantados (Redeploy).")
+            if r.status_code != 200:
+                raise HTTPException(status_code=502, detail=f"O servidor de origem respondeu {r.status_code}.")
+            with open(temp_up, "wb") as f:
+                for parte in r.iter_bytes(1024 * 1024):
+                    f.write(parte)
+    except httpx.HTTPError as e:
+        if os.path.exists(temp_up):
+            os.remove(temp_up)
+        raise HTTPException(status_code=502, detail=f"Não consegui falar com o servidor de origem ({origem}): {e.__class__.__name__}")
+
+    res = _restaurar_de_arquivo(temp_up, "sync.zip")
+
+    # O banco novo veio com as sessões da origem: limpa e mantém o treinador logado
+    conn = get_conn()
+    continua_logado = False
+    try:
+        conn.execute("DELETE FROM sessoes")
+        u = conn.execute("SELECT id, role, ativo FROM usuarios WHERE username = ?", (treinador["username"],)).fetchone()
+        if u and u["ativo"] and u["role"] == "gestor":
+            expira = (datetime.datetime.now() + datetime.timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S")
+            conn.execute("INSERT INTO sessoes (session_id, usuario_id, expira_em) VALUES (?, ?, ?)", (sid_treinador, u["id"], expira))
+            continua_logado = True
+        quando = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+        conn.execute("INSERT OR REPLACE INTO configuracoes (chave, valor, descricao) VALUES ('treino_dados_de', ?, 'Quando os dados do treinamento foram copiados da origem')", (quando,))
+        conn.commit()
+    finally:
+        conn.close()
+
+    resp = JSONResponse({"mensagem": f"Dados copiados de {origem.split('//')[-1]} ({res.get('arquivos', 0)} arquivo(s)).",
+                         "quando": quando, "continua_logado": continua_logado})
+    resp.delete_cookie(key=TREINO_COOKIE, path="/")
+    if continua_logado:
+        resp.set_cookie(key="session_id", value=sid_treinador, httponly=True, samesite="lax", max_age=86400, path="/")
+    else:
+        resp.delete_cookie(key="session_id", path="/")
+    return resp
+
+
 @app.post("/api/restore", dependencies=[Depends(_so_gestor_ou_pagina())])
 async def restaurar_backup(file: UploadFile = File(...)):
-    db_path = DB_PATH
     now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
     # Salva o arquivo enviado em disco (sem carregar tudo na memória: o .zip com PDFs pode ser grande)
@@ -247,6 +334,14 @@ async def restaurar_backup(file: UploadFile = File(...)):
     temp_up = os.path.join(tempfile.gettempdir(), f"restore_up_{now}")
     with open(temp_up, "wb") as f:
         shutil.copyfileobj(file.file, f, 1024 * 1024)
+    return _restaurar_de_arquivo(temp_up, nome_env)
+
+
+def _restaurar_de_arquivo(temp_up: str, nome_env: str = "") -> dict:
+    """Restaura banco (+ PDFs) a partir de um .zip completo ou .db já salvo em disco.
+    Usado pelo botão Restaurar e pelo "Atualizar dados" do treinamento."""
+    db_path = DB_PATH
+    now = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     temp_db_path = os.path.join(tempfile.gettempdir(), f"restore_{now}.db")
     restaurados = 0
     try:
