@@ -2239,7 +2239,7 @@ def meus_pedidos(current_user: dict = Depends(get_current_user)):
                        AND (i.qtd_produzida > 0 OR i.status IN ('em_producao','produzido','entregue'))) AS itens_iniciados,
                    p.obs_vendedor, p.nota_fiscal, p.data_despacho, p.data_entrega, p.envio_definido_em,
                    COALESCE(p.origem_estoque_cliente,0) AS origem_estoque_cliente,
-                   CASE WHEN p.nf_arquivo IS NOT NULL AND p.nf_arquivo != '' THEN 1 ELSE 0 END AS tem_nf_pdf,
+                   CASE WHEN p.nf_arquivo IS NOT NULL AND p.nf_arquivo != '' THEN 1 ELSE 0 END AS tem_nf_pdf, p.nf_chave,
                    CASE WHEN p.arquivo_original IS NOT NULL AND p.arquivo_original != '' THEN 1 ELSE 0 END AS tem_original,
                    c.razao_social AS cliente_nome, c.nome_fantasia,
                    CAST(julianday('now','localtime') - julianday(p.status_desde) AS INTEGER) AS dias_na_etapa,
@@ -2321,7 +2321,7 @@ def _campos_pedido_vendedor() -> str:
         COALESCE(p.origem_estoque_cliente,0) AS origem_estoque_cliente,
         COALESCE(p.para_estoque_cliente,0) AS para_estoque_cliente,
         COALESCE(p.revenda_bloqueado,0) AS revenda_bloqueado,
-        CASE WHEN p.nf_arquivo IS NOT NULL AND p.nf_arquivo != '' THEN 1 ELSE 0 END AS tem_nf_pdf,
+        CASE WHEN p.nf_arquivo IS NOT NULL AND p.nf_arquivo != '' THEN 1 ELSE 0 END AS tem_nf_pdf, p.nf_chave,
         CASE WHEN p.arquivo_original IS NOT NULL AND p.arquivo_original != '' THEN 1 ELSE 0 END AS tem_original,
         c.razao_social AS cliente_nome, c.nome_fantasia,
         CAST(julianday('now','localtime') - julianday(p.status_desde) AS INTEGER) AS dias_na_etapa,
@@ -2841,6 +2841,35 @@ def _ler_numero_nf(caminho: str) -> str:
     return ""
 
 
+def _ler_chave_nf(caminho: str) -> str:
+    """Chave de acesso da NF-e (44 dígitos) lida do PDF do DANFE. Vazio se não achar."""
+    try:
+        from pypdf import PdfReader
+        texto = "\n".join((pg.extract_text() or "") for pg in PdfReader(caminho).pages[:2])
+    except Exception:
+        return ""
+    so_digitos = re.sub(r"[ .\-\n\r\t]", "", texto)
+    # cUF(2) AAMM(4) CNPJ(14) modelo 55/65(2) série(3) nNF(9) tpEmis+cNF(9) DV(1)
+    for m in re.finditer(r"(?<!\d)(\d{20}(?:55|65)\d{22})(?!\d)", so_digitos):
+        chave = m.group(1)
+        if _dv_chave_ok(chave):
+            return chave
+    m = re.search(r"(?<!\d)(\d{20}(?:55|65)\d{22})(?!\d)", so_digitos)
+    return m.group(1) if m else ""
+
+
+def _dv_chave_ok(chave: str) -> bool:
+    """Confere o dígito verificador (módulo 11) da chave de acesso."""
+    if len(chave) != 44 or not chave.isdigit():
+        return False
+    pesos, soma = [2, 3, 4, 5, 6, 7, 8, 9], 0
+    for i, d in enumerate(reversed(chave[:43])):
+        soma += int(d) * pesos[i % 8]
+    resto = soma % 11
+    dv = 0 if resto in (0, 1) else 11 - resto
+    return dv == int(chave[43])
+
+
 @router.post("/{id}/nf-arquivo")
 async def anexar_nf_arquivo(id: int, arquivo: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
     if not _pode_anexar_nf(current_user):
@@ -2860,9 +2889,10 @@ async def anexar_nf_arquivo(id: int, arquivo: UploadFile = File(...), current_us
         with open(caminho, "wb") as f:
             f.write(dados)
         antigo = ped["nf_arquivo"]
+        chave = _ler_chave_nf(caminho)
         conn.execute("""UPDATE pedidos SET nf_arquivo=?, nf_arquivo_nome=?, nf_arquivo_em=datetime('now','localtime'),
-                        nf_arquivo_por=? WHERE id=?""",
-                     (nome, (arquivo.filename or "nota-fiscal.pdf")[:120], _nome_usuario(current_user), id))
+                        nf_arquivo_por=?, nf_chave=? WHERE id=?""",
+                     (nome, (arquivo.filename or "nota-fiscal.pdf")[:120], _nome_usuario(current_user), chave or None, id))
         conn.commit()
         if antigo and antigo != nome:
             try:
@@ -2870,7 +2900,7 @@ async def anexar_nf_arquivo(id: int, arquivo: UploadFile = File(...), current_us
             except OSError:
                 pass
         return {"mensagem": "Nota fiscal anexada", "numero_nf": _ler_numero_nf(caminho),
-                "nome": arquivo.filename or "nota-fiscal.pdf"}
+                "nome": arquivo.filename or "nota-fiscal.pdf", "chave": chave}
     finally:
         conn.close()
 
@@ -2905,7 +2935,7 @@ def remover_nf_arquivo(id: int, current_user: dict = Depends(get_current_user)):
         ped = conn.execute("SELECT nf_arquivo FROM pedidos WHERE id=?", (id,)).fetchone()
         if not ped:
             raise HTTPException(404, "Pedido não encontrado")
-        conn.execute("UPDATE pedidos SET nf_arquivo=NULL, nf_arquivo_nome=NULL, nf_arquivo_em=NULL, nf_arquivo_por=NULL WHERE id=?", (id,))
+        conn.execute("UPDATE pedidos SET nf_arquivo=NULL, nf_arquivo_nome=NULL, nf_arquivo_em=NULL, nf_arquivo_por=NULL, nf_chave=NULL WHERE id=?", (id,))
         conn.commit()
         if ped["nf_arquivo"]:
             try:

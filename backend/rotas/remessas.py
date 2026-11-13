@@ -16,7 +16,7 @@ from pydantic import BaseModel
 from auth_utils import get_current_user
 from database import get_conn
 from rotas.pedidos import (
-    NF_MAX_BYTES, _calcular_cotacao, _ler_numero_nf, _marcar_usuario_hist, _nome_usuario,
+    NF_MAX_BYTES, _calcular_cotacao, _ler_numero_nf, _ler_chave_nf, _marcar_usuario_hist, _nome_usuario,
     _pasta_nf, _recalc_status_pedido, _remessado_por_item, exigir_permissao, verificar_permissao,
 )
 
@@ -490,9 +490,10 @@ async def anexar_nf_remessa(rid: int, arquivo: UploadFile = File(...), current_u
         with open(caminho, "wb") as f:
             f.write(dados)
         antigo = r["nf_arquivo"]
+        chave = _ler_chave_nf(caminho)
         conn.execute("""UPDATE pedidos_remessas SET nf_arquivo=?, nf_arquivo_nome=?, nf_arquivo_em=datetime('now','localtime'),
-                        nf_arquivo_por=? WHERE id=?""",
-                     (nome, (arquivo.filename or "nota-fiscal.pdf")[:120], _nome_usuario(current_user), rid))
+                        nf_arquivo_por=?, nf_chave=? WHERE id=?""",
+                     (nome, (arquivo.filename or "nota-fiscal.pdf")[:120], _nome_usuario(current_user), chave or None, rid))
         conn.commit()
         if antigo and antigo != nome:
             try:
@@ -530,7 +531,7 @@ def remover_nf_remessa(rid: int, current_user: dict = Depends(get_current_user))
     conn = get_conn()
     try:
         r = _remessa(conn, rid)
-        conn.execute("UPDATE pedidos_remessas SET nf_arquivo=NULL, nf_arquivo_nome=NULL, nf_arquivo_em=NULL, nf_arquivo_por=NULL WHERE id=?", (rid,))
+        conn.execute("UPDATE pedidos_remessas SET nf_arquivo=NULL, nf_arquivo_nome=NULL, nf_arquivo_em=NULL, nf_arquivo_por=NULL, nf_chave=NULL WHERE id=?", (rid,))
         conn.commit()
         if r["nf_arquivo"]:
             try:
