@@ -453,6 +453,8 @@ def treino_perfis(request: Request):
             SELECT id, nome, username, role FROM usuarios
             WHERE ativo = 1 ORDER BY nome COLLATE NOCASE
         """).fetchall()
+        q = conn.execute("SELECT valor FROM configuracoes WHERE chave = 'treino_dados_de'").fetchone()
+        dados_de = q["valor"] if q else ""
     finally:
         conn.close()
     perfis = []
@@ -467,6 +469,10 @@ def treino_perfis(request: Request):
         "treinador": {"id": treinador["id"], "nome": treinador["nome"]},
         "atual": {"id": atual["id"], "nome": atual["nome"], "role": atual["role"]},
         "perfis": perfis,
+        "dados_de": dados_de,
+        "origem": ((os.environ.get("PRATIC_ORIGEM_URL") or "https://pratic.criadorpro.com.br").strip().rstrip("/")
+                   .replace("https://", "").replace("http://", "")),
+        "copia_configurada": len((os.environ.get("PRATIC_SYNC_TOKEN") or "").strip()) >= 24,
     }
 
 
