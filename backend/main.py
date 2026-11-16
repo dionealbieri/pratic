@@ -6,7 +6,7 @@ import os, shutil, tempfile, datetime, base64, sqlite3, zipfile
 
 from database import init_db, seed_data, get_conn, DB_PATH
 from auth_utils import get_current_user, validar_sessao_db
-from rotas import auth, colaboradores, maquinas, producao, premiacao, configuracoes, relatorios, estoque, pedidos, epi, comunicacao, gerencial, pintura, remessas, programacao
+from rotas import auth, colaboradores, maquinas, producao, premiacao, configuracoes, relatorios, estoque, pedidos, epi, comunicacao, gerencial, pintura, remessas, programacao, treino
 
 app = FastAPI(title="PRATIC - Sistema de Produção")
 
@@ -24,6 +24,20 @@ async def add_no_cache_header(request: Request, call_next):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
+    return response
+
+
+# Treinamento: anota o que cada usuário grava no sistema (para as missões e o
+# painel 📋 Turma). Só age com PRATIC_AMBIENTE=treinamento; fora dele não faz nada.
+@app.middleware("http")
+async def registrar_treino(request: Request, call_next):
+    response = await call_next(request)
+    if (request.method in ("POST", "PUT", "DELETE") and response.status_code < 400
+            and request.url.path.startswith("/api/") and treino.em_treinamento()):
+        try:
+            treino.registrar_api(request.cookies.get("session_id"), request.method, request.url.path)
+        except Exception as e:
+            print("treino: falha ao registrar evento:", e)
     return response
 
 
@@ -50,6 +64,7 @@ app.include_router(epi.router,            prefix="/api/epi",            tags=["E
 app.include_router(comunicacao.router,    prefix="/api/comunicacao",    tags=["Comunicação"],   dependencies=[Depends(get_current_user)])
 app.include_router(gerencial.router,      prefix="/api/gerencial",      tags=["Gerencial"],     dependencies=[Depends(get_current_user)])
 app.include_router(programacao.router,    prefix="/api/programacao",    tags=["Programação"],   dependencies=[Depends(get_current_user)])
+app.include_router(treino.router,         prefix="/api/treino",         tags=["Treinamento"])
 app.include_router(pintura.router,        prefix="/api/pintura",        tags=["Pintura"],       dependencies=[Depends(get_current_user)])
 
 frontend_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "frontend"))
