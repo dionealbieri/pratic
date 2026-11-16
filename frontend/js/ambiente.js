@@ -38,7 +38,14 @@
     var obs = new MutationObserver(function () { if (document.title.indexOf(c.tit) !== 0) document.title = c.tit + document.title; });
     var t = document.querySelector('title'); if (t) obs.observe(t, { childList: true });
     window.PRATIC_AMBIENTE = amb;
-    if (amb === 'treinamento') montarTrocaPerfil(f, txt);
+    if (amb === 'treinamento') {
+      montarTrocaPerfil(f, txt);
+      // missões, tour e painel da turma
+      var sc = document.createElement('script');
+      sc.src = '/js/treino.js?v=20261113a';
+      sc.defer = true;
+      document.body.appendChild(sc);
+    }
   }
 
   // ─── Modo treinador ──────────────────────────────────────────────────────────
@@ -75,9 +82,22 @@
           };
           faixa.appendChild(btn);
         });
+        // Painel da turma: progresso de cada vendedor nas missões
+        var sep0 = el('span', 'width:1px;height:20px;background:rgba(255,255,255,.5);margin:0 4px');
+        faixa.appendChild(sep0);
+        var btT = el('button',
+          'font:700 12px Arial,Helvetica,sans-serif;padding:4px 10px;border-radius:14px;cursor:pointer;' +
+          'border:2px solid #fff;background:#7c2d12;color:#fff', '📋 Turma');
+        btT.type = 'button';
+        btT.title = 'Ver o progresso de cada vendedor nas missões do treinamento';
+        btT.onclick = function (ev) {
+          ev.stopPropagation();
+          if (window.PraticTreino) window.PraticTreino.abrirTurma();
+          else alert('Carregando... tente de novo em um segundo.');
+        };
+        faixa.appendChild(btT);
+
         // Atualizar os dados do treino com uma cópia do servidor de origem
-        var sep = el('span', 'width:1px;height:20px;background:rgba(255,255,255,.5);margin:0 4px');
-        faixa.appendChild(sep);
         var bt = el('button',
           'font:700 12px Arial,Helvetica,sans-serif;padding:4px 10px;border-radius:14px;cursor:pointer;' +
           'border:2px solid #fff;background:#7c2d12;color:#fff', '🔄 Atualizar dados');
