@@ -233,9 +233,44 @@ def listar(mes: Optional[str] = None, colaborador_id: Optional[int] = None):
         query += " AND p.colaborador_id = ?"
         params.append(colaborador_id)
     query += " ORDER BY p.data DESC"
-    rows = conn.execute(query, params).fetchall()
+    rows = [dict(r) for r in conn.execute(query, params).fetchall()]
+    # Detalhe por produto de cada lançamento: a lista mostra o que foi feito em
+    # cada pedido e a tela de edição reabre item por item (antes reabria só o
+    # total, sem produto — e salvar devolvia o estoque sem baixar de novo).
+    if rows:
+        ids = [r["id"] for r in rows]
+        por_lanc = {}
+        for i in range(0, len(ids), 500):
+            lote = ids[i:i + 500]
+            ph = ",".join("?" * len(lote))
+            for it in conn.execute(f"""
+                    SELECT i.producao_diaria_id, i.produto_estoque_id, i.quantidade, i.perda_quantidade,
+                           i.sobra_quantidade, i.tipo_perda, ep.nome AS produto_nome
+                    FROM producao_diaria_itens i
+                    LEFT JOIN estoque_produtos ep ON ep.id = i.produto_estoque_id
+                    WHERE i.producao_diaria_id IN ({ph}) ORDER BY i.id""", lote):
+                por_lanc.setdefault(it["producao_diaria_id"], []).append(dict(it))
+            # cada motivo de perda fica no extrato do estoque (uma linha por motivo)
+            perdas = {}
+            for m in conn.execute(f"""
+                    SELECT producao_diaria_id, produto_id, quantidade, tipo_perda, observacao, motivo
+                    FROM estoque_movimentacoes
+                    WHERE tipo = 'perda' AND producao_diaria_id IN ({ph}) ORDER BY id""", lote):
+                perdas.setdefault((m["producao_diaria_id"], m["produto_id"]), []).append({
+                    "quantidade": m["quantidade"], "tipo_perda": m["tipo_perda"], "observacao": m["observacao"],
+                    "nao_baixar_estoque": "sem baixa" in (m["motivo"] or ""),
+                })
+            for lid in lote:
+                for it in por_lanc.get(lid, []):
+                    pl = perdas.get((lid, it["produto_estoque_id"])) if it["produto_estoque_id"] else None
+                    if not pl and (it["perda_quantidade"] or 0) > 0:
+                        pl = [{"quantidade": it["perda_quantidade"], "tipo_perda": it["tipo_perda"] if it["tipo_perda"] != "Múltiplos" else "Quebra",
+                               "observacao": None, "nao_baixar_estoque": False}]
+                    it["perdas"] = pl or []
+        for r in rows:
+            r["itens"] = por_lanc.get(r["id"], [])
     conn.close()
-    return [dict(r) for r in rows]
+    return rows
 
 @router.post("/")
 def registrar(p: ProducaoIn, current_user = Depends(get_current_user)):
@@ -498,8 +533,16 @@ def atualizar(id: int, p: ProducaoIn, current_user = Depends(get_current_user)):
         if current_user.get('role') in _perfis_exigidos and not (p.pedido_numero and str(p.pedido_numero).strip()):
             raise HTTPException(400, "Número do pedido é obrigatório para lançar produção (configuração ativada para o seu perfil em Controle de Acesso).")
             
-        # 1. Reverter estoque antigo (fica uma linha de estorno no extrato)
         prods_antes = _produtos_do_lancamento(cur, id)
+        # Trava: lançamento que baixou estoque de produto(s) não pode ser salvo
+        # "sem produto" sem querer (tela antiga reabria só o total): devolveria
+        # o estoque sem baixar de novo. Para tirar o produto, exclua o lançamento.
+        manda_produto = bool(p.produto_estoque_id) or any(it.produto_estoque_id for it in (p.itens or []))
+        if prods_antes and not manda_produto:
+            raise HTTPException(400, "Este lançamento tem produto(s) vinculado(s) ao estoque e a edição chegou sem produto. "
+                                     "Atualize a página (Ctrl+Shift+R) e abra a edição de novo.")
+
+        # 1. Reverter estoque antigo (fica uma linha de estorno no extrato)
         rev = _reverter_estoque_producao(cur, id, _nome_usr(current_user), "editado")
         
         # 2. Atualizar registro de produção
