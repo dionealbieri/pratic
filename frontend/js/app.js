@@ -1586,6 +1586,8 @@ async function loadProducao() {
           <div class="card-sub">dias com produção</div>
         </div>`;
     }
+    window._prodRowsById = {};
+    rows.forEach(r => { window._prodRowsById[r.id] = r; });
     const tbody = document.getElementById('prod-tbody');
     if (!rows.length) {
       tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:32px">Nenhum registro encontrado</td></tr>';
@@ -1597,6 +1599,20 @@ async function loadProducao() {
           ${temPermissao('producao', 'editar') ? `<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation();editarProducao(${r.id}, ${r.colaborador_id}, ${r.maquina_id}, '${r.data}', ${r.meta}, ${r.producao}, ${r.produto_estoque_id || 'null'}, ${r.perda_quantidade || 0}, ${r.sobra_quantidade || 0}, '${r.pedido_numero || ''}')">✏️</button>` : ''}
           ${temPermissao('producao', 'deletar') ? `<button class="btn btn-sm btn-danger" onclick="event.stopPropagation();deletarProducao(${r.id})">✕</button>` : ''}
         </td>`;
+    // O que foi feito em cada lançamento, produto a produto (ex.: pedido com 300ml e 500ml)
+    const _resumoItensProd = (r) => {
+      const its = (r.itens || []).filter(i => (+i.quantidade || 0) > 0 || (+i.perda_quantidade || 0) > 0 || (+i.sobra_quantidade || 0) > 0);
+      if (!its.length) return '';
+      const linhas = its.map(i => {
+        const extras = [];
+        if ((+i.perda_quantidade || 0) > 0) extras.push('<span style="color:var(--danger)">perda ' + fmtNum(i.perda_quantidade) + '</span>');
+        if ((+i.sobra_quantidade || 0) > 0) extras.push('sobra ' + fmtNum(i.sobra_quantidade));
+        const nome = i.produto_estoque_id ? _escHtml(i.produto_nome || ('Produto #' + i.produto_estoque_id))
+          : '<span style="color:var(--warn)" title="Este lançamento não baixou estoque">⚠️ sem produto vinculado</span>';
+        return '<div>• ' + nome + ': <b style="color:var(--text)">' + fmtNum(i.quantidade || 0) + '</b>' + (extras.length ? ' · ' + extras.join(' · ') : '') + '</div>';
+      }).join('');
+      return '<div style="font-size:11.5px;color:var(--muted);margin-top:3px;line-height:1.45">' + linhas + '</div>';
+    };
     const _grupos = {};
     rows.forEach(r => {
       const k = r.colaborador_id + '|' + r.data;
@@ -1616,7 +1632,7 @@ async function loadProducao() {
         const r = g.itens[0];
         return `<tr>
           <td><span style="display:inline-block;width:14px"></span>${fmtDate(g.data)}</td>
-          <td><strong>${g.colaborador_nome}</strong><div style="font-size:12px;color:var(--muted);margin-top:2px">↳ ${r.pedido_numero ? ('Pedido ' + r.pedido_numero) : 'Manual'}</div></td>
+          <td><strong>${g.colaborador_nome}</strong><div style="font-size:12px;color:var(--muted);margin-top:2px">↳ ${r.pedido_numero ? ('Pedido ' + r.pedido_numero) : 'Manual'}</div>${_resumoItensProd(r)}</td>
           <td>${maq}</td>
           <td>${fmtNum(g.meta)}</td>
           <td>${fmtNum(g.producao)}</td>
@@ -1636,7 +1652,7 @@ async function loadProducao() {
       </tr>`;
       h += g.itens.map(r => `<tr class="prod-sub-${gid}" style="display:none;background:var(--surface2)">
           <td></td>
-          <td style="padding-left:18px;color:var(--muted)">↳ ${r.pedido_numero ? ('Pedido ' + r.pedido_numero) : 'Manual'}</td>
+          <td style="padding-left:18px;color:var(--muted)">↳ ${r.pedido_numero ? ('Pedido ' + r.pedido_numero) : 'Manual'}${_resumoItensProd(r)}</td>
           <td>${r.maquina_nome}</td>
           <td style="color:var(--muted)">—</td>
           <td>${fmtNum(r.producao)}</td>
@@ -2823,7 +2839,21 @@ async function editarProducao(id, colId, maqId, data, meta, producao, produtoEst
   document.getElementById('modal-prod-title').textContent = 'Editar Produção';
   document.getElementById('prod-save-btn').textContent = 'Atualizar';
 
-  const isSimplificado = !produtoEstoqueId;
+  // Detalhe salvo do lançamento (produto a produto, com cada motivo de perda)
+  const _row = (window._prodRowsById || {})[id];
+  const _itensSalvos = (_row && _row.itens) || [];
+  const _temProdutoNosItens = _itensSalvos.some(i => i.produto_estoque_id);
+  const _mapPerdas = (lst) => (lst || []).map(pl => ({ quantidade: +pl.quantidade || 0, tipo_perda: pl.tipo_perda || 'Quebra', observacao: pl.observacao || '', nao_baixar_estoque: !!pl.nao_baixar_estoque }));
+  // garante que o produto apareça na lista de escolha, mesmo se for de categoria de revenda
+  _itensSalvos.forEach(i => {
+    if (i.produto_estoque_id && !prodEstoqueCache.some(p => p.id === i.produto_estoque_id)) {
+      const pr = (prodRevendaCache || []).find(p => p.id === i.produto_estoque_id);
+      prodEstoqueCache.push(pr || { id: i.produto_estoque_id, nome: i.produto_nome || ('Produto #' + i.produto_estoque_id), quantidade_atual: 0, unidade: '' });
+    }
+  });
+  const _multi = _itensSalvos.length > 1 || (_temProdutoNosItens && !produtoEstoqueId);
+
+  const isSimplificado = !produtoEstoqueId && !_multi;
   const toggleContainerEdit = document.getElementById('prod-toggle-container');
   if (toggleContainerEdit) toggleContainerEdit.style.display = 'none';
   const checkbox = document.getElementById('prod-toggle-simplificado');
@@ -2837,8 +2867,19 @@ async function editarProducao(id, colId, maqId, data, meta, producao, produtoEst
     document.getElementById('prod-simples-sobra').value = sobraQtd || '';
     document.getElementById('prod-simples-tipo-perda').value = 'Quebra';
     prodItens = [{ produto_id: null, producao: producao, sobra: sobraQtd, perdas: (perdaQtd > 0 ? [{ quantidade: perdaQtd, tipo_perda: 'Quebra', observacao: '' }] : []) }];
+  } else if (_multi) {
+    // lançamento com vários produtos: cada um volta na sua linha, com produção, sobra e perdas
+    prodItens = _itensSalvos.map(i => ({
+      produto_id: i.produto_estoque_id || null,
+      producao: +i.quantidade || 0,
+      sobra: +i.sobra_quantidade || 0,
+      perdas: _mapPerdas(i.perdas)
+    }));
   } else {
-    prodItens = [{ produto_id: produtoEstoqueId, producao: producao, sobra: sobraQtd, perdas: (perdaQtd > 0 ? [{ quantidade: perdaQtd, tipo_perda: 'Quebra', observacao: '' }] : []) }];
+    const _it0 = _itensSalvos.find(i => i.produto_estoque_id === produtoEstoqueId);
+    prodItens = [{ produto_id: produtoEstoqueId, producao: producao, sobra: sobraQtd,
+                   perdas: (_it0 && _it0.perdas && _it0.perdas.length) ? _mapPerdas(_it0.perdas)
+                         : (perdaQtd > 0 ? [{ quantidade: perdaQtd, tipo_perda: 'Quebra', observacao: '' }] : []) }];
   }
 
   toggleFormSimplificado();
@@ -2973,8 +3014,27 @@ async function executarSalvarProducao() {
 
 
   try {
-    if (editId) {
-      const item = prodItens[0];
+    const _mapPerdasEnvio = (lst) => (lst || []).map(pl => ({ quantidade: pl.quantidade || 0, tipo_perda: pl.tipo_perda, observacao: pl.observacao || null, nao_baixar_estoque: !!pl.nao_baixar_estoque }));
+    const _validosEdit = prodItens.filter(i => (i.producao || 0) > 0 || _totalPerdaItem(i) > 0 || (i.sobra || 0) > 0);
+    if (editId && _validosEdit.length > 1) {
+      // edição de lançamento com vários produtos: manda item por item (baixa certa em cada produto)
+      await api('/producao/' + editId, 'PUT', {
+        colaborador_id: colId, maquina_id: maqId, data, meta,
+        producao: totalProducao,
+        produto_estoque_id: null,
+        perda_quantidade: _validosEdit.reduce((s, i) => s + _totalPerdaItem(i), 0),
+        sobra_quantidade: _validosEdit.reduce((s, i) => s + (i.sobra || 0), 0),
+        pedido_numero: pedidoManual || null,
+        itens: _validosEdit.map(i => ({
+          produto_estoque_id: i.produto_id,
+          quantidade: i.producao || 0,
+          sobra_quantidade: i.sobra || 0,
+          perdas: _mapPerdasEnvio(i.perdas)
+        }))
+      });
+      showAlert('Produção atualizada!');
+    } else if (editId) {
+      const item = _validosEdit[0] || prodItens[0];
       await api('/producao/' + editId, 'PUT', {
         colaborador_id: colId, maquina_id: maqId, data, meta,
         producao: item.producao || 0,
@@ -11452,9 +11512,13 @@ function _parseNomeProdutoCompras(nome, marca) {
   let tamanho = '—';
   // aceita também o plural/variações: "110 MLS", "110MLS", "110 ML."
   let m = work.match(/\d+(?:\s*\/\s*\d+)*\s*(ML|MM)S?\b/);
+  let mL = work.match(/\b\d+(?:[.,]\d+)?\s*(LITROS?|LTS?|L)\b/);   // garrafas: "1 LITRO", "1,5L"
   if (m) {
     tamanho = m[0].replace(/\s+/g, '').replace(/(ML|MM)S$/, '$1');
     work = work.slice(0, m.index) + ' ' + work.slice(m.index + m[0].length);
+  } else if (mL) {
+    tamanho = mL[0].replace(/\s*(LITROS?|LTS?|L)$/, 'L').replace(/\s+/g, '');
+    work = work.slice(0, mL.index) + ' ' + work.slice(mL.index + mL[0].length);
   } else {
     m = work.match(/\d+(?:\s*\/\s*\d+){1,}/);
     if (m) {
@@ -11680,10 +11744,10 @@ function _classificarItemCompras(r) {
   return { urgente: false, situacao: 'ok', semPedido: false };
 }
 
-// Só essas 4 categorias entram na Lista de Compras — o restante do catálogo
+// Só essas categorias entram na Lista de Compras — o restante do catálogo
 // (EPI, insumos de escritório, squeeze, chaveiros etc.) fica de fora, mesmo
 // que também seja "revenda". Nomes batendo exatamente com o cadastro.
-const CATEGORIAS_LISTA_COMPRAS = ['COPOS DESCARTÁVEL', 'COPOS DE PAPEL', 'COPOS DE ISOPOR', 'TAMPAS DESCARTÁVEL'];
+const CATEGORIAS_LISTA_COMPRAS = ['COPOS DESCARTÁVEL', 'COPOS DE PAPEL', 'COPOS DE ISOPOR', 'TAMPAS DESCARTÁVEL', 'GARRAFAS PLASTICAS'];
 
 // Marcas que sempre aparecem na tela, mesmo sem nenhum item crítico/atenção —
 // são os fornecedores principais, que fazem sentido revisar toda vez mesmo
@@ -11716,7 +11780,11 @@ function _montarGruposPorMarca(classificados) {
     });
 
     const ordemFuro = { '': 0, 'Com Furo': 1, 'Sem Furo': 2 };
-    const numeroInicial = s => { const m = String(s).match(/\d+/); return m ? parseInt(m[0], 10) : 999999; };
+    const numeroInicial = s => {
+      const l = String(s).match(/^(\d+(?:[.,]\d+)?)L$/);
+      if (l) return parseFloat(l[1].replace(',', '.')) * 1000;
+      const m = String(s).match(/\d+/); return m ? parseInt(m[0], 10) : 999999;
+    };
 
     const subtipos = Object.keys(porSubtipo).sort().map(subtipo => ({
       subtipo,
