@@ -2853,7 +2853,10 @@ async function editarProducao(id, colId, maqId, data, meta, producao, produtoEst
   });
   const _multi = _itensSalvos.length > 1 || (_temProdutoNosItens && !produtoEstoqueId);
 
-  const isSimplificado = !produtoEstoqueId && !_multi;
+  // Lançamento sem produto abre no formulário completo (com a escolha do produto e
+  // "+ Adicionar Produto"), para poder vincular e baixar o estoque na edição.
+  // Só fica no simplificado se o perfil de quem edita for o simplificado.
+  const isSimplificado = !produtoEstoqueId && !_multi && modoSimplificadoPerfil;
   const toggleContainerEdit = document.getElementById('prod-toggle-container');
   if (toggleContainerEdit) toggleContainerEdit.style.display = 'none';
   const checkbox = document.getElementById('prod-toggle-simplificado');
