@@ -10696,7 +10696,7 @@ async function _carregarProgPedido(id) {
       <a href="${API}/programacao/pedido/${id}/arte" target="_blank" style="font-size:13px;color:#7cc4ff">📎 ${esc(d.arte.nome || 'arte')}</a></div>`;
   }
   let pagHtml = '';
-  if (d.pode_pagamento && d.pagamento) {
+  if (d.pode_pagamento && d.pagamento && (d.pagamento.condicao || d.pagamento.valor_pago != null || d.pagamento.data || d.pagamento.observacao)) {
     const p = d.pagamento;
     const partes = [];
     if (p.condicao) partes.push(PROG_PAG_LABEL[p.condicao] || p.condicao);
@@ -10718,7 +10718,7 @@ async function _carregarProgPedido(id) {
         </div>
       </div>
       <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;font-size:13px">
-        ${linha('Cor da impressão', i.cor_impressao)}${linha('Marca do copo', i.marca)}${linha('Arte', arteModo)}
+        ${i.cor_impressao ? linha('Cor da impressão', i.cor_impressao) : ''}${i.marca ? linha('Marca do copo', i.marca) : ''}${linha('Arte', arteModo)}
       </div>
       ${i.observacao ? `<div style="margin-top:8px;font-size:13px"><b>Observação:</b> ${esc(i.observacao)}</div>` : ''}
       <div style="margin-top:10px"><div style="font-size:11px;color:var(--muted);margin-bottom:4px">Arte do verso da ficha</div>${arteHtml}</div>
@@ -10745,7 +10745,10 @@ async function abrirProgInfo(id, aposImportar) {
   document.getElementById('pi-arte-modo').value = i.arte_modo || '';
   document.getElementById('pi-arte-ref').value = i.arte_ref || '';
   document.getElementById('pi-arte-ref-wrap').style.display = i.arte_modo === 'igual' ? '' : 'none';
-  document.getElementById('pi-obs').value = i.observacao || '';
+  // Sem observação ainda: vem a observação do pedido importado (o vendedor só ajusta)
+  const _obsImp = String(d.obs_pedido || '').replace(/\s*Arquivo importado:.*$/is, '').trim();
+  document.getElementById('pi-obs').value = i.observacao || _obsImp;
+  document.getElementById('pi-obs-origem').style.display = (!i.observacao && _obsImp && d.pode_editar_info) ? '' : 'none';
   ['pi-cor','pi-marca','pi-arte-modo','pi-arte-ref','pi-obs'].forEach(k => { document.getElementById(k).disabled = !d.pode_editar_info; });
   // Arte direto no modal (na importação o vendedor anexa aqui mesmo)
   let arteBox = document.getElementById('pi-arte-box');
@@ -10759,7 +10762,7 @@ async function abrirProgInfo(id, aposImportar) {
       <label class="btn btn-sm btn-secondary" data-cor="roxo" style="cursor:pointer">🖼️ ${d.arte ? 'Trocar' : 'Anexar'} arte (PDF ou foto)<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" onchange="enviarArteProg(${id}, this, true)"></label>
     </div>` : '';
   const pb = document.getElementById('pi-pag-bloco');
-  pb.style.display = d.pode_pagamento ? '' : 'none';
+  pb.style.display = 'none';   // pagamento já vem nas observações do pedido importado
   if (d.pode_pagamento) {
     const p = d.pagamento || {};
     document.getElementById('pi-pag-cond').value = p.condicao || '';
@@ -10804,7 +10807,7 @@ async function salvarProgInfo() {
         observacao: document.getElementById('pi-obs').value,
       });
     }
-    if (d.pode_pagamento) {
+    if (d.pode_pagamento && document.getElementById('pi-pag-bloco').style.display !== 'none') {
       const v = document.getElementById('pi-pag-valor').value;
       await api('/programacao/pedido/' + id + '/pagamento', 'PUT', {
         condicao: document.getElementById('pi-pag-cond').value,
@@ -14152,15 +14155,15 @@ async function imprimirFichas(ids) {
       <div class="cli"><span><b>Cliente:</b> ${esc(f.cliente)}${f.fantasia ? ' – ' + esc(f.fantasia) : ''}</span><span><b>Vendedor:</b> ${esc(f.vendedor || '—')}</span>
         <span><b>Cidade:</b> ${esc(f.cidade || '—')}${f.uf ? '/' + esc(f.uf) : ''}</span><span><b>Lançamento:</b> ${dfmt(f.lancado_em)}</span></div>
       <div class="box info"><div class="lab">INFORMAÇÕES PARA A PRODUÇÃO</div>
-        <div class="g3"><div><div class="mini">Marca do copo</div><div class="v">${esc(i.marca || '—')}</div></div>
-          <div><div class="mini">Cor da impressão</div><div class="v">${esc(i.cor_impressao || '—')}</div></div>
+        <div class="g3">${i.marca ? `<div><div class="mini">Marca do copo</div><div class="v">${esc(i.marca)}</div></div>` : ''}
+          ${i.cor_impressao ? `<div><div class="mini">Cor da impressão</div><div class="v">${esc(i.cor_impressao)}</div></div>` : ''}
           <div><div class="mini">Arte</div><div class="v">${arteModo}</div></div></div>
         ${i.observacao ? `<div class="obs"><b>Observação:</b> ${esc(i.observacao)}</div>` : ''}
-        ${!i.marca && !i.cor_impressao && !i.observacao && !i.arte_modo ? '<div class="obs" style="color:#555">O vendedor não preencheu as informações para a produção.</div>' : ''}
+        ${!i.marca && !i.cor_impressao && !i.observacao && !i.arte_modo && !obsPed ? '<div class="obs" style="color:#555">O vendedor não preencheu as informações para a produção.</div>' : ''}
       </div>
       <table class="itens"><thead><tr><th>CÓD.</th><th>PRODUTO</th><th class="r">PEDIDO</th><th class="r">A PRODUZIR</th><th>TIPO</th></tr></thead><tbody>${linhas}</tbody>
         <tfoot><tr><td colspan="3">${f.itens.length} item(ns) · ${prod.length} para produzir</td><td class="r b">${nfmt(totalProd)}</td><td></td></tr></tfoot></table>
-      ${obsPed ? `<div class="obsped"><b>Obs. do pedido:</b> ${esc(obsPed)}</div>` : ''}
+      ${obsPed && !i.observacao ? `<div class="obsped"><b>Obs. do pedido:</b> ${esc(obsPed)}</div>` : ''}
       <div class="anot"><div class="lab">ANOTAÇÕES DA PRODUÇÃO</div></div>
       <div class="rod"><span>Pagamento não sai nesta ficha (fica com o comercial).</span><span>VERSO: arte do pedido →</span></div>
     </section>`;
