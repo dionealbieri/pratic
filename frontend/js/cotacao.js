@@ -33,19 +33,19 @@
     div.innerHTML = `
       <div class="modal" style="max-width:860px;width:96vw">
         <div class="modal-title">📦 Dados para cotação do frete <span id="cot-num" style="color:var(--muted);font-weight:400"></span></div>
-        <div id="cot-totais" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:14px"></div>
+        <div id="cot-totais" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px"></div>
         <div id="cot-avisos"></div>
         <div id="cot-itens-bloco">
         <div style="font-weight:700;font-size:13px;margin:6px 0">Caixas por item <span style="font-weight:400;color:var(--muted)">(pelo cadastro do produto)</span></div>
         <div style="overflow-x:auto"><table style="width:100%">
-          <thead><tr><th>Item</th><th>Qtd. pedido</th><th>Caixas</th><th>Medidas da caixa</th><th>Peso total</th><th>m³</th></tr></thead>
+          <thead><tr><th>Item</th><th>Qtd. pedido</th><th>Caixas</th><th>Medidas da caixa</th><th>Peso total</th><th>Peso cubado</th></tr></thead>
           <tbody id="cot-itens"></tbody>
         </table></div>
         </div>
         <div id="cot-itens-nota" style="display:none;font-size:12px;color:var(--muted);margin:4px 0 2px"></div>
         <div style="font-weight:700;font-size:13px;margin:16px 0 6px">Volumes lançados manualmente <span style="font-weight:400;color:var(--muted)">(caixas, sacos, envelopes...)</span></div>
         <div style="overflow-x:auto"><table style="width:100%">
-          <thead><tr><th>Item / descrição</th><th>Qtd.</th><th>Medidas</th><th>Peso cada</th><th>Peso total</th><th>m³</th><th></th></tr></thead>
+          <thead><tr><th>Item / descrição</th><th>Qtd.</th><th>Medidas</th><th>Peso cada</th><th>Peso total</th><th>Peso cubado</th><th></th></tr></thead>
           <tbody id="cot-manuais"></tbody>
         </table></div>
         <div id="cot-somente-leitura" style="display:none;margin-top:12px;font-size:13px;color:var(--muted);background:rgba(255,255,255,0.04);border:1px solid var(--border);border-radius:10px;padding:10px 12px"></div>
@@ -78,6 +78,12 @@
     div.addEventListener('click', ev => { if (ev.target === div) div.classList.remove('open'); });
   }
 
+  // Peso cubado (kg) = A x L x C (cm) / divisor (padrão 6.000). Transportadora cobra pelo maior.
+  const divTxt = t => n(t.divisor_cubagem || 6000, 0);
+  const cubado = t => (t.peso_cubado_kg != null ? t.peso_cubado_kg : (t.cubagem_m3 || 0) * 1e6 / 6000);
+  const pesoFrete = t => Math.max(+t.peso_kg || 0, +cubado(t) || 0);
+  const quemManda = t => (+cubado(t) || 0) > (+t.peso_kg || 0) ? 'vale o peso cubado' : 'vale o peso real';
+
   function cardTotal(rotulo, valor, sub) {
     return `<div class="card" style="padding:12px"><div class="card-label">${rotulo}</div><div class="card-value accent" style="font-size:22px">${valor}</div>${sub ? `<div style="font-size:11px;color:var(--muted)">${sub}</div>` : ''}</div>`;
   }
@@ -89,7 +95,7 @@
     document.getElementById('cot-totais').innerHTML =
       cardTotal('Volumes', n(t.caixas, 0)) +
       cardTotal('Peso total', n(t.peso_kg) + ' kg', 'última caixa pode ir incompleta') +
-      cardTotal('Cubagem', n(t.cubagem_m3, 3) + ' m³');
+      cardTotal('Peso cubado', n(cubado(t)) + ' kg', 'A×L×C (cm) ÷ ' + divTxt(t) + ' · ' + quemManda(t));
     document.getElementById('cot-avisos').innerHTML = (d.avisos || []).length
       ? `<div style="background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.4);border-radius:10px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:var(--warn)">⚠ ${d.avisos.map(e).join('<br>⚠ ')}<br><span style="color:var(--muted)">Os totais acima não incluem esses itens até que as caixas sejam lançadas.</span></div>`
       : '';
@@ -107,7 +113,7 @@
       if (it.origem === 'sem_dados') return `<tr><td>${nome}</td><td>${qtd}</td><td colspan="4" style="color:var(--warn)">sem dados: ${e((it.falta || []).join(', '))}</td></tr>`;
       return `<tr><td>${nome}<div style="font-size:11px;color:var(--muted)">${n(it.unid_por_caixa, 0)} un. por caixa</div></td><td>${qtd}</td>
         <td><strong>${n(it.caixas, 0)}</strong></td><td>${medidas(it.comprimento, it.largura, it.altura)}</td>
-        <td>${it.sem_peso ? '<span style="color:var(--warn)">sem peso</span>' : n(it.peso_total) + ' kg'}</td><td>${n(it.cubagem_m3, 3)}</td></tr>`;
+        <td>${it.sem_peso ? '<span style="color:var(--warn)">sem peso</span>' : n(it.peso_total) + ' kg'}</td><td>${n(it.peso_cubado_kg)} kg</td></tr>`;
     }).join('') || '<tr><td colspan="6" style="text-align:center;color:var(--muted)">Pedido sem itens</td></tr>';
     const nomeItem = {};
     (d.itens || []).forEach(it => { nomeItem[it.item_id] = it.descricao; });
@@ -116,7 +122,7 @@
     document.getElementById('cot-manuais').innerHTML = (d.manuais || []).map(m => `<tr>
         <td>${nomesDe(m)}${m.descricao ? `<div style="font-size:11px;color:var(--muted)">${e(m.descricao)}</div>` : ''}</td>
         <td><strong>${qtdTipo(m.qtd_caixas, m)}</strong></td><td>${medidas(m.comprimento, m.largura, m.altura)}</td>
-        <td>${n(m.peso_caixa)} kg</td><td>${n(m.peso_total)} kg</td><td>${n(m.cubagem_m3, 3)}</td>
+        <td>${n(m.peso_caixa)} kg</td><td>${n(m.peso_total)} kg</td><td>${n(m.peso_cubado_kg)} kg</td>
         <td style="text-align:right"><button class="btn btn-sm btn-secondary cot-del" title="Excluir lançamento por ${e(m.usuario || '')}" onclick="cotExcluirVolume(${m.id})">🗑</button></td></tr>`).join('')
       || '<tr><td colspan="7" style="text-align:center;color:var(--muted)">Nenhum lançamento manual</td></tr>';
     const podeEditar = !!d.pode_editar;
@@ -213,7 +219,7 @@
   function textoResumo(d) {
     const t = d.totais || {};
     const linhas = [`Pedido ${d.numero_pedido || d.pedido_id}`,
-      `Volumes: ${n(t.caixas, 0)} | Peso: ${n(t.peso_kg)} kg | Cubagem: ${n(t.cubagem_m3, 3)} m³`];
+      `Volumes: ${n(t.caixas, 0)} | Peso real: ${n(t.peso_kg)} kg | Peso cubado: ${n(cubado(t))} kg`];
     (d.itens || []).filter(it => it.origem === 'cadastro').forEach(it => {
       linhas.push(`- ${it.descricao}: ${n(it.caixas, 0)} cx de ${medidas(it.comprimento, it.largura, it.altura)}, ${n(it.peso_caixa)} kg/cx`);
     });
@@ -257,7 +263,8 @@
           <button type="button" class="btn btn-sm" style="background:rgba(59,130,246,.16);border:1px solid #3b82f6;color:#8fb8ff;font-weight:700" onclick="abrirCotacaoPedido(${id})">📦 ${d.pode_editar ? 'Ver / lançar caixas' : 'Ver caixas'}</button>
         </span>
       </div>
-      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px">${mini('Volumes', n(t.caixas, 0) + ' cx')}${mini('Peso', n(t.peso_kg) + ' kg')}${mini('Cubagem', n(t.cubagem_m3, 3) + ' m³')}</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px">${mini('Volumes', n(t.caixas, 0) + ' cx')}${mini('Peso real', n(t.peso_kg) + ' kg')}${mini('Peso cubado', n(cubado(t)) + ' kg')}</div>
+      <div style="margin-top:6px;font-size:11.5px;color:var(--muted)">Peso cubado = altura × largura × comprimento (cm) ÷ ${divTxt(t)} · a transportadora cobra pelo maior: <strong style="color:var(--text)">${n(pesoFrete(t))} kg</strong> (${quemManda(t)})</div>
       ${linhas.length ? `<ul style="margin:8px 0 0 18px;padding:0;font-size:12px;color:var(--muted);line-height:1.6">${linhas.join('')}</ul>` : ''}
       ${(d.avisos || []).length ? `<div style="margin-top:8px;font-size:12px;color:var(--warn)">⚠ ${d.avisos.length} item(ns) sem dados de embalagem — não somados nos totais</div>` : ''}
     </div>`;
@@ -278,7 +285,7 @@
       const d = await chamar(`/pedidos/${id}/cotacao`);
       const t = d.totais || {};
       el.dataset.pedidoId = id;
-      el.innerHTML = `📦 <strong>${n(t.caixas, 0)}</strong> volume(s) · <strong>${n(t.peso_kg)}</strong> kg · ${n(t.cubagem_m3, 3)} m³` +
+      el.innerHTML = `📦 <strong>${n(t.caixas, 0)}</strong> volume(s) · <strong>${n(t.peso_kg)}</strong> kg · cubado <strong>${n(cubado(t))}</strong> kg` +
         ((d.avisos || []).length ? ` <span style="color:var(--warn)">· ⚠ ${d.avisos.length} item(ns) sem embalagem</span>` : ' <span style="color:var(--success)">· embalagem completa</span>') +
         ` <button type="button" class="btn btn-sm" style="margin-left:6px;background:rgba(59,130,246,.16);border:1px solid #3b82f6;color:#8fb8ff;font-weight:700" onclick="abrirCotacaoPedido(${id})">📦 ${d.pode_editar ? 'Ver / lançar caixas' : 'Ver caixas'}</button>`;
       return d;

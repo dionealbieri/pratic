@@ -5268,7 +5268,7 @@ async function abrirDespachoRemessa(rid) {
   document.getElementById('desp-volumes').value = r.volumes || 1;
   openModal('modal-despacho');
   const d = await _volumesRemessa(r);
-  if (resumo && d) resumo.innerHTML = `📦 <strong>${fmtNum(Math.ceil(d.totais.caixas))}</strong> volume(s) · <strong>${String(d.totais.peso_kg).replace('.', ',')}</strong> kg · ${String(d.totais.cubagem_m3).replace('.', ',')} m³ <span style="color:var(--muted)">(só desta remessa)</span>`;
+  if (resumo && d) resumo.innerHTML = `📦 <strong>${fmtNum(Math.ceil(d.totais.caixas))}</strong> volume(s) · <strong>${String(d.totais.peso_kg).replace('.', ',')}</strong> kg · cubado <strong>${String(d.totais.peso_cubado_kg != null ? d.totais.peso_cubado_kg : '').replace('.', ',')}</strong> kg <span style="color:var(--muted)">(só desta remessa)</span>`;
   if (d && !r.volumes && d.totais.caixas > 0) document.getElementById('desp-volumes').value = Math.ceil(d.totais.caixas);
 }
 window.abrirDespachoRemessa = abrirDespachoRemessa;
@@ -8106,7 +8106,7 @@ async function deletarCliente(id){
 // ─── EMPRESA ──────────────────────────────────────────────────────────────────
 
 async function loadEmpresa() {
-  const campos = ['nome','cnpj','telefone','email','cep','numero','logradouro','bairro','complemento','cidade','uf'];
+  const campos = ['nome','cnpj','telefone','email','cep','numero','logradouro','bairro','complemento','cidade','uf','frete_divisor'];
   try {
     const r = await fetch(API + '/configuracoes/empresa', { cache: 'no-store' });
     const dados = await r.json();
@@ -8132,7 +8132,7 @@ async function loadEmpresa() {
 }
 
 async function salvarEmpresa() {
-  const campos = ['nome','cnpj','telefone','email','cep','numero','logradouro','bairro','complemento','cidade','uf'];
+  const campos = ['nome','cnpj','telefone','email','cep','numero','logradouro','bairro','complemento','cidade','uf','frete_divisor'];
   const alertEl = document.getElementById('empresa-alert');
   const body = {};
 
