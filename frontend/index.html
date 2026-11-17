@@ -2888,10 +2888,10 @@
     <input type="hidden" id="pi-pedido-id">
     <div style="font-family:var(--font-head);font-weight:700;margin-bottom:8px;color:var(--accent)">🏭 Para a produção (sai na ficha impressa)</div>
     <div class="form-grid">
-      <div class="form-group"><label for="pi-cor">Cor da impressão</label>
+      <div class="form-group" style="display:none"><label for="pi-cor">Cor da impressão</label>
         <input id="pi-cor" list="pi-cores" placeholder="Branco, Preto, Colorido...">
         <datalist id="pi-cores"><option value="Branco"><option value="Preto"><option value="Colorido"><option value="Vermelho"><option value="Azul"><option value="Dourado"></datalist></div>
-      <div class="form-group"><label for="pi-marca">Marca do copo</label>
+      <div class="form-group" style="display:none"><label for="pi-marca">Marca do copo</label>
         <input id="pi-marca" list="pi-marcas" placeholder="ALTACOPOS, TOTALPLAST...">
         <datalist id="pi-marcas"><option value="ALTACOPOS"><option value="TOTALPLAST"><option value="RIOPLASTIC"><option value="CRISTALCOPOS"><option value="COPAZA"></datalist></div>
       <div class="form-group"><label for="pi-arte-modo">Arte</label>
@@ -2901,8 +2901,9 @@
       <div class="form-group" id="pi-arte-ref-wrap" style="display:none"><label for="pi-arte-ref">Igual ao pedido nº</label><input id="pi-arte-ref" placeholder="ex.: 15301"></div>
     </div>
     <div class="form-group"><label for="pi-obs">Observação para a produção</label>
-      <textarea id="pi-obs" rows="3" placeholder="ex.: logo de um lado, QR code do outro, como de costume"></textarea></div>
-    <div id="pi-pag-bloco" style="border-top:1px solid var(--border);margin-top:10px;padding-top:12px">
+      <textarea id="pi-obs" rows="4" placeholder="ex.: logo de um lado, QR code do outro, como de costume"></textarea>
+      <div id="pi-obs-origem" style="display:none;font-size:11.5px;color:var(--muted);margin:4px 0 10px">📝 Veio da observação do pedido importado — apague o que não é da produção (pagamento, frete...) e complete se precisar. É este texto que sai na ficha.</div></div>
+    <div id="pi-pag-bloco" style="display:none;border-top:1px solid var(--border);margin-top:10px;padding-top:12px">
       <div style="font-family:var(--font-head);font-weight:700;margin-bottom:8px;color:#3b82f6">💰 Pagamento <span style="font-size:12px;font-weight:400;color:var(--muted)">— só comercial e gestor veem, não sai na ficha</span></div>
       <div class="form-grid">
         <div class="form-group"><label for="pi-pag-cond">Condição</label>
@@ -3400,7 +3401,7 @@
 
 <script src="js/cotacao.js?v=20261117-cubado2"></script>
 <script src="js/estoque-cliente.js?v=20261030-estcli"></script>
-<script src="js/app.js?v=20261117-cub2"></script>
+<script src="js/app.js?v=20261117-pi1"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');
