@@ -13,7 +13,7 @@
   })();
 </script>
 <link rel="stylesheet" href="css/common.css?v=20261109c">
-<script src="/js/cotacao.js?v=20261109-tipovolume"></script>
+<script src="/js/cotacao.js?v=20261117-cubado2"></script>
 <script src="/js/estoque-cliente.js?v=20261030-estcli"></script>
 <style>
   body {
@@ -1668,7 +1668,7 @@ async function mpCalcularRemessa() {
   try {
     const d = await req('/remessas/pedido/' + document.getElementById('rm-pedido-id').value + '/cotacao', 'POST', { itens });
     const t = d.totais || {};
-    el.innerHTML = `📦 <strong>${fmtNum(Math.ceil(t.caixas || 0))}</strong> volume(s) · <strong>${String(t.peso_kg || 0).replace('.', ',')}</strong> kg · ${String(t.cubagem_m3 || 0).replace('.', ',')} m³`
+    el.innerHTML = `📦 <strong>${fmtNum(Math.ceil(t.caixas || 0))}</strong> volume(s) · <strong>${String(t.peso_kg || 0).replace('.', ',')}</strong> kg · cubado <strong>${String(t.peso_cubado_kg || 0).replace('.', ',')}</strong> kg`
       + ((d.avisos || []).length ? ` <span style="color:var(--warn)">· ${d.avisos.length} item(ns) sem embalagem cadastrada</span>` : '');
   } catch (e) { el.innerHTML = `<span style="color:var(--danger)">${esc(e.message)}</span>`; }
 }
