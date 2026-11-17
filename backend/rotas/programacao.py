@@ -215,6 +215,8 @@ def dados_pedido(pid: int, current_user: dict = Depends(get_current_user)):
             "prioridade": {"status": ped["prioridade_status"], "motivo": ped["prioridade_motivo"],
                            "obs_gestor": ped["prioridade_obs_gestor"], "decidida_por": ped["prioridade_decidida_por"]},
             "status": ped["status"],
+            # observação que veio no pedido importado (pré-preenche a observação para a produção)
+            "obs_pedido": ped["observacoes"] if "observacoes" in ped.keys() else None,
         }
         if out["pode_pagamento"]:
             out["pagamento"] = {"condicao": ped["pag_condicao"], "valor_pago": ped["pag_valor_pago"],
