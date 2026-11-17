@@ -103,7 +103,7 @@ async def salvar_permissoes(request: Request, current_user: dict = Depends(get_c
 @router.get("/empresa")
 def buscar_empresa():
     """Retorna todos os Dados da Empresa em uma única chamada."""
-    campos = ["nome", "cnpj", "telefone", "email", "cep", "logradouro", "numero", "bairro", "complemento", "cidade", "uf", "logo"]
+    campos = ["nome", "cnpj", "telefone", "email", "cep", "logradouro", "numero", "bairro", "complemento", "cidade", "uf", "logo", "frete_divisor"]
     conn = get_conn()
     rows = conn.execute(
         "SELECT chave, valor FROM configuracoes WHERE chave LIKE 'empresa_%'"
@@ -135,6 +135,7 @@ def _salvar_empresa_payload(body: Dict):
         "cidade": "Cidade da empresa",
         "uf": "UF da empresa",
         "logo": "Logo da empresa em base64",
+        "frete_divisor": "Divisor do peso cubado (A x L x C em cm / divisor)",
     }
     conn = get_conn()
     try:
