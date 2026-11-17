@@ -2237,7 +2237,7 @@ def meus_pedidos(current_user: dict = Depends(get_current_user)):
                       LEFT JOIN estoque_categorias ec2 ON ec2.id = ep2.categoria_id
                      WHERE i.pedido_id = p.id AND (ec2.tipo IS NULL OR ec2.tipo != 'revenda')
                        AND (i.qtd_produzida > 0 OR i.status IN ('em_producao','produzido','entregue'))) AS itens_iniciados,
-                   p.obs_vendedor, p.nota_fiscal, p.data_despacho, p.data_entrega, p.envio_definido_em,
+                   p.obs_vendedor, p.observacoes AS obs_pedido, p.nota_fiscal, p.data_despacho, p.data_entrega, p.envio_definido_em,
                    COALESCE(p.origem_estoque_cliente,0) AS origem_estoque_cliente,
                    CASE WHEN p.nf_arquivo IS NOT NULL AND p.nf_arquivo != '' THEN 1 ELSE 0 END AS tem_nf_pdf, p.nf_chave,
                    CASE WHEN p.arquivo_original IS NOT NULL AND p.arquivo_original != '' THEN 1 ELSE 0 END AS tem_original,
