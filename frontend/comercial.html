@@ -258,7 +258,7 @@
     <div id="rm-campos-retirada" class="form-grid" style="display:none">
       <div class="form-group"><label>Previsão de retirada <span style="color:var(--muted);font-weight:400">(opcional)</span></label><input type="date" id="rm-retirada-prevista"></div>
     </div>
-    <div class="form-group"><label>Observação para a Expedição <span style="color:var(--muted);font-weight:400">(opcional)</span></label><textarea id="rm-obs" rows="2" placeholder="Ex.: cliente precisa urgente, resto sai na próxima semana"></textarea></div>
+    <div class="form-group"><label>Observação para a Expedição <span style="color:var(--muted);font-weight:400">(opcional)</span></label><textarea id="rm-obs" rows="3" placeholder="Ex.: cliente precisa urgente, resto sai na próxima semana"></textarea><div id="rm-obs-origem" style="display:none;font-size:11.5px;color:var(--muted);margin-top:4px">📝 Copiada da observação do pedido — apague o que não interessa à Expedição e complete se precisar.</div></div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeModal('modal-mp-remessa')">Cancelar</button>
       <button class="btn btn-primary" id="rm-btn-salvar" onclick="mpSalvarRemessa()">📨 Registrar cotação (aguardar cliente)</button>
@@ -285,7 +285,7 @@
     <div id="mp-campos-retirada" class="form-grid" style="display:none">
       <div class="form-group"><label>Previsão de retirada <span style="color:var(--muted);font-weight:400">(opcional)</span></label><input type="date" id="mp-retirada-prevista"></div>
     </div>
-    <div class="form-group" style="margin-top:4px"><label>Observação para a Expedição <span style="color:var(--muted);font-weight:400">(opcional)</span></label><textarea id="mp-obs" rows="2" placeholder="Ex.: frete já combinado com o cliente; cliente vem pela manhã..."></textarea></div>
+    <div class="form-group" style="margin-top:4px"><label>Observação para a Expedição <span style="color:var(--muted);font-weight:400">(opcional)</span></label><textarea id="mp-obs" rows="3" placeholder="Ex.: frete já combinado com o cliente; cliente vem pela manhã..."></textarea><div id="mp-obs-origem" style="display:none;font-size:11.5px;color:var(--muted);margin-top:4px">📝 Copiada da observação do pedido — apague o que não interessa à Expedição e complete se precisar.</div></div>
     <div id="mp-envio-rodape" style="font-size:12px;color:var(--muted);margin-top:6px"></div>
     <div class="modal-footer" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
       <button type="button" class="btn btn-secondary" id="mp-btn-voltar" onclick="mpVoltarAguardando()" style="display:none">↺ Voltar para aguardando vendedor</button>
@@ -1636,6 +1636,10 @@ function mpRemessaModo(modo) {
   const bs = document.getElementById('rm-btn-salvar');
   if (bs) bs.textContent = modo === 'transportadora' ? '📨 Registrar cotação (aguardar cliente)' : 'Enviar remessa para a Expedição';
 }
+// Observação que veio no pedido importado, sem a anotação técnica "Arquivo importado: ..."
+function mpObsDoPedido(p) {
+  return String((p && p.obs_pedido) || '').replace(/\s*Arquivo importado:.*$/is, '').trim();
+}
 async function mpAbrirRemessa(pid) {
   let d;
   try { d = await req('/remessas/pedido/' + pid + '/disponivel'); } catch (e) { showAlert(e.message, 'danger'); return; }
@@ -1653,6 +1657,9 @@ async function mpAbrirRemessa(pid) {
   const nomes = await mpCarregarTransportadoras();
   document.getElementById('rm-transportadora').innerHTML = '<option value="">— Selecione a transportadora —</option>' + nomes.map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('');
   ['rm-frete', 'rm-previsao', 'rm-retirada-prevista', 'rm-obs'].forEach(id => { document.getElementById(id).value = id === 'rm-frete' ? 0 : ''; });
+  const obsPedR = mpObsDoPedido(p);
+  document.getElementById('rm-obs').value = obsPedR;
+  document.getElementById('rm-obs-origem').style.display = obsPedR ? '' : 'none';
   document.getElementById('rm-cotacao').innerHTML = '';
   mpRemessaModo('transportadora');
   openModal('modal-mp-remessa');
@@ -1773,7 +1780,10 @@ async function mpAbrirEnvio(id, modo) {
   document.getElementById('mp-cot-numero').value = temCot ? (p.cotacao_numero || '') : '';
   document.getElementById('mp-previsao').value = p.previsao_entrega || '';
   document.getElementById('mp-retirada-prevista').value = p.retirada_prevista || '';
-  document.getElementById('mp-obs').value = p.obs_vendedor || '';
+  // Sem observação ainda: já vem a observação do pedido importado (o vendedor só completa)
+  const obsPed = mpObsDoPedido(p);
+  document.getElementById('mp-obs').value = p.obs_vendedor || obsPed;
+  document.getElementById('mp-obs-origem').style.display = (!p.obs_vendedor && obsPed) ? '' : 'none';
   document.getElementById('mp-btn-voltar').style.display = ['aguardando_nf', 'aguardando_retirada'].includes(p.status) ? '' : 'none';
   mpEnvioPainelId = id;
   mpEscolherModo(modo);
