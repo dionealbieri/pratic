@@ -2995,6 +2995,24 @@ def _cubagem_m3(qtd, c, l, a) -> float:
     return (qtd or 0) * (c or 0) * (l or 0) * (a or 0) / 1_000_000.0
 
 
+DIVISOR_CUBAGEM_PADRAO = 6000.0
+
+
+def _divisor_cubagem(conn) -> float:
+    """Fator das transportadoras: peso cubado (kg) = A x L x C (cm) / divisor. Padrão 6.000;
+    o gestor muda em Dados da Empresa."""
+    try:
+        r = conn.execute("SELECT valor FROM configuracoes WHERE chave = 'empresa_frete_divisor'").fetchone()
+        v = float(str(r["valor"]).replace(",", ".")) if r and str(r["valor"] or "").strip() else 0
+        return v if v > 0 else DIVISOR_CUBAGEM_PADRAO
+    except Exception:
+        return DIVISOR_CUBAGEM_PADRAO
+
+
+def _peso_cubado(m3: float, divisor: float) -> float:
+    return round((m3 or 0) * 1_000_000.0 / divisor, 2)
+
+
 def _remessado_por_item(conn, pedido_id: int, incluir_pendentes: bool = True) -> dict:
     """Quantidade de cada item que já saiu (ou está reservada) em remessas parciais."""
     try:
@@ -3011,6 +3029,7 @@ def _remessado_por_item(conn, pedido_id: int, incluir_pendentes: bool = True) ->
 def _calcular_cotacao(conn, id: int, qtd_por_item: dict = None, usar_manuais: bool = True) -> dict:
     """Núcleo do cálculo de caixas/peso/cubagem. qtd_por_item (item_id → quantidade) troca a quantidade
     do item (remessa parcial, ou o saldo que falta enviar); item com 0 fica de fora."""
+    divisor = _divisor_cubagem(conn)
     import math
     _itens_db = conn.execute("""
         SELECT i.id, i.descricao, i.quantidade, i.unidade, i.produto_id,
@@ -3083,18 +3102,22 @@ def _calcular_cotacao(conn, id: int, qtd_por_item: dict = None, usar_manuais: bo
         linhas.append({**base, "origem": "cadastro", "unid_por_caixa": it["emb_qtd"],
                        "caixas": caixas, "comprimento": it["emb_c"], "largura": it["emb_l"],
                        "altura": it["emb_a"], "peso_caixa": it["emb_peso"],
-                       "peso_total": peso, "cubagem_m3": round(m3, 4)})
+                       "peso_total": peso, "cubagem_m3": round(m3, 4), "peso_cubado_kg": _peso_cubado(m3, divisor)})
     for m in manuais:
         q = m["qtd_caixas"] or 0
         peso = round(q * (m["peso_caixa"] or 0), 2)
         m3 = _cubagem_m3(q, m["comprimento"], m["largura"], m["altura"])
         m["peso_total"] = peso
         m["cubagem_m3"] = round(m3, 4)
+        m["peso_cubado_kg"] = _peso_cubado(m3, divisor)
         tot_cx += q; tot_peso += peso; tot_m3 += m3
     return {
         "itens": linhas, "manuais": manuais, "avisos": avisos,
         "completo": not any(l["origem"] == "sem_dados" for l in linhas),
-        "totais": {"caixas": round(tot_cx, 2), "peso_kg": round(tot_peso, 2), "cubagem_m3": round(tot_m3, 4)},
+        "totais": {"caixas": round(tot_cx, 2), "peso_kg": round(tot_peso, 2), "cubagem_m3": round(tot_m3, 4),
+                   "peso_cubado_kg": _peso_cubado(tot_m3, divisor), "divisor_cubagem": divisor,
+                   # a transportadora cobra pelo MAIOR entre o peso real e o cubado
+                   "peso_frete_kg": max(round(tot_peso, 2), _peso_cubado(tot_m3, divisor))},
     }
 
 
