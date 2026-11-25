@@ -45,14 +45,15 @@ def mapa_vendedores(conn) -> dict:
     """{nome_normalizado: usuario_id}. Nomes ambíguos (2+ usuários) ficam com None."""
     mapa = {}
     rows = conn.execute(
-        "SELECT id, nome, role, COALESCE(vendedor_nomes,'') AS vendedor_nomes "
+        "SELECT id, nome, role, COALESCE(vendedor_nomes,'') AS vendedor_nomes, "
+        "COALESCE(tambem_vendedor,0) AS tambem_vendedor "
         "FROM usuarios WHERE ativo = 1"
     ).fetchall()
     for r in rows:
         nomes = set()
-        # O nome do próprio usuário só vale para quem é do Comercial;
+        # O nome do próprio usuário vale para quem vende (Comercial ou "Também é vendedor");
         # nomes extras (vendedor_nomes) valem para qualquer perfil.
-        if r["role"] == "comercial":
+        if r["role"] == "comercial" or r["tambem_vendedor"]:
             nomes.add(normalizar_nome(r["nome"]))
         for extra in separar_nomes(r["vendedor_nomes"]):
             nomes.add(normalizar_nome(extra))

@@ -30,7 +30,8 @@ def validar_sessao_db(session_id: str) -> dict:
     try:
         # Busca a sessão e o usuário associado
         row = conn.execute("""
-            SELECT s.session_id, s.expira_em, u.id, u.username, u.role, u.nome, u.ativo, u.deve_alterar_senha
+            SELECT s.session_id, s.expira_em, u.id, u.username, u.role, u.nome, u.ativo, u.deve_alterar_senha,
+                   COALESCE(u.tambem_vendedor, 0) AS tambem_vendedor
             FROM sessoes s
             JOIN usuarios u ON s.usuario_id = u.id
             WHERE s.session_id = ?
@@ -61,6 +62,20 @@ def validar_sessao_db(session_id: str) -> dict:
         return None
     finally:
         conn.close()
+
+def eh_vendedor(u) -> bool:
+    """Vende: perfil Comercial ou qualquer usuário marcado "Também é vendedor"."""
+    return bool(u) and (u.get("role") == "comercial" or bool(u.get("tambem_vendedor")))
+
+
+def vendedor_dono(u, ped) -> bool:
+    """O usuário é o vendedor deste pedido (Comercial ou marcado "Também é vendedor")."""
+    try:
+        dono = ped["vendedor_usuario_id"]
+    except (KeyError, IndexError, TypeError):
+        return False
+    return eh_vendedor(u) and dono is not None and dono == u.get("id")
+
 
 async def get_current_user(request: Request):
     session_id = request.cookies.get("session_id")

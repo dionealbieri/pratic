@@ -1803,6 +1803,10 @@ def _migrar_expedicao_e_vendedores(conn):
     if "vendedor_nomes" not in cols_usr:
         conn.execute("ALTER TABLE usuarios ADD COLUMN vendedor_nomes TEXT DEFAULT ''")
         conn.commit()
+    # "Também é vendedor": qualquer perfil (Gestor, Expedição...) pode vender e ter os próprios pedidos
+    if "tambem_vendedor" not in cols_usr:
+        conn.execute("ALTER TABLE usuarios ADD COLUMN tambem_vendedor INTEGER DEFAULT 0")
+        conn.commit()
 
     # 2) CHECK do role
     row = conn.execute(
