@@ -42,7 +42,7 @@
       montarTrocaPerfil(f, txt);
       // missões, tour e painel da turma
       var sc = document.createElement('script');
-      sc.src = '/js/treino.js?v=20261113a';
+      sc.src = '/js/treino.js?v=20261125a';
       sc.defer = true;
       document.body.appendChild(sc);
     }
@@ -77,7 +77,7 @@
           btn.onclick = function (ev) {
             ev.stopPropagation();
             if (p.usuarios.length > 1) abrirMenu(btn, p, d);
-            else if (p.usuarios.length === 1) entrar({ usuario_id: p.usuarios[0].id }, btn);
+            else if (p.usuarios.length === 1) entrar({ usuario_id: p.usuarios[0].id }, btn, p.usuarios[0].portal ? '/comercial' : '/');
             else entrar({ role: p.role }, btn);
           };
           faixa.appendChild(btn);
@@ -135,18 +135,19 @@
       var atual = u.id === d.atual.id;
       var it = el('button', 'display:block;width:100%;text-align:left;padding:7px 10px;border:0;border-radius:6px;cursor:pointer;' +
         'font:inherit;color:#fff;background:' + (atual ? '#f97316' : 'transparent'),
-        u.nome + (u.id === d.treinador.id ? '  (você)' : '') + (atual ? '  ✓' : ''));
+        u.nome + (u.portal ? '  🧾' : '') + (u.id === d.treinador.id ? '  (você)' : '') + (atual ? '  ✓' : ''));
+      if (u.portal) it.title = 'Perfil ' + (u.nome || '') + ' não é do Comercial, mas também é vendedor: abre o portal do vendedor dele';
       it.type = 'button';
       it.onmouseenter = function () { if (!atual) it.style.background = '#374151'; };
       it.onmouseleave = function () { if (!atual) it.style.background = 'transparent'; };
-      it.onclick = function (ev) { ev.stopPropagation(); entrar({ usuario_id: u.id }, btn); };
+      it.onclick = function (ev) { ev.stopPropagation(); entrar({ usuario_id: u.id }, btn, u.portal ? '/comercial' : '/'); };
       m.appendChild(it);
     });
     document.body.appendChild(m);
   }
   document.addEventListener('click', fecharMenu);
 
-  function entrar(corpo, btn) {
+  function entrar(corpo, btn, destino) {
     fecharMenu();
     if (btn) { btn.disabled = true; btn.style.opacity = '.6'; }
     fetch('/api/auth/treino/entrar', {
@@ -164,7 +165,7 @@
           localStorage.setItem('user_username', u.username);
         } catch (e) {}
         // "/" leva cada perfil para a tela dele (Comercial → Meus Pedidos, Produção → setor...)
-        window.location.href = '/';
+        window.location.href = destino || '/';
       })
       .catch(function (e) {
         alert(e.message);
