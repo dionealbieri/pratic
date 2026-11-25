@@ -4,7 +4,7 @@ from typing import Optional, List
 from database import get_conn
 import database as _database
 from fastapi.responses import FileResponse
-from auth_utils import get_current_user
+from auth_utils import get_current_user, eh_vendedor, vendedor_dono
 from rotas.producao import _reverter_estoque_producao, _registrar_estorno, _efeito_mov
 from vendedores import vincular_pedido, vincular_pedidos_sem_vendedor, separar_nomes, juntar_nomes
 import httpx
@@ -4097,20 +4097,23 @@ def atualizar_status_pedido(id: int, body: StatusItemIn, current_user: dict = De
 def deletar_pedido(id: int, current_user = Depends(get_current_user)):
     conn = get_conn()
     try:
-        # 1. Verificar permissão (o vendedor exclui o próprio pedido em aberto sem precisar dela)
-        if current_user.get("role") != "comercial" and not verificar_permissao("pedidos", "deletar", current_user):
-            raise HTTPException(403, "Você não tem permissão para excluir pedidos.")
-
         cur = conn.cursor()
-        
-        # 2. Buscar o número do pedido para o histórico do estoque
+
+        # 1. Buscar o pedido (número para o histórico do estoque)
         ped = cur.execute("SELECT numero_pedido, status, vendedor_usuario_id FROM pedidos WHERE id=?", (id,)).fetchone()
         if not ped:
             raise HTTPException(404, "Pedido não encontrado")
         numero_pedido = ped["numero_pedido"]
 
-        # Vendedor (Comercial): só o próprio pedido, ainda Aberto e sem produção lançada.
-        if current_user.get("role") == "comercial":
+        # 2. Permissão: quem tem "excluir pedidos" exclui; o vendedor (Comercial ou marcado
+        #    "Também é vendedor") exclui o PRÓPRIO pedido em aberto sem precisar dela.
+        tem_perm = current_user.get("role") == "gestor" or verificar_permissao("pedidos", "deletar", current_user)
+        modo_vendedor = current_user.get("role") == "comercial" or (not tem_perm and vendedor_dono(current_user, ped))
+        if not tem_perm and not modo_vendedor:
+            raise HTTPException(403, "Você não tem permissão para excluir pedidos.")
+
+        # Vendedor: só o próprio pedido, ainda Aberto e sem produção lançada.
+        if modo_vendedor:
             if ped["vendedor_usuario_id"] != current_user["id"]:
                 raise HTTPException(403, "Este pedido não é seu.")
             eh_entrega_estoque = cur.execute("SELECT COALESCE(origem_estoque_cliente,0) FROM pedidos WHERE id=?", (id,)).fetchone()[0]

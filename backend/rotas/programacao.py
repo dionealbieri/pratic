@@ -19,7 +19,7 @@ from typing import Optional
 
 import database as _database
 from database import get_conn
-from auth_utils import get_current_user
+from auth_utils import get_current_user, eh_vendedor, vendedor_dono
 from rotas.pedidos import verificar_permissao
 
 router = APIRouter()
@@ -75,13 +75,15 @@ def _pode_info(conn, u, ped) -> bool:
         return False
     if u.get("role") == "comercial":
         return ped["vendedor_usuario_id"] == u.get("id")
+    if vendedor_dono(u, ped):        # marcado "Também é vendedor": no próprio pedido age como vendedor
+        return True
     return verificar_permissao("pedidos", "editar", u)
 
 
 def _pode_pagamento(conn, u, ped) -> bool:
     if _eh_gestor(u):
         return True
-    return _liberada(conn) and u.get("role") == "comercial" and ped["vendedor_usuario_id"] == u.get("id")
+    return _liberada(conn) and vendedor_dono(u, ped)
 
 
 def _pasta_artes() -> str:
@@ -886,7 +888,7 @@ def minha_fila(current_user: dict = Depends(get_current_user)):
         for p in f["fila"]:
             meus[str(p["id"])] = {"posicao": p["posicao"], "selo": p["selo"], "selo_rotulo": p["selo_rotulo"],
                                   "pulado": bool(p["pulo"]), "total": len(f["fila"])}
-        if current_user.get("role") == "comercial":
+        if eh_vendedor(current_user):   # portal do vendedor: só os pedidos dele
             ids = {str(r[0]) for r in conn.execute("SELECT id FROM pedidos WHERE vendedor_usuario_id=?", (current_user.get("id"),))}
             meus = {k: v for k, v in meus.items() if k in ids}
             pend = {str(r[0]): r[1] for r in conn.execute(
