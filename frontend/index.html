@@ -1659,6 +1659,13 @@
                 </div>
               </div>
             </div>
+            <select id="lc-situacao-filtro" onchange="lcFiltroSit = this.value; renderListaCompras()" title="Mostrar só os produtos nessa situação" style="min-width:190px">
+              <option value="">Mostrar: padrão</option>
+              <option value="sem">⛔ Sem estoque (zero ou negativo)</option>
+              <option value="critico">🔴 Só críticos</option>
+              <option value="urgente">🔴🟡 Críticos e atenção</option>
+              <option value="todos">📋 Todos os produtos</option>
+            </select>
             <button class="btn btn-secondary" onclick="loadListaCompras()">↻ Atualizar</button>
             <button class="btn btn-secondary" onclick="imprimirListaCompras()">🖨️ Imprimir catálogo</button>
             <button class="btn btn-primary" onclick="gerarPedidoCompra()">🛒 Gerar pedido de compra</button>
@@ -3154,7 +3161,13 @@
       <div class="form-group" style="grid-column: 1 / -1">
         <label>Nome do vendedor na importação de pedidos <span style="color:var(--muted);font-weight:400">(opcional)</span></label>
         <textarea id="user-vendedor-nomes" rows="2" placeholder="Como o nome aparece no campo Vendedor do PDF — um por linha" style="resize:vertical"></textarea>
-        <div style="font-size:11px;color:var(--muted);margin-top:4px">Para perfil Comercial o nome completo acima já é reconhecido. Use este campo para outras grafias (ex.: “JOAO S.”). Maiúsculas e acentos não importam.</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">Para perfil Comercial (ou marcado “Também é vendedor”) o nome completo acima já é reconhecido. Use este campo para outras grafias (ex.: “JOAO S.”). Maiúsculas e acentos não importam.</div>
+      </div>
+      <div class="form-group" style="grid-column: 1 / -1">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none;letter-spacing:normal;font-size:14px;color:var(--text)">
+          <input type="checkbox" id="user-tambem-vendedor" style="width:auto"> 🧾 Também é vendedor
+        </label>
+        <div style="font-size:11px;color:var(--muted);margin-top:4px">Para quem não é do perfil Comercial mas também vende (ex.: Gestor). Os pedidos com o nome dele são vinculados a ele, ganha o botão “🧾 Meus Pedidos” (portal do vendedor) e aparece nas listas de vendedores. O perfil e as permissões continuam os mesmos.</div>
       </div>
       <div class="form-group" id="user-password-container">
         <label>Senha de Acesso</label>
@@ -3401,7 +3414,7 @@
 
 <script src="js/cotacao.js?v=20261117-cubado2"></script>
 <script src="js/estoque-cliente.js?v=20261030-estcli"></script>
-<script src="js/app.js?v=20261117-pi1"></script>
+<script src="js/app.js?v=20261125-vend1"></script>
 <script>
 function toggleSidebar() {
   const sb = document.querySelector('.sidebar');
