@@ -27,6 +27,7 @@ class UserCreateIn(BaseModel):
     role: str
     nome: str
     vendedor_nomes: Optional[str] = ""
+    tambem_vendedor: Optional[bool] = False
 
 class UserUpdateIn(BaseModel):
     role: str
@@ -34,6 +35,7 @@ class UserUpdateIn(BaseModel):
     ativo: int
     # None = não mexer (compatível com telas antigas que não enviam o campo)
     vendedor_nomes: Optional[str] = None
+    tambem_vendedor: Optional[bool] = None
 
 class PasswordUpdateIn(BaseModel):
     password: str
@@ -162,6 +164,7 @@ def get_me(current_user = Depends(get_current_user)):
             "role": role,
             "nome": current_user["nome"],
             "deve_alterar_senha": bool(current_user.get("deve_alterar_senha")),
+            "tambem_vendedor": bool(current_user.get("tambem_vendedor")),
             "permissions": permissions,
             "canais": canais
         }
@@ -181,7 +184,7 @@ def listar_usuarios(current_user = Depends(verificar_gestor)):
     try:
         rows = conn.execute("""
             SELECT id, username, role, nome, ativo, criado_em,
-                   COALESCE(vendedor_nomes, '') AS vendedor_nomes
+                   COALESCE(vendedor_nomes, '') AS vendedor_nomes, COALESCE(tambem_vendedor, 0) AS tambem_vendedor
             FROM usuarios 
             ORDER BY nome
         """).fetchall()
@@ -196,10 +199,10 @@ def listar_vendedores(current_user = Depends(verificar_gestor)):
     conn = get_conn()
     try:
         rows = conn.execute("""
-            SELECT id, nome, role, COALESCE(vendedor_nomes, '') AS vendedor_nomes
+            SELECT id, nome, role, COALESCE(vendedor_nomes, '') AS vendedor_nomes, COALESCE(tambem_vendedor, 0) AS tambem_vendedor
             FROM usuarios
             WHERE ativo = 1
-            ORDER BY CASE WHEN role = 'comercial' THEN 0 ELSE 1 END, nome
+            ORDER BY CASE WHEN role = 'comercial' OR COALESCE(tambem_vendedor, 0) = 1 THEN 0 ELSE 1 END, nome
         """).fetchall()
         return [dict(r) for r in rows]
     finally:
@@ -222,10 +225,10 @@ def criar_usuario(data: UserCreateIn, current_user = Depends(verificar_gestor)):
         password_hash = hash_password(data.password)
         
         conn.execute("""
-            INSERT INTO usuarios (username, password_hash, role, nome, vendedor_nomes)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO usuarios (username, password_hash, role, nome, vendedor_nomes, tambem_vendedor)
+            VALUES (?, ?, ?, ?, ?, ?)
         """, (username_clean, password_hash, data.role, data.nome.strip(),
-              juntar_nomes(separar_nomes(data.vendedor_nomes))))
+              juntar_nomes(separar_nomes(data.vendedor_nomes)), 1 if data.tambem_vendedor else 0))
         vinculados = vincular_pedidos_sem_vendedor(conn)
         conn.commit()
         return {"mensagem": "Usuário criado com sucesso", "pedidos_vinculados": vinculados}
@@ -254,6 +257,9 @@ def atualizar_usuario(id: int, data: UserUpdateIn, current_user = Depends(verifi
         if data.vendedor_nomes is not None:
             conn.execute("UPDATE usuarios SET vendedor_nomes = ? WHERE id = ?",
                          (juntar_nomes(separar_nomes(data.vendedor_nomes)), id))
+        if data.tambem_vendedor is not None:
+            conn.execute("UPDATE usuarios SET tambem_vendedor = ? WHERE id = ?",
+                         (1 if data.tambem_vendedor else 0, id))
         vinculados = vincular_pedidos_sem_vendedor(conn)
         conn.commit()
         return {"mensagem": "Usuário atualizado com sucesso", "pedidos_vinculados": vinculados}

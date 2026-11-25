@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from auth_utils import get_current_user
+from auth_utils import get_current_user, vendedor_dono
 from database import get_conn
 from rotas.pedidos import (
     NF_MAX_BYTES, _calcular_cotacao, _ler_numero_nf, _ler_chave_nf, _marcar_usuario_hist, _nome_usuario,
@@ -274,7 +274,7 @@ def criar_remessa(pid: int, body: RemessaIn, current_user: dict = Depends(get_cu
         role = current_user.get("role")
         if role == "comercial":
             _checar_acesso_pedido(ped, current_user)
-        elif role != "gestor":
+        elif role != "gestor" and not vendedor_dono(current_user, ped):
             raise HTTPException(403, "O envio parcial é pedido pelo vendedor (ou pelo Gestor).")
         if (ped["status"] or "aberto") not in ("aberto", "em_producao", "produzido"):
             raise HTTPException(400, "Este pedido não aceita mais envio parcial (já foi liberado ou concluído).")
@@ -337,7 +337,7 @@ def cancelar_remessa(rid: int, current_user: dict = Depends(get_current_user)):
         ped = _pedido(conn, r["pedido_id"])
         if current_user.get("role") == "comercial":
             _checar_acesso_pedido(ped, current_user)
-        elif current_user.get("role") != "gestor":
+        elif current_user.get("role") != "gestor" and not vendedor_dono(current_user, ped):
             raise HTTPException(403, "Só o vendedor do pedido ou o Gestor cancela a remessa.")
         if r["status"] not in STATUS_PENDENTES + ("aguardando_cliente",):
             raise HTTPException(400, "A Expedição já lançou a NF desta remessa. Peça para ela desfazer.")
@@ -357,7 +357,7 @@ def autorizar_remessa(rid: int, current_user: dict = Depends(get_current_user)):
         ped = _pedido(conn, r["pedido_id"])
         if current_user.get("role") == "comercial":
             _checar_acesso_pedido(ped, current_user)
-        elif current_user.get("role") != "gestor":
+        elif current_user.get("role") != "gestor" and not vendedor_dono(current_user, ped):
             raise HTTPException(403, "Só o vendedor do pedido ou o Gestor autoriza o frete.")
         if r["status"] != "aguardando_cliente":
             raise HTTPException(400, "Esta remessa não está aguardando a autorização do cliente.")

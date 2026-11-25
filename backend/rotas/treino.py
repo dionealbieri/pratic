@@ -170,7 +170,7 @@ def _progresso(conn, uid: int, inicio: str, liberada: bool):
 @router.get("/missoes")
 def minhas_missoes(current_user: dict = Depends(get_current_user)):
     _exigir_treino()
-    if current_user.get("role") != "comercial":
+    if current_user.get("role") != "comercial" and not current_user.get("tambem_vendedor"):
         return {"aplicavel": False}
     conn = get_conn()
     try:
@@ -230,7 +230,8 @@ def turma(request: Request):
         _tabelas(conn)
         lib = _prog_liberada(conn)
         usuarios = conn.execute("""SELECT id, nome, username FROM usuarios
-                                   WHERE role = 'comercial' AND ativo = 1 ORDER BY nome COLLATE NOCASE""").fetchall()
+                                   WHERE (role = 'comercial' OR COALESCE(tambem_vendedor,0) = 1) AND ativo = 1
+                                   ORDER BY nome COLLATE NOCASE""").fetchall()
         lista = []
         for u in usuarios:
             r = conn.execute("SELECT inicio FROM treino_missoes WHERE usuario_id = ?", (u["id"],)).fetchone()
