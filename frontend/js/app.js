@@ -265,6 +265,22 @@ async function carregarAcessoPrincipal() {
   try {
     me = await api('/auth/me');
     window.usuarioLogado = me;
+    // Quem não é do Comercial mas "também é vendedor" ganha o atalho para o portal do vendedor
+    try {
+      if (me.tambem_vendedor && me.role !== 'comercial' && !document.getElementById('btn-meus-pedidos-vend')) {
+        const btnPortais = document.querySelector('.btn-topbar[onclick*="toggleSectorMenu"]');
+        const ref = btnPortais ? (btnPortais.closest('.sector-switcher') || btnPortais) : null;
+        if (ref && ref.parentNode) {
+          const b = document.createElement('button');
+          b.id = 'btn-meus-pedidos-vend';
+          b.className = 'btn btn-sm btn-secondary btn-topbar';
+          b.title = 'Portal do vendedor: os pedidos em que você é o vendedor';
+          b.textContent = '🧾 Meus Pedidos';
+          b.onclick = () => { window.location.href = '/comercial'; };
+          ref.parentNode.insertBefore(b, ref);
+        }
+      }
+    } catch (e) {}
     if (me.deve_alterar_senha) {
       window.location.href = '/login?change_password=1';
       return;
@@ -11021,7 +11037,7 @@ async function loadUsuarios() {
       <tr>
         <td><strong>${u.nome}</strong>${u.vendedor_nomes ? `<div style="font-size:11px;color:var(--muted);margin-top:2px" title="Nomes reconhecidos na importação de pedidos">🧾 ${_escHtml(u.vendedor_nomes)}</div>` : ''}</td>
         <td><code>${u.username}</code></td>
-        <td>${roleLabels[u.role] || u.role}</td>
+        <td>${roleLabels[u.role] || u.role}${u.tambem_vendedor && u.role !== 'comercial' ? '<div style="font-size:11px;color:#7cc4ff;margin-top:2px">🧾 também vende</div>' : ''}</td>
         <td>
           <span class="pill ${u.ativo ? 'pill-success' : 'pill-danger'}">
             ${u.ativo ? 'Ativo' : 'Inativo'}
@@ -11051,6 +11067,8 @@ function openModalUsuario() {
   document.getElementById('user-ativo').value = '1';
   const vnNovo = document.getElementById('user-vendedor-nomes');
   if (vnNovo) vnNovo.value = '';
+  const tvNovo = document.getElementById('user-tambem-vendedor');
+  if (tvNovo) tvNovo.checked = false;
   
   document.getElementById('modal-user-title').textContent = 'Novo Usuário';
   openModal('modal-usuario');
@@ -11071,6 +11089,11 @@ function editarUsuario(id, username, nome, role, ativo) {
     const u = (_usuariosCache || []).find(x => x.id == id);
     vnEd.value = u && u.vendedor_nomes ? u.vendedor_nomes.split(';').map(x => x.trim()).filter(Boolean).join('\n') : '';
   }
+  const tvEd = document.getElementById('user-tambem-vendedor');
+  if (tvEd) {
+    const u2 = (_usuariosCache || []).find(x => x.id == id);
+    tvEd.checked = !!(u2 && u2.tambem_vendedor);
+  }
   
   document.getElementById('modal-user-title').textContent = 'Editar Usuário';
   openModal('modal-usuario');
@@ -11085,6 +11108,8 @@ async function salvarUsuario() {
   const ativo = +document.getElementById('user-ativo').value;
   const vnEl = document.getElementById('user-vendedor-nomes');
   const vendedor_nomes = vnEl ? vnEl.value.split(/[\n;]+/).map(x => x.trim()).filter(Boolean).join('; ') : undefined;
+  const tvEl = document.getElementById('user-tambem-vendedor');
+  const tambem_vendedor = tvEl ? tvEl.checked : undefined;
   
   if (!nome || !username) {
     showAlert('Preencha o nome e o usuário.', 'danger');
@@ -11093,14 +11118,14 @@ async function salvarUsuario() {
   
   try {
     if (id) {
-      const r = await api('/auth/usuarios/' + id, 'PUT', { role, nome, ativo, vendedor_nomes });
+      const r = await api('/auth/usuarios/' + id, 'PUT', { role, nome, ativo, vendedor_nomes, tambem_vendedor });
       showAlert('Usuário atualizado com sucesso!' + (r && r.pedidos_vinculados ? ` ${r.pedidos_vinculados} pedido(s) vinculado(s) a este vendedor.` : ''));
     } else {
       if (!password || password.length < 3) {
         showAlert('A senha inicial deve conter pelo menos 3 caracteres.', 'danger');
         return;
       }
-      const r = await api('/auth/usuarios', 'POST', { username, password, role, nome, vendedor_nomes: vendedor_nomes || '' });
+      const r = await api('/auth/usuarios', 'POST', { username, password, role, nome, vendedor_nomes: vendedor_nomes || '', tambem_vendedor: !!tambem_vendedor });
       showAlert('Usuário cadastrado com sucesso!' + (r && r.pedidos_vinculados ? ` ${r.pedidos_vinculados} pedido(s) vinculado(s) a este vendedor.` : ''));
     }
     closeModal('modal-usuario');
@@ -11878,11 +11903,39 @@ function _cardMarcaLC(g, ocultoPadrao) {
     </div>`;
 }
 
+// Filtro "Mostrar": '' padrão (marcas com pendência + principais), 'sem' saldo zero ou
+// negativo, 'critico', 'urgente' (crítico + atenção) ou 'todos' (catálogo inteiro)
+let lcFiltroSit = '';
+function _lcPassaFiltro(r) {
+  const f = lcFiltroSit;
+  if (!f || f === 'todos') return true;
+  const cl = _classificarItemCompras(r);
+  if (f === 'sem') return (Number(r.saldo_atual) || 0) <= 0;
+  if (f === 'critico') return cl.situacao === 'critico';
+  if (f === 'urgente') return cl.urgente;
+  return true;
+}
+function _lcGruposFiltrados() {
+  return lcFiltroSit ? _agruparListaComprasCompleto(lcDados.filter(_lcPassaFiltro)) : _agruparListaCompras(lcDados);
+}
+
 function renderListaCompras() {
   const el = document.getElementById('lc-content');
   if (!el) return;
-  const marcas = _agruparListaCompras(lcDados);
   const todas = _agruparListaComprasCompleto(lcDados);
+  if (lcFiltroSit) {
+    // com filtro de situação: mostra todas as marcas que têm produto nessa situação
+    const grupos = _lcGruposFiltrados();
+    lcSeq = 0;
+    const rot = { sem: 'sem estoque', critico: 'crítico', urgente: 'crítico ou em atenção', todos: '' }[lcFiltroSit] || '';
+    el.innerHTML = grupos.length ? grupos.map(g => _cardMarcaLC(g, false)).join('')
+      : `<p style="color:var(--muted);text-align:center;padding:30px 0;grid-column:1/-1">Nenhum produto ${rot} nessas categorias. 🎉</p>`;
+    const marcaSel = (document.getElementById('lc-marca-filtro-btn-text') || {}).textContent || '';
+    if (marcaSel && marcaSel !== 'Todas as marcas') filtrarListaCompras(marcaSel);
+    _lcPreencherMarcas(todas);
+    return;
+  }
+  const marcas = _agruparListaCompras(lcDados);
   const nomesQualificados = new Set(marcas.map(g => g.marca));
   const extras = todas.filter(g => !nomesQualificados.has(g.marca));
 
@@ -11897,6 +11950,10 @@ function renderListaCompras() {
   el.innerHTML = marcas.map(g => _cardMarcaLC(g, false)).join('')
     + extras.map(g => _cardMarcaLC(g, true)).join('');
 
+  _lcPreencherMarcas(todas);
+}
+
+function _lcPreencherMarcas(todas) {
   // preenche o dropdown de marcas com as marcas de verdade que existem nessas
   // categorias, pra quem for usar não precisar adivinhar nome nenhum
   const opcoesEl = document.getElementById('lc-marca-filtro-options');
@@ -11995,7 +12052,7 @@ function gerarPedidoCompra() {
 
 
 function imprimirListaCompras() {
-  const marcas = _agruparListaCompras(lcDados);
+  const marcas = _lcGruposFiltrados();   // imprime o que o filtro "Mostrar" está exibindo
   if (!marcas.length) { showAlert('Nenhum produto cadastrado nessas categorias.'); return; }
 
   const corpo = marcas.map(g => {
