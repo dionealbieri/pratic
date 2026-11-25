@@ -333,7 +333,7 @@
           req('/api/auth/treino/entrar', 'POST', { usuario_id: v.id }).then(function (r) {
             try { localStorage.setItem('user_nome', r.usuario.nome); localStorage.setItem('user_role', r.usuario.role);
                   localStorage.setItem('user_username', r.usuario.username); } catch (e) {}
-            location.href = '/';
+            location.href = '/comercial';   // tela do vendedor (vale também p/ quem é "Também é vendedor")
           }).catch(function (e) { alert(e.message); });
         };
         card.appendChild(ver);
