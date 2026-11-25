@@ -456,7 +456,7 @@ def treino_perfis(request: Request):
     conn = get_conn()
     try:
         rows = conn.execute("""
-            SELECT id, nome, username, role FROM usuarios
+            SELECT id, nome, username, role, COALESCE(tambem_vendedor, 0) AS tambem_vendedor FROM usuarios
             WHERE ativo = 1 ORDER BY nome COLLATE NOCASE
         """).fetchall()
         q = conn.execute("SELECT valor FROM configuracoes WHERE chave = 'treino_dados_de'").fetchone()
@@ -468,8 +468,11 @@ def treino_perfis(request: Request):
         perfis.append({
             "role": role,
             "rotulo": rotulo,
-            "usuarios": [{"id": r["id"], "nome": r["nome"], "username": r["username"]}
-                         for r in rows if r["role"] == role],
+            # Comercial também lista quem é de outro perfil marcado "Também é vendedor"
+            # (abre direto no portal do vendedor dele: "portal": true)
+            "usuarios": [{"id": r["id"], "nome": r["nome"], "username": r["username"],
+                          "portal": role == "comercial" and r["role"] != "comercial"}
+                         for r in rows if r["role"] == role or (role == "comercial" and r["tambem_vendedor"])],
         })
     return {
         "treinador": {"id": treinador["id"], "nome": treinador["nome"]},
