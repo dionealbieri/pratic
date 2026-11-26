@@ -172,6 +172,17 @@ class PedidoIn(BaseModel):
     precisa_pintura: Optional[bool] = False
     arquivo_token: Optional[str] = None     # arquivo original analisado na importação
     arquivo_nome: Optional[str] = None
+    # Informações para a produção (saem em destaque na ficha). None = não enviado (mantém)
+    info_producao: Optional[str] = None
+
+
+def _gravar_info_producao(cur, pedido_id: int, texto: Optional[str], current_user: dict):
+    if texto is None:
+        return
+    texto = (texto or "").strip()[:2000] or None
+    cur.execute("""UPDATE pedidos SET info_observacao=?, info_atualizado_por=?,
+                   info_atualizado_em=datetime('now','localtime') WHERE id=?""",
+                (texto, current_user.get("nome") or current_user.get("username"), pedido_id))
 
 class StatusItemIn(BaseModel):
     status: str
@@ -2217,6 +2228,47 @@ def ajustar_estoque_cliente(body: AjusteEstoqueClienteIn, current_user: dict = D
         conn.close()
 
 
+class ItemSaldoIn(BaseModel):
+    produto_id: Optional[int] = None
+    descricao: str
+    quantidade: float
+
+
+class SaldoLoteIn(BaseModel):
+    cliente_id: int
+    itens: List[ItemSaldoIn]
+    observacao: Optional[str] = ""
+    vendedor_usuario_id: Optional[int] = None
+
+
+@router.post("/estoque-cliente/saldo-lote")
+def saldo_lote_estoque_cliente(body: SaldoLoteIn, current_user: dict = Depends(get_current_user)):
+    """Saldo inicial com vários produtos de uma vez para o mesmo cliente (tudo ou nada)."""
+    if not _pode_mexer_estoque_cliente(current_user):
+        raise HTTPException(403, "Só o Gestor ou o Estoque podem lançar no estoque do cliente.")
+    if not (body.observacao or "").strip():
+        raise HTTPException(400, "Informe o motivo.")
+    itens = [i for i in body.itens if (i.descricao or "").strip() and (i.quantidade or 0) > 0]
+    if not itens:
+        raise HTTPException(400, "Informe pelo menos um produto com quantidade.")
+    conn = get_conn()
+    try:
+        if not conn.execute("SELECT 1 FROM pedidos_clientes WHERE id=?", (body.cliente_id,)).fetchone():
+            raise HTTPException(404, "Cliente não encontrado")
+        usuario = _nome_usuario(current_user)
+        for i in itens:
+            conn.execute("""INSERT INTO estoque_cliente_mov (cliente_id, produto_id, descricao, tipo, quantidade, usuario,
+                                                             observacao, vendedor_usuario_id)
+                            VALUES (?, ?, ?, 'ajuste', ?, ?, ?, ?)""",
+                         (body.cliente_id, i.produto_id, _desc_estoque(i.descricao), i.quantidade, usuario,
+                          body.observacao.strip(), body.vendedor_usuario_id))
+        conn.commit()
+        total = sum(i.quantidade for i in itens)
+        return {"mensagem": f"{len(itens)} produto(s) lançado(s) · {total:,.0f} un".replace(",", ".")}
+    finally:
+        conn.close()
+
+
 @router.get("/estoque-cliente/vendedores")
 def vendedores_estoque_cliente(current_user: dict = Depends(get_current_user)):
     """Para o saldo inicial: lista de vendedores e o vendedor do último pedido de cada cliente."""
@@ -3940,6 +3992,7 @@ def criar_pedido(p: PedidoIn, current_user: dict = Depends(get_current_user)):
         VALUES (?,?,?,?,?,?,?,?,'aberto',?)""",
         (p.numero_pedido, p.cliente_id, (p.prazo_entrega or ""), p.vendedor, p.observacoes, p.acrescimo or 0, p.frete or 0, p.desconto_global or 0, 1 if p.precisa_pintura else 0))
     pedido_id = cur.lastrowid
+    _gravar_info_producao(cur, pedido_id, p.info_producao, current_user)
     if not vincular_pedido(conn, pedido_id) and current_user.get("role") == "comercial":
         # Vendedor cadastrando/importando: sem vendedor reconhecido, o pedido fica com ele
         cur.execute("UPDATE pedidos SET vendedor_usuario_id=? WHERE id=?", (current_user["id"], pedido_id))
@@ -4081,6 +4134,7 @@ def atualizar_pedido(id: int, p: PedidoIn, current_user: dict = Depends(get_curr
                 VALUES (?,?,?,?)""",
                 (id, (parc.forma_pagamento or ""), (parc.vencimento or ""), parc.valor or 0))
 
+    _gravar_info_producao(cur, id, p.info_producao, current_user)
     _auto_vincular_itens(conn)
     _recalc_status_pedido(cur, id)
     conn.commit()
