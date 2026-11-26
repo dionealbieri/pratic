@@ -974,10 +974,14 @@ async def criar_pedido_de_arquivo(conn, caminho: str, nome: str, current_user: d
         prod = resolver_item(it) if resolver_item else None
         if prod == "pular":
             continue
+        descricao = it["descricao"]
+        if isinstance(prod, tuple):          # (produto_id, nome limpo do estoque)
+            prod, nome_limpo = prod
+            descricao = nome_limpo or descricao
         cur.execute("""INSERT INTO pedidos_itens
             (pedido_id, produto_id, descricao, quantidade, unidade, valor_unitario, desconto, qtd_produzida, status)
             VALUES (?,?,?,?,?,?,?,0,'aberto')""",
-            (pedido_id, prod, it["descricao"], it["quantidade"], it.get("unidade") or "unidade",
+            (pedido_id, prod, descricao, it["quantidade"], it.get("unidade") or "unidade",
              it.get("valor_unitario") or 0, it.get("desconto") or 0))
         qtd_itens += 1
     try:

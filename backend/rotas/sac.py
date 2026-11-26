@@ -48,6 +48,25 @@ def _pasta_pdfs() -> str:
     return p
 
 
+def _encurtar_itens_ja_criados(conn):
+    """Uma vez só: pedidos criados pela caixa SAC antes desta versão ficaram com o texto enorme da arte."""
+    try:
+        if conn.execute("SELECT 1 FROM configuracoes WHERE chave='sac_itens_curtos_v1'").fetchone():
+            return
+        if not conn.execute("SELECT name FROM sqlite_master WHERE name='sac_vendas'").fetchone():
+            conn.execute("INSERT OR IGNORE INTO configuracoes (chave, valor, descricao) VALUES ('sac_itens_curtos_v1','1','')")
+            return
+        conn.execute("""UPDATE pedidos_itens SET descricao = (SELECT nome FROM estoque_produtos ep WHERE ep.id = pedidos_itens.produto_id)
+                        WHERE produto_id IS NOT NULL
+                          AND pedido_id IN (SELECT pedido_id FROM sac_vendas WHERE pedido_id IS NOT NULL
+                                              AND destino='fabrica' AND COALESCE(decidido_por,'') <> 'já importado')
+                          AND EXISTS (SELECT 1 FROM estoque_produtos ep WHERE ep.id = pedidos_itens.produto_id)""")
+        conn.execute("INSERT OR IGNORE INTO configuracoes (chave, valor, descricao) VALUES ('sac_itens_curtos_v1','1','Pedidos SAC: itens com nome do estoque')")
+        conn.commit()
+    except Exception as e:
+        print("[sac] encurtar itens:", e)
+
+
 def tabelas(conn):
     conn.execute("""CREATE TABLE IF NOT EXISTS sac_vendas (
         venda TEXT PRIMARY KEY,              -- nº da venda no SAC (= nº do pedido no PRATIC)
@@ -62,6 +81,7 @@ def tabelas(conn):
         cancel_resolvido INTEGER DEFAULT 0,
         decidido_por TEXT, decidido_em TEXT,
         criado_em TEXT, atualizado_em TEXT)""")
+    _encurtar_itens_ja_criados(conn)
     cols = [c[1] for c in conn.execute("PRAGMA table_info(sac_depara)").fetchall()]
     if cols and "chave" not in cols:   # versão de teste antiga (chave por código) — refaz
         conn.execute("DROP TABLE sac_depara")
@@ -203,20 +223,58 @@ def _sugerir(produtos, descricao):
     return melhor
 
 
-def _montar(conn, r, depara, produtos, nomes_prod):
+def _historico(conn, ativos: set) -> dict:
+    """O que os pedidos já importados ensinam: chave do produto -> produto do estoque mais usado.
+    Só vale como SUGESTÃO (o gestor confirma), e só quando um produto domina (>= 70% das vezes)."""
+    cont = {}
+    for row in conn.execute("SELECT descricao, produto_id FROM pedidos_itens WHERE produto_id IS NOT NULL"):
+        ch = chave_produto(row["descricao"])
+        if ch and row["produto_id"] in ativos:
+            c = cont.setdefault(ch, {})
+            c[row["produto_id"]] = c.get(row["produto_id"], 0) + 1
+    hist = {}
+    for ch, c in cont.items():
+        pid, n = max(c.items(), key=lambda x: x[1])
+        if n / sum(c.values()) >= 0.7:
+            hist[ch] = pid
+    return hist
+
+
+def _itens_do_pedido(conn, pedido_id):
+    return conn.execute("""SELECT i.descricao, i.produto_id, ep.nome AS produto_nome FROM pedidos_itens i
+                           LEFT JOIN estoque_produtos ep ON ep.id = i.produto_id
+                           WHERE i.pedido_id = ? ORDER BY i.id""", (pedido_id,)).fetchall()
+
+
+def _montar(conn, r, depara, produtos, nomes_prod, hist=None):
     try:
         dados = json.loads(r["dados_json"] or "{}")
     except ValueError:
         dados = {}
     itens = []
     pend = 0
+    hist = hist or {}
+    # venda que já virou pedido: mostra o produto que está no pedido de verdade
+    no_pedido = {}
+    if r["pedido_id"]:
+        for pi in _itens_do_pedido(conn, r["pedido_id"]):
+            if pi["produto_id"]:
+                no_pedido.setdefault(chave_produto(pi["descricao"]), (pi["produto_id"], pi["produto_nome"]))
+                no_pedido.setdefault("#" + str(pi["descricao"] or "").strip().upper(), (pi["produto_id"], pi["produto_nome"]))
     for it in dados.get("itens") or []:
         cod = str(it.get("codigo") or "")
         ch = chave_produto(it.get("descricao"))
         dp = depara.get(ch) if ch else None
         item = {"codigo": cod, "chave": ch, "descricao": it.get("descricao"), "quantidade": it.get("quantidade"),
                 "unidade": it.get("unidade"), "valor_total": it.get("valor_total")}
-        if dp and dp["terceirizado"]:
+        ped = no_pedido.get("#" + str(it.get("descricao") or "").strip().upper()) or no_pedido.get(ch)
+        if r["pedido_id"] and ped:
+            item["vinculo"] = "produto"
+            item["produto_id"], item["produto_nome"] = ped
+            item["do_pedido"] = True
+        elif r["pedido_id"] and not dp:
+            item["vinculo"] = "pedido_sem_produto"
+        elif dp and dp["terceirizado"]:
             item["vinculo"] = "terceirizado"
         elif dp and dp["produto_id"]:
             item["vinculo"] = "produto"
@@ -224,7 +282,7 @@ def _montar(conn, r, depara, produtos, nomes_prod):
             item["produto_nome"] = nomes_prod.get(dp["produto_id"], f"Produto #{dp['produto_id']}")
         else:
             item["vinculo"] = None
-            item["sugestao_id"] = _sugerir(produtos, ch or it.get("descricao"))
+            item["sugestao_id"] = hist.get(ch) or _sugerir(produtos, ch or it.get("descricao"))
             if item["sugestao_id"]:
                 item["sugestao_nome"] = nomes_prod.get(item["sugestao_id"])
             if ch:
@@ -278,7 +336,8 @@ def caixa(aba: str = "aguardando", current_user: dict = Depends(_so_gestor)):
         depara = {d["chave"]: d for d in conn.execute("SELECT * FROM sac_depara")}
         produtos = conn.execute("SELECT id, nome, marca FROM estoque_produtos WHERE ativo = 1").fetchall()
         nomes = {p["id"]: p["nome"] for p in produtos}
-        vendas = [_montar(conn, r, depara, produtos, nomes) for r in rows]
+        hist = _historico(conn, set(nomes)) if aba == "aguardando" else {}
+        vendas = [_montar(conn, r, depara, produtos, nomes, hist) for r in rows]
         alertas = [_montar(conn, r, depara, produtos, nomes) for r in conn.execute(
             """SELECT * FROM sac_vendas WHERE situacao='C' AND cancel_resolvido=0 AND cancelado_em IS NOT NULL
                ORDER BY cancelado_em DESC""")]
@@ -421,11 +480,16 @@ async def enviar_fabrica(venda: str, body: FabricaIn, current_user: dict = Depen
             conn.rollback()
             raise HTTPException(400, "Escolha o produto do estoque para: " + "; ".join(faltam[:5]))
 
+        nomes_est = {x["id"]: x["nome"] for x in conn.execute("SELECT id, nome FROM estoque_produtos")}
+
         def resolver(it):
             d = depara.get(chave_produto(it.get("descricao")))
             if not d:
                 return None
-            return "pular" if d["terceirizado"] else d["produto_id"]
+            if d["terceirizado"]:
+                return "pular"
+            # no pedido vai o nome limpo do estoque (o texto da arte continua no PDF e nas observações)
+            return (d["produto_id"], nomes_est.get(d["produto_id"]))
         caminho = os.path.join(_pasta_pdfs(), os.path.basename(r["arquivo"] or ""))
         res = await criar_pedido_de_arquivo(conn, caminho, f"venda_{venda}.pdf", current_user,
                                             resolver_item=resolver, parsed=dados)
@@ -433,6 +497,21 @@ async def enviar_fabrica(venda: str, body: FabricaIn, current_user: dict = Depen
             conn.rollback()
             raise HTTPException(400, res.get("motivo") or "Não foi possível criar o pedido")
         pid = res.get("pedido_id")
+        # o item ganhou o nome limpo do estoque; os detalhes de arte/cor vão para as observações do pedido
+        detalhes = []
+        for it in dados.get("itens") or []:
+            if resolver(it) == "pular":
+                continue
+            desc = str(it.get("descricao") or "").strip()
+            base = chave_produto(desc)
+            if desc and len(re.sub(r"[^A-Z0-9]", "", desc.upper())) > len(re.sub(r"[^A-Z0-9]", "", base)) + 8:
+                q = it.get("quantidade")
+                qtxt = (f"{q:,.0f}".replace(",", ".") + " un · ") if isinstance(q, (int, float)) else ""
+                detalhes.append(f"• {qtxt}{desc}")
+        if pid and detalhes:
+            obs_atual = (conn.execute("SELECT observacoes FROM pedidos WHERE id=?", (pid,)).fetchone() or {"observacoes": ""})["observacoes"] or ""
+            novo = (obs_atual.rstrip() + "\n\n" if obs_atual.strip() else "") + "Detalhes dos itens (SAC):\n" + "\n".join(detalhes)
+            conn.execute("UPDATE pedidos SET observacoes=? WHERE id=?", (novo, pid))
         conn.execute("""UPDATE sac_vendas SET destino='fabrica', pedido_id=?, decidido_por=?, decidido_em=?, atualizado_em=?
                         WHERE venda=?""", (pid, current_user.get("nome"), _agora(), _agora(), venda))
         conn.commit()
