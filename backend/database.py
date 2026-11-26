@@ -1627,6 +1627,10 @@ def _migrar_estoque_cliente(conn):
             created_at TEXT DEFAULT (datetime('now','localtime'))
         )
     """)
+    cols_ec = [r[1] for r in conn.execute("PRAGMA table_info(estoque_cliente_mov)").fetchall()]
+    if "vendedor_usuario_id" not in cols_ec:
+        # vendedor responsável por um saldo lançado à mão (cliente que ainda não tem pedido com ele)
+        conn.execute("ALTER TABLE estoque_cliente_mov ADD COLUMN vendedor_usuario_id INTEGER")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_estcli_cliente ON estoque_cliente_mov(cliente_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_estcli_pedido ON estoque_cliente_mov(pedido_id)")
     conn.commit()
