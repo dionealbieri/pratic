@@ -36,6 +36,8 @@ class ProducaoIn(BaseModel):
     pedido_id: Optional[int] = None
     pedido_numero: Optional[str] = None
     confirmado: Optional[bool] = False
+    confirmar_excesso: Optional[bool] = False     # já confirmou que vai passar da quantidade do pedido
+    incluir_no_pedido: Optional[bool] = False     # gestor: incluir no pedido o produto que não estava nele
     movimentacao_manual: Optional[bool] = False
     itens: Optional[List[ProducaoItemIn]] = None
 
@@ -206,6 +208,97 @@ def _baixar_insumo_vinculado(c, prod_id: int, produto_id: int, quantidade: float
     else:
         c.execute("INSERT INTO estoque_saldo (produto_id, quantidade) VALUES (?, ?)", (insumo_id, novo_saldo))
 
+def _fmt_qtd(n) -> str:
+    return f"{(n or 0):,.0f}".replace(",", ".")
+
+
+def _conferir_pedido(conn, p, current_user, ignorar_id=None):
+    """Confere o lançamento contra o pedido ANTES de gravar:
+    1) produto que não está no pedido: produção/operador não pode lançar; o gestor pode,
+       se confirmar a inclusão do item no pedido (incluir_no_pedido);
+    2) produção que passa da quantidade do pedido (+5% de folga): pede confirmação.
+    Só vale quando o pedido existe e todos os itens dele estão ligados a um produto do
+    estoque (pedido sem vínculo não dá para conferir produto a produto)."""
+    num = str(p.pedido_numero or "").strip()
+    if not num:
+        return
+    ped = conn.execute("SELECT id FROM pedidos WHERE numero_pedido=? ORDER BY id DESC LIMIT 1", (num,)).fetchone()
+    if not ped:
+        return
+    itens_ped = conn.execute("SELECT produto_id, quantidade FROM pedidos_itens WHERE pedido_id=?", (ped["id"],)).fetchall()
+    if not itens_ped or any(not i["produto_id"] for i in itens_ped):
+        return
+    qtd_pedido = {}
+    for i in itens_ped:
+        qtd_pedido[i["produto_id"]] = qtd_pedido.get(i["produto_id"], 0) + (i["quantidade"] or 0)
+
+    lancados = {}
+    if p.itens and any(it.produto_estoque_id for it in p.itens):
+        for it in p.itens:
+            if it.produto_estoque_id and (it.quantidade or 0) > 0:
+                lancados[it.produto_estoque_id] = lancados.get(it.produto_estoque_id, 0) + it.quantidade
+    elif p.produto_estoque_id and (p.producao or 0) > 0:
+        lancados[p.produto_estoque_id] = p.producao
+    if not lancados:
+        return
+
+    nomes = {r["id"]: r["nome"] for r in conn.execute(
+        f"SELECT id, nome FROM estoque_produtos WHERE id IN ({','.join('?' * len(lancados))})", list(lancados))}
+    eh_gestor = current_user.get("role") == "gestor"
+
+    fora = [pid for pid in lancados if pid not in qtd_pedido]
+    if fora:
+        lista = "; ".join(f"{nomes.get(pid, 'produto')} ({_fmt_qtd(lancados[pid])})" for pid in fora)
+        if not eh_gestor:
+            raise HTTPException(400, f"Produto fora do pedido {num}: {lista}. Primeiro o item precisa ser incluído "
+                                     f"no pedido — peça ao gestor. Depois lance a produção.")
+        if not p.incluir_no_pedido:
+            raise HTTPException(409, f"fora_do_pedido::O pedido {num} não tem: {lista}.\n\n"
+                                     f"Incluir no pedido e lançar a produção?")
+        for pid in fora:
+            # entra com o total desse produto no pedido: o que já tinha sido lançado fora + este lançamento
+            params = [num, pid] + ([ignorar_id] if ignorar_id else [])
+            ja_fora = conn.execute(f"""SELECT COALESCE(SUM(i.quantidade), 0) FROM producao_diaria_itens i
+                                       JOIN producao_diaria pd ON pd.id = i.producao_diaria_id
+                                       WHERE pd.pedido_numero = ? AND i.produto_estoque_id = ?
+                                       {"AND pd.id <> ?" if ignorar_id else ""}""", params).fetchone()[0] or 0
+            qtd_item = ja_fora + lancados[pid]
+            conn.execute("""INSERT INTO pedidos_itens (pedido_id, produto_id, descricao, quantidade, unidade,
+                            valor_unitario, desconto, qtd_produzida, status)
+                            VALUES (?, ?, ?, ?, 'unidade', 0, 0, 0, 'aberto')""",
+                         (ped["id"], pid, nomes.get(pid) or "Produto", qtd_item))
+            qtd_pedido[pid] = qtd_item
+        try:
+            conn.execute("""INSERT INTO auditoria (usuario, acao, entidade, entidade_id, descricao, valor_anterior, valor_novo)
+                            VALUES (?, 'incluir_item_pela_producao', 'pedidos', ?, ?, '', '')""",
+                         (_nome_usr(current_user), ped["id"], f"Pedido {num}: incluído pela produção — {lista}"))
+        except Exception:
+            pass
+
+    if p.confirmar_excesso:
+        return
+    excessos = []
+    for pid, qtd in lancados.items():
+        if pid not in qtd_pedido:
+            continue
+        params = [num, pid]
+        filtro = ""
+        if ignorar_id:
+            filtro = "AND pd.id <> ?"
+            params.append(ignorar_id)
+        ja = conn.execute(f"""SELECT COALESCE(SUM(i.quantidade), 0) FROM producao_diaria_itens i
+                              JOIN producao_diaria pd ON pd.id = i.producao_diaria_id
+                              WHERE pd.pedido_numero = ? AND i.produto_estoque_id = ? {filtro}""", params).fetchone()[0] or 0
+        pedido_q = qtd_pedido[pid]
+        if ja + qtd > pedido_q * 1.05:
+            excessos.append(f"• {nomes.get(pid, 'Produto')}: pedido {_fmt_qtd(pedido_q)}, já lançado {_fmt_qtd(ja)}, "
+                            f"agora +{_fmt_qtd(qtd)} → total {_fmt_qtd(ja + qtd)} (passa {_fmt_qtd(ja + qtd - pedido_q)})")
+    if excessos:
+        raise HTTPException(409, f"excede_pedido::A produção vai passar da quantidade do pedido {num}:\n"
+                                 + "\n".join(excessos)
+                                 + "\n\nConfira se o número do pedido está certo. Confirma o lançamento?")
+
+
 def _sincronizar_pedido(cur, *numeros):
     """Acerta o progresso dos itens do(s) pedido(s) pelo histórico de produção."""
     try:
@@ -300,6 +393,13 @@ def registrar(p: ProducaoIn, current_user = Depends(get_current_user)):
             conn.close()
             raise HTTPException(409, "pedido_duplicado")
 
+    try:
+        _conferir_pedido(conn, p, current_user)
+    except HTTPException:
+        conn.rollback()
+        conn.close()
+        raise
+
     c = conn.cursor()
 
     # Buscar nome do colaborador para registrar nas perdas
@@ -362,6 +462,8 @@ def registrar(p: ProducaoIn, current_user = Depends(get_current_user)):
                 conn.execute("UPDATE estoque_saldo SET quantidade=?, ultima_atualizacao=datetime('now') WHERE produto_id=?",
                              (novo_saldo, primeiro_produto["id"]))
 
+    if p.incluir_no_pedido and p.pedido_numero:
+        _sincronizar_pedido(c, p.pedido_numero)   # item recém-incluído já mostra o produzido
     conn.commit()
     conn.close()
     return {"id": prod_id, "excedente": excedente, "mensagem": "Produção registrada com sucesso"}
@@ -533,6 +635,7 @@ def atualizar(id: int, p: ProducaoIn, current_user = Depends(get_current_user)):
         if current_user.get('role') in _perfis_exigidos and not (p.pedido_numero and str(p.pedido_numero).strip()):
             raise HTTPException(400, "Número do pedido é obrigatório para lançar produção (configuração ativada para o seu perfil em Controle de Acesso).")
             
+        _conferir_pedido(conn, p, current_user, ignorar_id=id)
         prods_antes = _produtos_do_lancamento(cur, id)
         # Trava: lançamento que baixou estoque de produto(s) não pode ser salvo
         # "sem produto" sem querer (tela antiga reabria só o total): devolveria
