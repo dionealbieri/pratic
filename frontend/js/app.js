@@ -10741,13 +10741,8 @@ async function _carregarProgPedido(id) {
   const esc = s => _escHtml(String(s == null ? '' : s));
   const linha = (rot, val) => `<div><div style="font-size:11px;color:var(--muted)">${rot}</div><div style="font-weight:700">${val ? esc(val) : '<span style="color:var(--muted);font-weight:400">—</span>'}</div></div>`;
   const arteModo = i.arte_modo ? (PROG_ARTE_LABEL[i.arte_modo] + (i.arte_modo === 'igual' && i.arte_ref ? ' ' + i.arte_ref : '')) : '';
-  let arteHtml = '<span style="color:var(--warn);font-size:13px">Sem arte anexada</span>';
-  if (d.arte) {
-    const thumb = d.arte.eh_pdf && !d.arte.tem_previa ? '' :
-      `<img src="${API}/programacao/pedido/${id}/arte-imagem?t=${Date.now()}" alt="Arte do pedido" style="max-height:90px;max-width:160px;border-radius:6px;border:1px solid var(--border);background:#fff">`;
-    arteHtml = `<div class="flex gap-2 items-center" style="flex-wrap:wrap">${thumb}
-      <a href="${API}/programacao/pedido/${id}/arte" target="_blank" style="font-size:13px;color:#7cc4ff">📎 ${esc(d.arte.nome || 'arte')}</a></div>`;
-  }
+  const podeArte = d.pode_arte || d.pode_editar_info;
+  const arteHtml = _artesListaHtml(id, d.artes || [], podeArte);
   let pagHtml = '';
   if (d.pode_pagamento && d.pagamento && (d.pagamento.condicao || d.pagamento.valor_pago != null || d.pagamento.data || d.pagamento.observacao)) {
     const p = d.pagamento;
@@ -10766,15 +10761,14 @@ async function _carregarProgPedido(id) {
         <div class="flex gap-2" style="flex-wrap:wrap">
           ${d.pode_editar_info || d.pode_pagamento ? `<button class="btn btn-sm btn-secondary" data-cor="azul" onclick="abrirProgInfo(${id})">✏️ Editar / prioridade</button>` : ''}
           <button class="btn btn-sm btn-secondary" data-cor="cinza" onclick="imprimirFichas([${id}])">🖨️ Ficha da produção</button>
-          ${d.pode_editar_info ? `<label class="btn btn-sm btn-secondary" data-cor="roxo" style="cursor:pointer">🖼️ ${d.arte ? 'Trocar arte' : 'Anexar arte'}<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" onchange="enviarArteProg(${id}, this)"></label>` : ''}
-          ${d.pode_editar_info && d.arte ? `<button class="btn btn-sm btn-danger" onclick="removerArteProg(${id})">Remover arte</button>` : ''}
+          ${podeArte ? `<label class="btn btn-sm btn-secondary" data-cor="roxo" style="cursor:pointer">🖼️ ${(d.artes || []).length ? 'Adicionar outra arte' : 'Anexar arte'}<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" multiple style="display:none" onchange="enviarArteProg(${id}, this)"></label>` : ''}
         </div>
       </div>
       <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;font-size:13px">
         ${i.cor_impressao ? linha('Cor da impressão', i.cor_impressao) : ''}${i.marca ? linha('Marca do copo', i.marca) : ''}${linha('Arte', arteModo)}
       </div>
       ${i.observacao ? `<div style="margin-top:8px;font-size:13px"><b>Observação:</b> ${esc(i.observacao)}</div>` : ''}
-      <div style="margin-top:10px"><div style="font-size:11px;color:var(--muted);margin-bottom:4px">Arte do verso da ficha</div>${arteHtml}</div>
+      <div style="margin-top:10px"><div style="font-size:11px;color:var(--muted);margin-bottom:4px">Arte do verso da ficha${(d.artes || []).length > 1 ? ` · ${(d.artes || []).length} artes, saem juntas no verso` : ''}</div>${arteHtml}</div>
       ${pagHtml}
       ${_prioLinhaHtml(d)}
     </div>`;
@@ -10811,8 +10805,8 @@ async function abrirProgInfo(id, aposImportar) {
   }
   arteBox.innerHTML = d.pode_editar_info ? `<label>Arte (verso da ficha)</label>
     <div class="flex gap-2 items-center" style="flex-wrap:wrap">
-      <span style="font-size:13px;${d.arte ? 'color:var(--success)' : 'color:var(--muted)'}">${d.arte ? '✓ ' + _escHtml(d.arte.nome || 'arte anexada') : 'Nenhuma arte anexada'}</span>
-      <label class="btn btn-sm btn-secondary" data-cor="roxo" style="cursor:pointer">🖼️ ${d.arte ? 'Trocar' : 'Anexar'} arte (PDF ou foto)<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style="display:none" onchange="enviarArteProg(${id}, this, true)"></label>
+      <span style="font-size:13px;${(d.artes || []).length ? 'color:var(--success)' : 'color:var(--muted)'}">${(d.artes || []).length ? '✓ ' + (d.artes.length === 1 ? _escHtml(d.artes[0].nome || 'arte anexada') : d.artes.length + ' artes anexadas') : 'Nenhuma arte anexada'}</span>
+      <label class="btn btn-sm btn-secondary" data-cor="roxo" style="cursor:pointer">🖼️ ${(d.artes || []).length ? 'Adicionar outra' : 'Anexar'} arte (PDF ou foto)<input type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" multiple style="display:none" onchange="enviarArteProg(${id}, this, true)"></label>
     </div>` : '';
   const pb = document.getElementById('pi-pag-bloco');
   pb.style.display = 'none';   // pagamento já vem nas observações do pedido importado
@@ -10891,13 +10885,16 @@ async function removerPrioridadeProg(id) {
 }
 
 async function enviarArteProg(id, input, noModal) {
-  const f = input.files && input.files[0];
-  if (!f) return;
+  const arquivos = Array.from(input.files || []);
+  if (!arquivos.length) return;
   try {
-    const fd = new FormData(); fd.append('arquivo', f);
-    const r = await fetch(API + '/programacao/pedido/' + id + '/arte', { method: 'POST', body: fd, credentials: 'same-origin' });
-    const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.detail || 'Erro ao enviar a arte');
+    let j = {};
+    for (const f of arquivos) {
+      const fd = new FormData(); fd.append('arquivo', f);
+      const r = await fetch(API + '/programacao/pedido/' + id + '/arte', { method: 'POST', body: fd, credentials: 'same-origin' });
+      j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error((arquivos.length > 1 ? f.name + ': ' : '') + (j.detail || 'Erro ao enviar a arte'));
+    }
     showAlert(j.mensagem || 'Arte anexada');
   } catch (e) { showAlert(e.message, 'danger'); }
   input.value = '';
@@ -10906,11 +10903,28 @@ async function enviarArteProg(id, input, noModal) {
   if (document.getElementById('ped-det-prog')) _carregarProgPedido(id);
 }
 
-async function removerArteProg(id) {
-  if (!confirm('Remover a arte deste pedido?')) return;
-  try { await api('/programacao/pedido/' + id + '/arte', 'DELETE'); showAlert('Arte removida'); }
-  catch (e) { showAlert(e.message, 'danger'); }
+async function removerArteProg(id, aid, nome) {
+  if (!confirm(aid ? `Remover a arte "${nome || ''}" deste pedido?` : 'Remover todas as artes deste pedido?')) return;
+  try {
+    const r = await api('/programacao/pedido/' + id + (aid ? '/artes/' + aid : '/arte'), 'DELETE');
+    showAlert((r && r.mensagem) || 'Arte removida');
+  } catch (e) { showAlert(e.message, 'danger'); }
   _carregarProgPedido(id);
+}
+
+// Miniaturas das artes do pedido (cada página de PDF conta como uma arte no verso)
+function _artesListaHtml(id, artes, pode) {
+  if (!artes.length) return '<span style="color:var(--warn);font-size:13px">Sem arte anexada</span>';
+  return `<div class="flex gap-2" style="flex-wrap:wrap;align-items:flex-start">${artes.map(a => {
+    const nm = _escHtml(a.nome || 'arte');
+    const thumb = a.paginas ? `<img src="${API}/programacao/pedido/${id}/artes/${a.id}/pagina/1" alt="Arte ${nm}" style="height:90px;max-width:140px;object-fit:contain;border-radius:6px;border:1px solid var(--border);background:#fff">`
+      : '<div style="height:90px;width:90px;display:flex;align-items:center;justify-content:center;border:1px dashed var(--border);border-radius:6px;font-size:11px;color:var(--muted)">PDF</div>';
+    return `<div style="display:flex;flex-direction:column;gap:3px;align-items:center;max-width:150px">
+      <a href="${API}/programacao/pedido/${id}/artes/${a.id}" target="_blank" title="Abrir ${nm}">${thumb}</a>
+      <div style="font-size:11px;color:var(--muted);text-align:center;word-break:break-all">${nm}${a.paginas > 1 ? ` · ${a.paginas} pág.` : ''}</div>
+      ${pode ? `<button class="btn btn-sm btn-danger" style="padding:2px 8px;font-size:11px" onclick="removerArteProg(${id}, ${a.id}, '${nm.replace(/'/g, '')}')">Remover</button>` : ''}
+    </div>`;
+  }).join('')}</div>`;
 }
 
 async function carregarConfigProgramacao() {
@@ -14261,15 +14275,28 @@ async function imprimirFichas(ids) {
       <div class="anot"><div class="lab">ANOTAÇÕES DA PRODUÇÃO</div></div>
       <div class="rod"><span>Pagamento não sai nesta ficha (fica com o comercial).</span><span>VERSO: arte do pedido →</span></div>
     </section>`;
-    const imgSrc = `${API}/programacao/pedido/${f.id}/arte-imagem`;
-    const verso = `<section class="folha">
-      <div class="topo"><div><div class="emp">VERSO · ARTE DO PEDIDO</div><div class="mini">${esc(f.cliente)}${f.vendedor ? ' · vendedor ' + esc(f.vendedor) : ''}</div></div><div class="num"><div class="n">${esc(f.numero)}</div></div></div>
-      <div class="arte">${f.arte.imagem ? `<img src="${imgSrc}" alt="Arte do pedido">`
-        : f.arte.tem ? '<div class="semarte">ARTE EM PDF — abrir no sistema (não foi possível gerar a imagem)</div>'
+    // VERSO: todas as artes do pedido (cada arquivo / cada página de PDF), juntas na mesma folha
+    // para economizar papel — até 4 por folha, na grade que deixa cada arte o maior possível.
+    const cab = (pg, tot) => `<div class="topo"><div><div class="emp">VERSO · ARTE DO PEDIDO${tot > 1 ? ` · FOLHA ${pg}/${tot}` : ''}</div><div class="mini">${esc(f.cliente)}${f.vendedor ? ' · vendedor ' + esc(f.vendedor) : ''}</div></div><div class="num"><div class="n">${esc(f.numero)}</div></div></div>`;
+    const imgsArte = f.artes_paginas || [];
+    let verso;
+    if (imgsArte.length) {
+      const grupos = _versoGrupos(imgsArte, 4);
+      verso = grupos.map((g, gi) => {
+        const gr = _versoGrade(g, 192, 250);
+        return `<section class="folha">${cab(gi + 1, grupos.length)}
+          <div class="arte-grade" style="grid-template-columns:repeat(${gr.cols},1fr);grid-template-rows:repeat(${gr.rows},1fr)">
+            ${g.map(x => `<div class="arte-cel"><img src="${API}${x.url}" alt="Arte do pedido"></div>`).join('')}
+          </div></section>`;
+      }).join('');
+    } else {
+      verso = `<section class="folha">${cab(1, 1)}
+      <div class="arte">${f.arte.tem ? '<div class="semarte">ARTE EM PDF — abrir no sistema (não foi possível gerar a imagem)</div>'
         : i.arte_modo === 'igual' ? `<div class="semarte">ARTE IGUAL AO PEDIDO ${esc(i.arte_ref || 'ANTERIOR')}</div>`
         : i.arte_modo === 'sem' ? '<div class="semarte">SEM IMPRESSÃO</div>'
         : '<div class="semarte">SEM ARTE ANEXADA<br><span>confirmar com o vendedor</span></div>'}</div>
     </section>`;
+    }
     return frente + verso;
   }).join('');
   const css = `@page{size:A4;margin:9mm}*{box-sizing:border-box}body{margin:0;font-family:Arial,Helvetica,sans-serif;color:#111}
@@ -14293,6 +14320,10 @@ async function imprimirFichas(ids) {
     .rod{display:flex;justify-content:space-between;font-size:10px;color:#444;border-top:1px solid #bbb;padding-top:5px}
     .arte{flex:1;min-height:0;display:flex;align-items:flex-start;justify-content:center;overflow:hidden}
     .arte img{width:100%;height:100%;object-fit:contain;object-position:center top;image-rendering:auto}
+    .arte-grade{flex:1;min-height:0;display:grid;gap:4mm}
+    .arte-cel{min-height:0;min-width:0;display:flex;align-items:center;justify-content:center;overflow:hidden}
+    .arte-grade:has(.arte-cel:only-child) .arte-cel{align-items:flex-start}
+    .arte-cel img{max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain}
     .semarte{font-size:26px;font-weight:800;text-align:center}.semarte span{font-size:15px;font-weight:400}
     @media screen{body{background:#888}.folha{background:#fff;width:210mm;margin:12px auto;padding:9mm;height:297mm}}`;
   w.document.open();
@@ -14307,6 +14338,27 @@ async function imprimirFichas(ids) {
   setTimeout(() => { if (falta > 0) { falta = 0; imprimir(); } }, 8000);
 }
 window.imprimirFichas = imprimirFichas;
+
+// Divide as artes em folhas de até `max`, equilibrando (5 artes = 3 + 2, não 4 + 1).
+function _versoGrupos(lista, max) {
+  const folhas = Math.ceil(lista.length / max);
+  const por = Math.ceil(lista.length / folhas);
+  const out = [];
+  for (let i = 0; i < lista.length; i += por) out.push(lista.slice(i, i + por));
+  return out;
+}
+// Escolhe colunas x linhas que deixam a menor arte o maior possível na área (mm) do verso.
+function _versoGrade(imgs, W, H) {
+  const k = imgs.length, gap = 4;
+  let melhor = { cols: 1, rows: k, nota: -1 };
+  for (let cols = 1; cols <= k; cols++) {
+    const rows = Math.ceil(k / cols);
+    const cw = (W - gap * (cols - 1)) / cols, ch = (H - gap * (rows - 1)) / rows;
+    const nota = Math.min(...imgs.map(x => Math.min(cw / (x.w || 1000), ch / (x.h || 1414))));
+    if (nota > melhor.nota + 1e-9) melhor = { cols, rows, nota };
+  }
+  return melhor;
+}
 
 
 // ═══ Ficha individual de controle de fornecimento de EPI (modelo padrão da empresa) ═══
