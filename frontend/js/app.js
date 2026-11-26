@@ -7077,6 +7077,17 @@ async function corrigirMarcaProducao(pedidoId, de, para) {
 }
 window.corrigirMarcaProducao = corrigirMarcaProducao;
 
+// Produto produzido que não estava no pedido, mas faz parte da venda: inclui o item no pedido
+async function incluirProdutoProduzido(pedidoId, produtoId, nome, qtd) {
+  if (!confirm(`Incluir ${nome} no pedido com ${fmtNum(qtd)} un. (a quantidade já produzida)?\n\nO estoque não muda: a baixa já foi feita no lançamento da produção.\nSe o produto foi lançado no pedido errado, use "Corrigir marca" ou edite o lançamento.`)) return;
+  try {
+    const r = await api('/pedidos/' + pedidoId + '/incluir-produto-produzido', 'POST', { produto_id: produtoId });
+    showAlert('✅ ' + r.mensagem);
+    verDetalhesPedido(pedidoId);
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
+window.incluirProdutoProduzido = incluirProdutoProduzido;
+
 // Quem produziu e quando: lançamentos de produção vinculados a este pedido
 // (um pedido pode ser atendido em vários dias por operadores diferentes).
 async function _carregarHistoricoProducaoPedido(id) {
@@ -7101,10 +7112,14 @@ async function _carregarHistoricoProducaoPedido(id) {
     }
     const resumo = hist.resumo || [];
     const podeCorrigir = temPermissao('producao', 'editar') || temPermissao('pedidos', 'editar');
+    const podeIncluir = (window.usuarioLogado && window.usuarioLogado.role === 'gestor') || temPermissao('pedidos', 'editar');
     const candidatos = resumo.filter(x => !x.fora_do_pedido && !x.revenda && x.pedido > 0 && x.produzido < x.pedido && x.produto_id);
     const situacao = r => {
       if (r.fora_do_pedido) {
         let h = '<span style="color:var(--danger);font-weight:600">⚠ Fora do pedido</span>';
+        if (podeIncluir && r.produto_id) {
+          h += `<div style="margin-top:6px"><button class="btn btn-sm btn-primary" title="O produto faz parte da venda: inclui no pedido com a quantidade produzida (o estoque não muda)" onclick="incluirProdutoProduzido(${id}, ${r.produto_id}, '${_escHtml(r.produto_nome || '').replace(/'/g, '')}', ${r.produzido || 0})">➕ Incluir no pedido</button></div>`;
+        }
         if (podeCorrigir && r.produto_id && candidatos.length) {
           const selId = 'corr-marca-' + r.produto_id;
           h += candidatos.length === 1
