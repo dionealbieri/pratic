@@ -322,6 +322,13 @@ async def sincronizar(origem: str = "manual") -> dict:
                     r = await asyncio.to_thread(_registrar)
                     if r.get("status") == "registrada":
                         res["novas"] += 1
+                        c3 = get_conn()
+                        try:
+                            auto = await sacmod.decidir_automatico(c3, str(meta["venda"]))
+                        finally:
+                            c3.close()
+                        if auto == "fabrica":
+                            res["auto_fabrica"] = res.get("auto_fabrica", 0) + 1
                     elif r.get("status") == "erro":
                         res["erros"].append(f"{meta['venda']}: {r.get('motivo')}")
                 except Exception as e:
@@ -335,6 +342,8 @@ async def sincronizar(origem: str = "manual") -> dict:
                 res["erros"].append(f"Ficaram {len(baixar) - MAX_PDFS_POR_LEITURA} vendas para a próxima leitura.")
 
             partes = [f"{res['novas']} venda(s) nova(s)"]
+            if res.get("auto_fabrica"):
+                partes.append(f"{res['auto_fabrica']} já enviada(s) à fábrica sozinha(s)")
             if res["canceladas"]:
                 partes.append(f"{res['canceladas']} cancelada(s) no SAC")
             msg = "Leitura do SAC concluída: " + ", ".join(partes) + "."
