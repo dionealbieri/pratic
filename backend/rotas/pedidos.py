@@ -1959,6 +1959,7 @@ class AjusteEstoqueClienteIn(BaseModel):
     descricao: str
     quantidade: float          # + entra / - baixa
     observacao: Optional[str] = ""
+    vendedor_usuario_id: Optional[int] = None   # saldo inicial: vendedor que vai ver este estoque
 
 
 class ParaEstoqueIn(BaseModel):
@@ -1974,8 +1975,15 @@ def _pode_mexer_estoque_cliente(current_user: dict) -> bool:
 
 
 def _clientes_do_vendedor(conn, uid: int) -> set:
-    return {r[0] for r in conn.execute(
+    """Clientes que o vendedor vê: os dos pedidos dele + os que o gestor ligou a ele no estoque do cliente."""
+    ids = {r[0] for r in conn.execute(
         "SELECT DISTINCT cliente_id FROM pedidos WHERE vendedor_usuario_id = ?", (uid,)).fetchall()}
+    try:
+        ids |= {r[0] for r in conn.execute(
+            "SELECT DISTINCT cliente_id FROM estoque_cliente_mov WHERE vendedor_usuario_id = ?", (uid,)).fetchall()}
+    except Exception:
+        pass
+    return ids
 
 
 def _saldos_estoque_cliente(conn, cliente_ids=None) -> list:
@@ -2177,12 +2185,31 @@ def ajustar_estoque_cliente(body: AjusteEstoqueClienteIn, current_user: dict = D
             saldo = _saldo_linha(conn, body.cliente_id, body.produto_id, desc)
             if -body.quantidade > saldo + 1e-9:
                 raise HTTPException(400, f"Saldo insuficiente: tem {saldo:g}.")
-        conn.execute("""INSERT INTO estoque_cliente_mov (cliente_id, produto_id, descricao, tipo, quantidade, usuario, observacao)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        conn.execute("""INSERT INTO estoque_cliente_mov (cliente_id, produto_id, descricao, tipo, quantidade, usuario, observacao,
+                                                         vendedor_usuario_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                      (body.cliente_id, body.produto_id, desc, "baixa" if body.quantidade < 0 else "ajuste",
-                      body.quantidade, _nome_usuario(current_user), body.observacao.strip()))
+                      body.quantidade, _nome_usuario(current_user), body.observacao.strip(), body.vendedor_usuario_id))
         conn.commit()
         return {"mensagem": "Estoque do cliente atualizado"}
+    finally:
+        conn.close()
+
+
+@router.get("/estoque-cliente/vendedores")
+def vendedores_estoque_cliente(current_user: dict = Depends(get_current_user)):
+    """Para o saldo inicial: lista de vendedores e o vendedor do último pedido de cada cliente."""
+    if not _pode_mexer_estoque_cliente(current_user):
+        raise HTTPException(403, "Sem permissão.")
+    conn = get_conn()
+    try:
+        vend = [dict(r) for r in conn.execute("""SELECT id, nome FROM usuarios
+                 WHERE ativo = 1 AND (role = 'comercial' OR COALESCE(tambem_vendedor, 0) = 1) ORDER BY nome""")]
+        ult = {r["cliente_id"]: r["vendedor_usuario_id"] for r in conn.execute("""
+                 SELECT cliente_id, vendedor_usuario_id FROM pedidos
+                 WHERE vendedor_usuario_id IS NOT NULL AND id IN (SELECT MAX(id) FROM pedidos
+                   WHERE vendedor_usuario_id IS NOT NULL GROUP BY cliente_id)""")}
+        return {"vendedores": vend, "ultimo_vendedor": ult}
     finally:
         conn.close()
 
