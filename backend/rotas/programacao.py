@@ -8,6 +8,7 @@ Depois de liberada:
   • informações para a produção e arte: o vendedor do pedido ou quem edita pedidos;
   • pagamento: o vendedor do pedido (e o gestor) — nunca sai na ficha da produção.
 """
+import json
 import os
 import uuid
 from datetime import datetime
@@ -65,6 +66,18 @@ def _pode_ver_programacao(conn, u) -> bool:
     if _eh_gestor(u):
         return True
     return _liberada(conn) and "programacao" in _paginas_perfil(conn, u.get("role") or "")
+
+
+def _pode_arte(conn, u, ped) -> bool:
+    """Arte do pedido: o vendedor do pedido anexa direto pelo portal Comercial, mesmo antes de a
+    Programação da Produção ser liberada para todos."""
+    if _eh_gestor(u):
+        return True
+    if u.get("role") == "comercial":
+        return ped["vendedor_usuario_id"] == u.get("id")
+    if vendedor_dono(u, ped):
+        return True
+    return verificar_permissao("pedidos", "editar", u)
 
 
 def _pode_info(conn, u, ped) -> bool:
@@ -214,6 +227,8 @@ def dados_pedido(pid: int, current_user: dict = Depends(get_current_user)):
             "arte": ({"nome": ped["arte_arquivo_nome"], "tem_previa": bool(ped["arte_previa"]),
                       "eh_pdf": (ped["arte_arquivo"] or "").lower().endswith(".pdf")}
                      if ped["arte_arquivo"] else None),
+            "artes": _lista_artes(conn, pid),
+            "pode_arte": _pode_arte(conn, current_user, ped),
             "prioridade": {"status": ped["prioridade_status"], "motivo": ped["prioridade_motivo"],
                            "obs_gestor": ped["prioridade_obs_gestor"], "decidida_por": ped["prioridade_decidida_por"]},
             "status": ped["status"],
@@ -305,12 +320,108 @@ def salvar_pagamento(pid: int, body: PagamentoIn, current_user: dict = Depends(g
 
 # ─── arte (verso da ficha) ───────────────────────────────────────────────────
 
+MAX_PAGINAS_PDF = 12
+
+
+def _paginas_pdf(caminho_pdf: str) -> list:
+    """Todas as páginas do PDF viram PNG (cada uma é uma arte no verso)."""
+    out = []
+    try:
+        import pypdfium2 as pdfium
+        pdf = pdfium.PdfDocument(caminho_pdf)
+        try:
+            for k in range(min(len(pdf), MAX_PAGINAS_PDF)):
+                pagina = pdf[k]
+                largura = pagina.get_width() or 595
+                escala = max(2.0, min(5.0, 2600.0 / float(largura)))
+                img = pagina.render(scale=escala).to_pil()
+                nome = f"{uuid.uuid4().hex}_p{k + 1}.png"
+                img.save(os.path.join(_pasta_artes(), nome), "PNG", optimize=True)
+                out.append(nome)
+        finally:
+            pdf.close()
+    except Exception:
+        pass
+    return out
+
+
+def _medidas(nome: str):
+    try:
+        from PIL import Image, ImageOps
+        with Image.open(os.path.join(_pasta_artes(), os.path.basename(nome))) as im:
+            im = ImageOps.exif_transpose(im)
+            return im.size
+    except Exception:
+        return (1000, 1414)
+
+
+def _paginas_da_arte(conn, a) -> list:
+    """Imagens (já sem a margem branca) de uma arte, com largura/altura para montar o verso.
+    Calcula na 1ª vez e guarda."""
+    if a["paginas_json"]:
+        try:
+            return json.loads(a["paginas_json"])
+        except ValueError:
+            pass
+    arq = a["arquivo"]
+    if arq.lower().endswith(".pdf"):
+        brutas = _paginas_pdf(os.path.join(_pasta_artes(), os.path.basename(arq)))
+    else:
+        brutas = [arq]
+    pags = []
+    for b in brutas:
+        final = _imagem_cortada(b) or os.path.basename(b)
+        w, h = _medidas(final)
+        pags.append({"img": final, "w": w, "h": h})
+    conn.execute("UPDATE pedidos_artes SET paginas_json=? WHERE id=?", (json.dumps(pags), a["id"]))
+    conn.commit()
+    return pags
+
+
+def _artes(conn, pid: int):
+    return conn.execute("SELECT * FROM pedidos_artes WHERE pedido_id=? ORDER BY id", (pid,)).fetchall()
+
+
+def _espelhar_primeira(conn, pid: int):
+    """As colunas arte_* do pedido ficam com a 1ª arte (o resto do sistema só pergunta se tem arte)."""
+    a = conn.execute("SELECT * FROM pedidos_artes WHERE pedido_id=? ORDER BY id LIMIT 1", (pid,)).fetchone()
+    if a:
+        previa = None
+        if a["arquivo"].lower().endswith(".pdf"):
+            pags = _paginas_da_arte(conn, a)
+            previa = pags[0]["img"] if pags else None
+        conn.execute("UPDATE pedidos SET arte_arquivo=?, arte_arquivo_nome=?, arte_previa=? WHERE id=?",
+                     (a["arquivo"], a["nome"], previa, pid))
+    else:
+        conn.execute("UPDATE pedidos SET arte_arquivo=NULL, arte_arquivo_nome=NULL, arte_previa=NULL WHERE id=?", (pid,))
+
+
+def _apagar_arte(a):
+    _apagar(a["arquivo"])
+    try:
+        for pg in json.loads(a["paginas_json"] or "[]"):
+            if os.path.basename(pg.get("img") or "") != os.path.basename(a["arquivo"]):
+                _apagar(pg.get("img"))
+    except ValueError:
+        pass
+
+
+def _lista_artes(conn, pid: int) -> list:
+    out = []
+    for a in _artes(conn, pid):
+        pags = _paginas_da_arte(conn, a)
+        out.append({"id": a["id"], "nome": a["nome"], "eh_pdf": a["arquivo"].lower().endswith(".pdf"),
+                    "paginas": len(pags), "criado_por": a["criado_por"], "criado_em": a["criado_em"]})
+    return out
+
+
 @router.post("/pedido/{pid}/arte")
 async def anexar_arte(pid: int, arquivo: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+    """Acrescenta uma arte ao pedido (o pedido pode ter várias; todas saem no verso da ficha)."""
     conn = get_conn()
     try:
         ped = _pedido(conn, pid)
-        if not _pode_info(conn, current_user, ped):
+        if not _pode_arte(conn, current_user, ped):
             raise HTTPException(403, "Sem permissão para anexar a arte deste pedido.")
         ext = os.path.splitext(arquivo.filename or "")[1].lower()
         if ext not in EXT_ARTE:
@@ -321,88 +432,147 @@ async def anexar_arte(pid: int, arquivo: UploadFile = File(...), current_user: d
         if len(dados) > MAX_ARTE:
             raise HTTPException(400, "Arquivo muito grande (máx. 25 MB)")
         nome = f"{pid}_{uuid.uuid4().hex}{ext}"
-        caminho = os.path.join(_pasta_artes(), nome)
-        with open(caminho, "wb") as f:
+        with open(os.path.join(_pasta_artes(), nome), "wb") as f:
             f.write(dados)
-        previa = _gerar_previa_pdf(caminho) if ext == ".pdf" else None
-        antigo, antiga_prev = ped["arte_arquivo"], ped["arte_previa"]
-        conn.execute("UPDATE pedidos SET arte_arquivo=?, arte_arquivo_nome=?, arte_previa=? WHERE id=?",
-                     (nome, os.path.basename(arquivo.filename or nome)[:200], previa, pid))
+        cur = conn.execute("INSERT INTO pedidos_artes (pedido_id, arquivo, nome, criado_por) VALUES (?,?,?,?)",
+                           (pid, nome, os.path.basename(arquivo.filename or nome)[:200], _nome(current_user)))
+        a = conn.execute("SELECT * FROM pedidos_artes WHERE id=?", (cur.lastrowid,)).fetchone()
+        pags = _paginas_da_arte(conn, a)
+        _espelhar_primeira(conn, pid)
         conn.commit()
-        _apagar(antigo)
-        _apagar(antiga_prev)
+        total = conn.execute("SELECT COUNT(*) FROM pedidos_artes WHERE pedido_id=?", (pid,)).fetchone()[0]
         aviso = ""
-        if ext == ".pdf" and not previa:
+        if ext == ".pdf" and not pags:
             aviso = " (não consegui gerar a imagem do PDF para o verso; a arte fica guardada para abrir)"
-        return {"mensagem": "Arte anexada" + aviso, "tem_previa": bool(previa) or ext != ".pdf"}
+        elif ext == ".pdf" and len(pags) > 1:
+            aviso = f" ({len(pags)} páginas, todas no verso)"
+        return {"mensagem": ("Arte anexada" if total == 1 else f"Arte anexada — {total} artes no pedido") + aviso,
+                "tem_previa": bool(pags), "total": total}
     finally:
         conn.close()
 
 
-def _arquivo_arte(pid: int, current_user: dict, previa: bool):
-    conn = get_conn()
-    try:
-        ped = _pedido(conn, pid)
-        if current_user.get("role") == "comercial" and ped["vendedor_usuario_id"] != current_user.get("id"):
-            raise HTTPException(403, "Pedido de outro vendedor")
-        if not (_eh_gestor(current_user) or _liberada(conn)):
-            raise HTTPException(403, "Programação da Produção ainda em teste (só o gestor).")
-        nome = ped["arte_previa"] if (previa and ped["arte_previa"]) else ped["arte_arquivo"]
-        nome_orig = ped["arte_arquivo_nome"]
-        # Prévias antigas (geradas em resolução menor) são refeitas na hora, mais nítidas
-        if previa and ped["arte_previa"] and (ped["arte_arquivo"] or "").lower().endswith(".pdf"):
-            try:
-                from PIL import Image
-                with Image.open(os.path.join(_pasta_artes(), os.path.basename(ped["arte_previa"]))) as im:
-                    pequena = im.size[0] < 2000 and im.size[1] < 2000
-            except Exception:
-                pequena = True
-            if pequena:
-                nova = _gerar_previa_pdf(os.path.join(_pasta_artes(), os.path.basename(ped["arte_arquivo"])))
-                if nova:
-                    conn.execute("UPDATE pedidos SET arte_previa=? WHERE id=?", (nova, pid))
-                    conn.commit()
-                    _apagar(ped["arte_previa"])
-                    nome = nova
-    finally:
-        conn.close()
-    if not nome:
-        raise HTTPException(404, "Este pedido não tem arte anexada")
-    caminho = os.path.join(_pasta_artes(), os.path.basename(nome))
-    if not os.path.exists(caminho):
+def _checar_ver(conn, pid: int, current_user: dict):
+    ped = _pedido(conn, pid)
+    if current_user.get("role") == "comercial" and ped["vendedor_usuario_id"] != current_user.get("id"):
+        raise HTTPException(403, "Pedido de outro vendedor")
+    if not (_eh_gestor(current_user) or _liberada(conn) or _pode_arte(conn, current_user, ped)):
+        raise HTTPException(403, "Programação da Produção ainda em teste (só o gestor).")
+    return ped
+
+
+def _resposta_arquivo(nome: str, nome_orig: Optional[str] = None):
+    caminho = os.path.join(_pasta_artes(), os.path.basename(nome or ""))
+    if not nome or not os.path.exists(caminho):
         raise HTTPException(404, "Arquivo da arte não encontrado no servidor")
-    if previa and not caminho.lower().endswith(".pdf"):
-        cortada = _imagem_cortada(nome)
-        if cortada:
-            caminho = os.path.join(_pasta_artes(), cortada)
     ext = os.path.splitext(caminho)[1].lower()
     return FileResponse(caminho, media_type=EXT_ARTE.get(ext, "application/octet-stream"),
                         headers={"Content-Disposition": f'inline; filename="{os.path.basename(nome_orig or nome)}"'})
 
 
+@router.get("/pedido/{pid}/artes")
+def listar_artes(pid: int, current_user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    try:
+        ped = _checar_ver(conn, pid, current_user)
+        return {"artes": _lista_artes(conn, pid), "pode_editar": _pode_arte(conn, current_user, ped)}
+    finally:
+        conn.close()
+
+
+@router.get("/pedido/{pid}/artes/{aid}")
+def ver_uma_arte(pid: int, aid: int, current_user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    try:
+        _checar_ver(conn, pid, current_user)
+        a = conn.execute("SELECT * FROM pedidos_artes WHERE id=? AND pedido_id=?", (aid, pid)).fetchone()
+    finally:
+        conn.close()
+    if not a:
+        raise HTTPException(404, "Arte não encontrada")
+    return _resposta_arquivo(a["arquivo"], a["nome"])
+
+
+@router.get("/pedido/{pid}/artes/{aid}/pagina/{n}")
+def ver_pagina_arte(pid: int, aid: int, n: int, current_user: dict = Depends(get_current_user)):
+    """Imagem de uma página da arte (sem margem branca) — é o que sai no verso."""
+    conn = get_conn()
+    try:
+        _checar_ver(conn, pid, current_user)
+        a = conn.execute("SELECT * FROM pedidos_artes WHERE id=? AND pedido_id=?", (aid, pid)).fetchone()
+        if not a:
+            raise HTTPException(404, "Arte não encontrada")
+        pags = _paginas_da_arte(conn, a)
+    finally:
+        conn.close()
+    if n < 1 or n > len(pags):
+        raise HTTPException(404, "Página não encontrada")
+    return _resposta_arquivo(pags[n - 1]["img"])
+
+
+@router.delete("/pedido/{pid}/artes/{aid}")
+def remover_uma_arte(pid: int, aid: int, current_user: dict = Depends(get_current_user)):
+    conn = get_conn()
+    try:
+        ped = _pedido(conn, pid)
+        if not _pode_arte(conn, current_user, ped):
+            raise HTTPException(403, "Sem permissão")
+        a = conn.execute("SELECT * FROM pedidos_artes WHERE id=? AND pedido_id=?", (aid, pid)).fetchone()
+        if not a:
+            raise HTTPException(404, "Arte não encontrada")
+        conn.execute("DELETE FROM pedidos_artes WHERE id=?", (aid,))
+        _espelhar_primeira(conn, pid)
+        conn.commit()
+        _apagar_arte(a)
+        resta = conn.execute("SELECT COUNT(*) FROM pedidos_artes WHERE pedido_id=?", (pid,)).fetchone()[0]
+        return {"mensagem": "Arte removida" + (f" — ficaram {resta}" if resta else ""), "total": resta}
+    finally:
+        conn.close()
+
+
+# Compatibilidade: endereços antigos respondem com a 1ª arte
 @router.get("/pedido/{pid}/arte")
 def ver_arte(pid: int, current_user: dict = Depends(get_current_user)):
-    return _arquivo_arte(pid, current_user, previa=False)
+    conn = get_conn()
+    try:
+        _checar_ver(conn, pid, current_user)
+        a = conn.execute("SELECT * FROM pedidos_artes WHERE pedido_id=? ORDER BY id LIMIT 1", (pid,)).fetchone()
+    finally:
+        conn.close()
+    if not a:
+        raise HTTPException(404, "Este pedido não tem arte anexada")
+    return _resposta_arquivo(a["arquivo"], a["nome"])
 
 
 @router.get("/pedido/{pid}/arte-imagem")
 def ver_arte_imagem(pid: int, current_user: dict = Depends(get_current_user)):
-    """Imagem para o verso da ficha: a própria imagem, ou a prévia PNG quando a arte é PDF."""
-    return _arquivo_arte(pid, current_user, previa=True)
+    conn = get_conn()
+    try:
+        _checar_ver(conn, pid, current_user)
+        a = conn.execute("SELECT * FROM pedidos_artes WHERE pedido_id=? ORDER BY id LIMIT 1", (pid,)).fetchone()
+        pags = _paginas_da_arte(conn, a) if a else []
+    finally:
+        conn.close()
+    if not pags:
+        raise HTTPException(404, "Este pedido não tem arte anexada")
+    return _resposta_arquivo(pags[0]["img"])
 
 
 @router.delete("/pedido/{pid}/arte")
 def remover_arte(pid: int, current_user: dict = Depends(get_current_user)):
+    """Remove todas as artes do pedido."""
     conn = get_conn()
     try:
         ped = _pedido(conn, pid)
-        if not _pode_info(conn, current_user, ped):
+        if not _pode_arte(conn, current_user, ped):
             raise HTTPException(403, "Sem permissão")
-        conn.execute("UPDATE pedidos SET arte_arquivo=NULL, arte_arquivo_nome=NULL, arte_previa=NULL WHERE id=?", (pid,))
+        artes = _artes(conn, pid)
+        conn.execute("DELETE FROM pedidos_artes WHERE pedido_id=?", (pid,))
+        _espelhar_primeira(conn, pid)
         conn.commit()
-        _apagar(ped["arte_arquivo"])
-        _apagar(ped["arte_previa"])
-        return {"mensagem": "Arte removida"}
+        for a in artes:
+            _apagar_arte(a)
+        return {"mensagem": "Arte removida" if len(artes) <= 1 else f"{len(artes)} artes removidas"}
     finally:
         conn.close()
 
@@ -867,6 +1037,10 @@ def fichas(ids: str, data: Optional[str] = None, current_user: dict = Depends(ge
                          "observacao": r["info_observacao"]},
                 "obs_pedido": r["observacoes"],
                 "arte": {"tem": bool(r["arte_arquivo"]), "imagem": arte_img, "nome": r["arte_arquivo_nome"]},
+                # todas as imagens do verso (cada página de cada arte), com medidas para encaixar na folha
+                "artes_paginas": [{"url": f"/programacao/pedido/{r['id']}/artes/{a['id']}/pagina/{k + 1}",
+                                   "w": pg["w"], "h": pg["h"]}
+                                  for a in _artes(conn, r["id"]) for k, pg in enumerate(_paginas_da_arte(conn, a))],
                 "itens": itens.get(r["id"], []),
             })
         return {"fichas": out, "impresso_em": datetime.now(BRT).strftime("%d/%m/%Y %H:%M"),
