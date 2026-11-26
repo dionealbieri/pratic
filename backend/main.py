@@ -6,7 +6,7 @@ import os, shutil, tempfile, datetime, base64, sqlite3, zipfile
 
 from database import init_db, seed_data, get_conn, DB_PATH
 from auth_utils import get_current_user, validar_sessao_db
-from rotas import auth, colaboradores, maquinas, producao, premiacao, configuracoes, relatorios, estoque, pedidos, epi, comunicacao, gerencial, pintura, remessas, programacao, treino
+from rotas import auth, colaboradores, maquinas, producao, premiacao, configuracoes, relatorios, estoque, pedidos, epi, comunicacao, gerencial, pintura, remessas, programacao, treino, sac
 
 app = FastAPI(title="PRATIC - Sistema de Produção")
 
@@ -64,6 +64,7 @@ app.include_router(epi.router,            prefix="/api/epi",            tags=["E
 app.include_router(comunicacao.router,    prefix="/api/comunicacao",    tags=["Comunicação"],   dependencies=[Depends(get_current_user)])
 app.include_router(gerencial.router,      prefix="/api/gerencial",      tags=["Gerencial"],     dependencies=[Depends(get_current_user)])
 app.include_router(programacao.router,    prefix="/api/programacao",    tags=["Programação"],   dependencies=[Depends(get_current_user)])
+app.include_router(sac.router,            prefix="/api/sac",            tags=["Pedidos SAC"])
 app.include_router(treino.router,         prefix="/api/treino",         tags=["Treinamento"])
 app.include_router(pintura.router,        prefix="/api/pintura",        tags=["Pintura"],       dependencies=[Depends(get_current_user)])
 
@@ -177,7 +178,7 @@ def fazer_backup():
 # ─── BACKUP COMPLETO: banco + arquivos (PDFs das notas fiscais e anexos do chat) ───
 # Os PDFs ficam em pastas ao lado do banco (banco/notas_fiscais, banco/uploads/...),
 # por isso o backup só do .db não levava as notas. O completo é um .zip com tudo.
-PASTAS_ARQUIVOS = ("notas_fiscais", "uploads", "pedidos_originais", "pedidos_artes")
+PASTAS_ARQUIVOS = ("notas_fiscais", "uploads", "pedidos_originais", "pedidos_artes", "sac_pdfs")
 
 
 def _pasta_banco() -> str:
