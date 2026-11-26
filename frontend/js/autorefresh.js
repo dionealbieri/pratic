@@ -125,9 +125,11 @@
       chip.type = 'button';
       chip.id = 'auto-refresh-chip';
       chip.title = 'A tela se atualiza sozinha a cada 30 segundos. Clique para atualizar agora.';
-      chip.style.cssText = 'position:fixed;right:14px;bottom:12px;z-index:900;background:var(--surface,#151922);' +
-        'color:var(--muted,#8a93a6);border:1px solid var(--border,#2a3040);border-radius:16px;padding:5px 11px;' +
-        'font-size:11.5px;cursor:pointer;opacity:.85;font-family:inherit';
+      chip.style.cssText = 'position:fixed;right:18px;bottom:16px;z-index:900;background:var(--surface,#151922);' +
+        'color:var(--accent,#f5b82e);border:2px solid var(--accent,#f5b82e);border-radius:22px;padding:8px 16px;' +
+        'font-size:13.5px;font-weight:700;cursor:pointer;font-family:inherit;box-shadow:0 4px 14px rgba(0,0,0,.35)';
+      chip.addEventListener('mouseenter', () => { chip.style.background = 'var(--accent,#f5b82e)'; chip.style.color = '#1a1300'; });
+      chip.addEventListener('mouseleave', () => { chip.style.background = 'var(--surface,#151922)'; chip.style.color = 'var(--accent,#f5b82e)'; });
       chip.addEventListener('click', () => atualizar(true));
       document.body.appendChild(chip);
     }
@@ -135,7 +137,8 @@
     chip.style.display = '';
     const s = Math.round((Date.now() - ultimaAtualizacao) / 1000);
     const txt = s < 5 ? 'agora' : s < 60 ? 'há ' + s + ' s' : 'há ' + Math.floor(s / 60) + ' min';
-    chip.textContent = (rodando ? '⏳ ' : '🔄 ') + 'atualizado ' + txt;
+    chip.textContent = (rodando ? '⏳ Atualizando…' : '🔄 Atualizar') + '  ·  ' + (rodando ? '' : 'atualizado ' + txt);
+    if (rodando) chip.textContent = '⏳ Atualizando…';
   }
 
   ['mousedown', 'keydown', 'wheel', 'touchstart', 'input'].forEach(ev =>
