@@ -96,6 +96,8 @@
     const st = document.getElementById('sac-robo-status');
     const inp = document.getElementById('sac-desde');
     if (inp && document.activeElement !== inp) inp.value = r.importar_desde || '';
+    const chk = document.getElementById('sac-auto-fabrica');
+    if (chk) chk.checked = r.auto_fabrica !== false;
     if (!st) return;
     st.title = '';
     const btn = document.getElementById('sac-btn-sync');
@@ -267,6 +269,15 @@
     catch (e) { showAlert(e.message, 'danger'); }
   }
 
+  async function sacAutoFabrica(lig) {
+    try {
+      const r = await api('/sac/config', 'POST', { auto_fabrica: !!lig });
+      showAlert(lig ? ('Vendas já vinculadas vão direto para a fábrica.' + (r.enviadas ? ` ${r.enviadas} enviada(s) agora.` : ''))
+                    : 'Todas as vendas vão esperar a sua decisão.');
+      if (r.enviadas) sacCarregar();
+    } catch (e) { showAlert(e.message, 'danger'); }
+  }
+
   async function sacSincronizar() {
     const b = document.getElementById('sac-btn-sync');
     if (b) { b.disabled = true; b.textContent = 'Lendo o SAC…'; }
@@ -290,7 +301,8 @@
       const res = j.resultados || [];
       const n = (s) => res.filter(x => x.status === s).length;
       const erros = res.filter(x => x.status === 'erro').map(x => `${x.arquivo}: ${x.motivo}`);
-      showAlert(`${n('registrada')} venda(s) na caixa de entrada` + (n('ja_existe') ? ` · ${n('ja_existe')} já estavam aqui` : '')
+      const auto = res.filter(x => x.automatico === 'fabrica').length;
+      showAlert(`${n('registrada')} venda(s) na caixa de entrada` + (auto ? ` · ${auto} já foram direto para a fábrica` : '') + (n('ja_existe') ? ` · ${n('ja_existe')} já estavam aqui` : '')
         + (erros.length ? ` · ${erros.length} com erro` : ''), erros.length ? 'danger' : 'success');
       if (erros.length) console.warn('Pedidos SAC — erros:', erros);
       aba = 'aguardando';
@@ -351,5 +363,5 @@
   }
 
   Object.assign(window, { sacCarregar, sacChecar, sacFabrica, sacDestino, sacExcluirPedido, sacCancelamento,
-                          sacSalvarData, sacSincronizar, sacEnviarPdfs, sacAbrirDepara });
+                          sacSalvarData, sacSincronizar, sacEnviarPdfs, sacAbrirDepara, sacAutoFabrica });
 })();
