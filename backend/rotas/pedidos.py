@@ -2760,6 +2760,53 @@ def meus_pedidos_visto(current_user: dict = Depends(get_current_user)):
         conn.close()
 
 
+# ─── PRODUTO PRODUZIDO QUE NÃO ESTAVA NO PEDIDO: INCLUIR ─────────────────────
+
+class IncluirProduzidoIn(BaseModel):
+    produto_id: int
+
+
+@router.post("/{id}/incluir-produto-produzido")
+def incluir_produto_produzido(id: int, body: IncluirProduzidoIn, current_user: dict = Depends(get_current_user)):
+    """Produção lançada com um produto que não está no pedido (⚠ Fora do pedido) e que REALMENTE
+    faz parte da venda: inclui o item no pedido com a quantidade já produzida. O estoque não muda
+    (a baixa já foi feita no lançamento); só o pedido passa a ter o item."""
+    if current_user.get("role") == "comercial" or not (
+            current_user.get("role") == "gestor" or verificar_permissao("pedidos", "editar", current_user)):
+        raise HTTPException(403, "Só o gestor (ou quem edita pedidos) inclui item no pedido.")
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        ped = cur.execute("SELECT id, numero_pedido FROM pedidos WHERE id=?", (id,)).fetchone()
+        if not ped:
+            raise HTTPException(404, "Pedido não encontrado")
+        if cur.execute("SELECT 1 FROM pedidos_itens WHERE pedido_id=? AND produto_id=?", (id, body.produto_id)).fetchone():
+            raise HTTPException(400, "Este produto já está no pedido.")
+        prod = cur.execute("SELECT id, nome, preco FROM estoque_produtos WHERE id=?", (body.produto_id,)).fetchone()
+        if not prod:
+            raise HTTPException(404, "Produto não encontrado no estoque.")
+        qtd = cur.execute("""SELECT COALESCE(SUM(i.quantidade), 0) FROM producao_diaria_itens i
+                             JOIN producao_diaria pd ON pd.id = i.producao_diaria_id
+                             WHERE pd.pedido_numero = ? AND i.produto_estoque_id = ?""",
+                          (ped["numero_pedido"], body.produto_id)).fetchone()[0] or 0
+        if qtd <= 0:
+            raise HTTPException(400, "Não há produção deste produto lançada no pedido.")
+        cur.execute("""INSERT INTO pedidos_itens (pedido_id, produto_id, descricao, quantidade, unidade,
+                       valor_unitario, desconto, qtd_produzida, status)
+                       VALUES (?, ?, ?, ?, 'unidade', ?, 0, 0, 'aberto')""",
+                    (id, prod["id"], prod["nome"], qtd, prod["preco"] or 0))
+        cur.execute("""INSERT INTO auditoria (usuario, acao, entidade, entidade_id, descricao, valor_anterior, valor_novo)
+                       VALUES (?, 'incluir_produto_produzido', 'pedidos', ?, ?, '', ?)""",
+                    (_nome_usuario(current_user), id,
+                     f"Pedido {ped['numero_pedido']}: incluído {prod['nome']} (estava fora do pedido)", f"{qtd:g}"))
+        _sincronizar_progresso_itens(cur, id)
+        _recalc_status_pedido(cur, id)
+        conn.commit()
+        return {"mensagem": f"{prod['nome']} incluído no pedido {ped['numero_pedido']} com {qtd:,.0f} un.".replace(",", ".")}
+    finally:
+        conn.close()
+
+
 # ─── TROCA DE PRODUTO (MARCA) NA PRODUÇÃO JÁ LANÇADA ─────────────────────────
 
 class TrocarProdutoProducaoIn(BaseModel):
