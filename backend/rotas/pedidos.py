@@ -520,6 +520,7 @@ def _parse_pedido_sac(texto: str) -> dict:
         i = 0
         while i < len(regiao):
             if _sac_is_int(regiao[i]):
+                codigo_sac = regiao[i].strip()   # 1ª coluna "Produto" = código do produto no SAC
                 desc_parts = []
                 j = i + 1
                 while j < len(regiao) and not _sac_is_unidade(regiao[j]):
@@ -538,7 +539,8 @@ def _parse_pedido_sac(texto: str) -> dict:
                             valores.append(_br_to_float(regiao[i].replace("R$", "")))
                             i += 1
                         if desc:
-                            item = {"descricao": desc[:250], "quantidade": _br_to_float(qtd_raw), "unidade": unidade}
+                            item = {"descricao": desc[:250], "quantidade": _br_to_float(qtd_raw), "unidade": unidade,
+                                    "codigo": codigo_sac}
                             item.update(_sac_valores_item(item["quantidade"], valores))
                             itens.append(item)
                         continue
@@ -936,6 +938,57 @@ async def importar_clientes(file: UploadFile = File(...)):
     return {"lidos": len(clientes), "inseridos": len(novos), "ja_existentes": ja_existentes, "duplicados_arquivo": dup_arquivo, "amostra": amostra}
 
 
+async def criar_pedido_de_arquivo(conn, caminho: str, nome: str, current_user: dict,
+                                  resolver_item=None, parsed: Optional[dict] = None) -> dict:
+    """Cria cliente + pedido + itens a partir de um PDF (mesma regra da importação em lote).
+    resolver_item(item) -> produto_id | None | "pular": usado pelos Pedidos SAC para já ligar
+    cada item ao produto certo do estoque (de-para) e deixar de fora os terceirizados. Não faz commit."""
+    cur = conn.cursor()
+    if parsed is None:
+        texto = _extract_text_from_file(caminho, nome)
+        parsed = _parse_pedido_sac(texto) if _is_pedido_sac(texto) else _parse_pedido_text(texto)
+    numero = parsed.get("numero_pedido")
+    if not numero:
+        return {"status": "erro", "motivo": "Número do pedido não encontrado", "faltando": parsed.get("faltando", [])}
+    existe = cur.execute("SELECT id FROM pedidos WHERE numero_pedido=?", (str(numero),)).fetchone()
+    if existe:
+        return {"status": "duplicado", "numero_pedido": numero, "pedido_id": existe["id"]}
+
+    cliente_id = await _resolver_cliente_id(parsed, cur)
+    cur.execute("""INSERT INTO pedidos
+        (numero_pedido, cliente_id, prazo_entrega, vendedor, observacoes, status)
+        VALUES (?,?,?,?,?,'aberto')""",
+        (str(numero), cliente_id, parsed.get("prazo_entrega") or datetime.date.today().isoformat(),
+         parsed.get("vendedor"), parsed.get("observacoes")))
+    pedido_id = cur.lastrowid
+    uid_vend = vincular_pedido(conn, pedido_id)
+    vendedor_outro = None
+    if current_user.get("role") == "comercial":
+        if not uid_vend:
+            # Vendedor importando: pedido sem vendedor reconhecido fica com quem importou
+            cur.execute("UPDATE pedidos SET vendedor_usuario_id=? WHERE id=?", (current_user["id"], pedido_id))
+        elif uid_vend != current_user["id"]:
+            vendedor_outro = parsed.get("vendedor")
+    qtd_itens = 0
+    for it in parsed.get("itens", []):
+        prod = resolver_item(it) if resolver_item else None
+        if prod == "pular":
+            continue
+        cur.execute("""INSERT INTO pedidos_itens
+            (pedido_id, produto_id, descricao, quantidade, unidade, valor_unitario, desconto, qtd_produzida, status)
+            VALUES (?,?,?,?,?,?,?,0,'aberto')""",
+            (pedido_id, prod, it["descricao"], it["quantidade"], it.get("unidade") or "unidade",
+             it.get("valor_unitario") or 0, it.get("desconto") or 0))
+        qtd_itens += 1
+    try:
+        _vincular_original(conn, pedido_id, caminho, nome, eh_token=False)
+    except Exception:
+        pass
+    return {"status": "criado", "numero_pedido": numero, "pedido_id": pedido_id,
+            "cliente": parsed["cliente"].get("razao_social"), "vendedor_outro": vendedor_outro,
+            "qtd_itens": qtd_itens, "faltando": parsed.get("faltando", [])}
+
+
 @router.post("/importar-arquivos-lote")
 async def importar_pedidos_lote(files: List[UploadFile] = File(...), current_user: dict = Depends(get_current_user)):
     """Importa vários PDFs de pedido de uma vez: cria cliente+pedido+itens, pula duplicados (por número) e devolve um resumo."""
@@ -956,57 +1009,20 @@ async def importar_pedidos_lote(files: List[UploadFile] = File(...), current_use
                 with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                     tmp.write(await file.read())
                     tmp_path = tmp.name
-                texto = _extract_text_from_file(tmp_path, nome)
-                parsed = _parse_pedido_sac(texto) if _is_pedido_sac(texto) else _parse_pedido_text(texto)
-
-                numero = parsed.get("numero_pedido")
-                if not numero:
+                r = await criar_pedido_de_arquivo(conn, tmp_path, nome, current_user)
+                r["arquivo"] = nome
+                if r["status"] == "erro":
                     erros += 1
-                    resultados.append({"arquivo": nome, "status": "erro",
-                                       "motivo": "Número do pedido não encontrado",
-                                       "faltando": parsed.get("faltando", [])})
+                    resultados.append(r)
                     continue
-
-                existe = cur.execute("SELECT id FROM pedidos WHERE numero_pedido=?", (str(numero),)).fetchone()
-                if existe:
+                if r["status"] == "duplicado":
                     duplicados += 1
-                    resultados.append({"arquivo": nome, "numero_pedido": numero,
-                                       "status": "duplicado", "pedido_id": existe["id"]})
+                    resultados.append(r)
                     continue
-
-                cliente_id = await _resolver_cliente_id(parsed, cur)
-                cur.execute("""INSERT INTO pedidos
-                    (numero_pedido, cliente_id, prazo_entrega, vendedor, observacoes, status)
-                    VALUES (?,?,?,?,?,'aberto')""",
-                    (str(numero), cliente_id, parsed.get("prazo_entrega") or datetime.date.today().isoformat(),
-                     parsed.get("vendedor"), parsed.get("observacoes")))
-                pedido_id = cur.lastrowid
-                uid_vend = vincular_pedido(conn, pedido_id)
-                vendedor_outro = None
-                if current_user.get("role") == "comercial":
-                    if not uid_vend:
-                        # Vendedor importando: pedido sem vendedor reconhecido fica com quem importou
-                        cur.execute("UPDATE pedidos SET vendedor_usuario_id=? WHERE id=?", (current_user["id"], pedido_id))
-                    elif uid_vend != current_user["id"]:
-                        vendedor_outro = parsed.get("vendedor")
-                for it in parsed.get("itens", []):
-                    cur.execute("""INSERT INTO pedidos_itens
-                        (pedido_id, produto_id, descricao, quantidade, unidade, valor_unitario, desconto, qtd_produzida, status)
-                        VALUES (?,?,?,?,?,?,?,0,'aberto')""",
-                        (pedido_id, None, it["descricao"], it["quantidade"], it.get("unidade") or "unidade",
-                         it.get("valor_unitario") or 0, it.get("desconto") or 0))
-                try:
-                    _vincular_original(conn, pedido_id, tmp_path, nome, eh_token=False)
-                except Exception:
-                    pass
                 conn.commit()
                 criados += 1
-                criados_ids.append(pedido_id)
-                resultados.append({"arquivo": nome, "numero_pedido": numero, "status": "criado",
-                                   "pedido_id": pedido_id, "cliente": parsed["cliente"].get("razao_social"),
-                                   "vendedor_outro": vendedor_outro,
-                                   "qtd_itens": len(parsed.get("itens", [])),
-                                   "faltando": parsed.get("faltando", [])})
+                criados_ids.append(r["pedido_id"])
+                resultados.append(r)
             except Exception as e:
                 conn.rollback()
                 erros += 1
