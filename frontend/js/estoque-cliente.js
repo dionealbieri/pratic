@@ -136,6 +136,7 @@
               <td style="text-align:right;white-space:nowrap">
                 <button class="btn btn-sm btn-secondary" title="Movimentações" onclick="ecHistorico('${k}')">📜</button>
                 ${ecDados.pode_mexer ? `<button class="btn btn-sm btn-secondary" title="Baixa ou ajuste" onclick="ecAbrirAjuste('${k}')">✏️</button>` : ''}
+                ${ecDados.pode_excluir ? `<button class="btn btn-sm btn-danger" title="Excluir item do estoque do cliente" onclick="ecExcluir('${k}')">🗑️</button>` : ''}
               </td></tr>`;
           }).join('') : '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:14px">Ainda sem saldo — aguardando a produção</td></tr>'}</tbody>
         </table>
@@ -226,6 +227,21 @@
     } catch (err) { aviso(err.message, 'danger'); }
   };
 
+  window.ecExcluir = async function (k) {
+    const l = linhaPorChave(k);
+    if (!l) return;
+    const motivo = prompt(`Excluir do estoque de ${l.cliente_nome}:\n${l.descricao} — saldo ${n(l.saldo)} un\n\n` +
+      'O item sai da lista e o histórico (📜) guarda quem excluiu e por quê.\nInforme o motivo:');
+    if (motivo === null) return;
+    if (motivo.trim().length < 3) { aviso('Informe o motivo da exclusão', 'danger'); return; }
+    try {
+      const r = await chamar('/pedidos/estoque-cliente/excluir', 'POST', {
+        cliente_id: l.cliente_id, produto_id: l.produto_id, descricao: l.descricao, motivo: motivo.trim() });
+      aviso('🗑️ ' + ((r && r.mensagem) || 'Item excluído'));
+      window.ecMontar(ecContainer.id);
+    } catch (err) { aviso(err.message, 'danger'); }
+  };
+
   let ecClientesCache = [];
   window.ecAbrirNovo = async function () {
     try { ecClientesCache = await chamar('/pedidos/clientes') || []; } catch (_) { ecClientesCache = []; }
@@ -257,7 +273,7 @@
     } catch (err) { aviso(err.message, 'danger'); }
   };
 
-  const TIPO = { entrada: '➕ Entrada (produção)', entrega: '🚚 Entrega', baixa: '➖ Baixa manual', ajuste: '➕ Entrada manual' };
+  const TIPO = { entrada: '➕ Entrada (produção)', entrega: '🚚 Entrega', baixa: '➖ Baixa manual', ajuste: '➕ Entrada manual', exclusao: '🗑️ Excluído pelo gestor' };
   window.ecHistorico = async function (k) {
     const l = linhaPorChave(k);
     if (!l) return;
