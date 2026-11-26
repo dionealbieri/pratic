@@ -2066,8 +2066,29 @@ def listar_estoque_cliente(cliente_id: Optional[int] = None, com_zerados: bool =
             WHERE COALESCE(p.para_estoque_cliente,0) = 1 AND p.status IN ('aberto','em_producao') {filtro}
             ORDER BY p.id
         """, params).fetchall()]
+        # Vendedor de cada cliente: o ligado à mão no estoque do cliente (saldo inicial) ou o do último pedido
+        cids = {l["cliente_id"] for l in linhas} | {p["cliente_id"] for p in a_caminho}
+        vend_cli = {}
+        if cids:
+            marc = ",".join("?" * len(cids))
+            for r in conn.execute(f"""SELECT cliente_id, vendedor_usuario_id FROM pedidos
+                                      WHERE vendedor_usuario_id IS NOT NULL AND id IN (SELECT MAX(id) FROM pedidos
+                                        WHERE vendedor_usuario_id IS NOT NULL AND cliente_id IN ({marc}) GROUP BY cliente_id)""",
+                                  list(cids)):
+                vend_cli[r["cliente_id"]] = r["vendedor_usuario_id"]
+            for r in conn.execute(f"""SELECT cliente_id, vendedor_usuario_id FROM estoque_cliente_mov
+                                      WHERE vendedor_usuario_id IS NOT NULL AND id IN (SELECT MAX(id) FROM estoque_cliente_mov
+                                        WHERE vendedor_usuario_id IS NOT NULL AND cliente_id IN ({marc}) GROUP BY cliente_id)""",
+                                  list(cids)):
+                vend_cli[r["cliente_id"]] = r["vendedor_usuario_id"]
+        nomes_v = {r["id"]: r["nome"] for r in conn.execute("SELECT id, nome FROM usuarios")}
+        vendedores = {}
+        for cid, uid in vend_cli.items():
+            vendedores[str(cid)] = {"id": uid, "nome": nomes_v.get(uid) or "—"}
         return {"linhas": linhas, "a_caminho": a_caminho, "pode_mexer": _pode_mexer_estoque_cliente(current_user),
-                "pode_excluir": current_user.get("role") == "gestor"}
+                "pode_excluir": current_user.get("role") == "gestor",
+                "vendedor_por_cliente": vendedores,
+                "filtro_vendedor": current_user.get("role") != "comercial"}
     finally:
         conn.close()
 
