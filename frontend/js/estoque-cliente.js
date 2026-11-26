@@ -111,11 +111,15 @@
     if (!ecContainer) return;
     const busca = (document.getElementById('ec-busca')?.value || '').toLowerCase().trim();
     let linhas = ecDados.linhas || [];
+    const vpc = ecDados.vendedor_por_cliente || {};
+    const fv = document.getElementById('ec-filtro-vend')?.value || '';
+    const passaVend = cid => !fv || (fv === 'sem' ? !vpc[cid] : String((vpc[cid] || {}).id) === fv);
+    linhas = linhas.filter(l => passaVend(l.cliente_id));
     if (busca) linhas = linhas.filter(l => (l.cliente_nome + ' ' + (l.nome_fantasia || '') + ' ' + l.descricao + ' ' + (l.produto_nome || '')).toLowerCase().includes(busca));
     const porCliente = {};
     linhas.forEach(l => { (porCliente[l.cliente_id] = porCliente[l.cliente_id] || { nome: l.cliente_nome, fantasia: l.nome_fantasia, linhas: [] }).linhas.push(l); });
     const caminho = {};
-    (ecDados.a_caminho || []).forEach(p => { (caminho[p.cliente_id] = caminho[p.cliente_id] || { nome: p.cliente_nome, pedidos: [] }).pedidos.push(p); });
+    (ecDados.a_caminho || []).filter(p => passaVend(p.cliente_id)).forEach(p => { (caminho[p.cliente_id] = caminho[p.cliente_id] || { nome: p.cliente_nome, pedidos: [] }).pedidos.push(p); });
     Object.keys(caminho).forEach(cid => { if (!porCliente[cid] && !busca) porCliente[cid] = { nome: caminho[cid].nome, linhas: [] }; });
 
     const blocos = Object.entries(porCliente).map(([cid, c]) => {
@@ -124,7 +128,8 @@
       const prod = (caminho[cid]?.pedidos || []).map(p => `<span style="font-size:11px;background:var(--surface2);border-radius:10px;padding:2px 8px;margin-right:4px">🏭 ${e(p.numero_pedido)} em produção</span>`).join('');
       return `<div class="table-wrap" style="margin-bottom:14px">
         <div class="table-head" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
-          <span class="table-head-title">🏷️ ${e(c.nome)}${c.fantasia ? ` <span style="font-size:12px;color:var(--muted);font-weight:400">${e(c.fantasia)}</span>` : ''} <span style="font-size:12px;background:var(--surface2);border-radius:10px;padding:2px 8px;margin-left:6px">${n(total)} un</span></span>
+          <span class="table-head-title">🏷️ ${e(c.nome)}${c.fantasia && c.fantasia !== c.nome ? ` <span style="font-size:12px;color:var(--muted);font-weight:400">${e(c.fantasia)}</span>` : ''} <span style="font-size:12px;background:var(--surface2);border-radius:10px;padding:2px 8px;margin-left:6px">${n(total)} un</span>
+            ${ecDados.filtro_vendedor ? `<span style="font-size:12px;border-radius:10px;padding:2px 9px;margin-left:6px;${vpc[cid] ? 'background:rgba(59,130,246,.15);color:#60a5fa' : 'background:rgba(239,68,68,.12);color:var(--danger)'}">👤 ${vpc[cid] ? e(vpc[cid].nome) : 'sem vendedor'}</span>` : ''}</span>
           <span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">${prod}${temSaldo ? `<button class="btn btn-sm btn-primary" onclick="ecAbrirEntrega(${cid})">🚚 Entregar</button>` : ''}</span>
         </div>
         <table>
@@ -162,6 +167,7 @@
         <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px">
           <div style="font-size:13px;color:var(--muted)">Copos personalizados guardados para o cliente. Entram quando a produção de um pedido marcado <strong>🏷️ para o estoque do cliente</strong> termina; saem pelo botão <strong>Entregar</strong>.</div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <select id="ec-filtro-vend" onchange="ecRender()" style="display:none;min-width:190px" aria-label="Filtrar por vendedor"></select>
             <input type="text" id="ec-busca" placeholder="Buscar cliente ou produto..." oninput="ecRender()" style="min-width:220px">
             <button class="btn btn-sm btn-secondary" onclick="ecMontar('${containerId}')">↻</button>
             <button class="btn btn-sm btn-secondary" id="ec-btn-novo" style="display:none" onclick="ecAbrirNovo()">➕ Saldo inicial</button>
@@ -172,6 +178,19 @@
     try { ecDados = await chamar('/pedidos/estoque-cliente') || ecDados; }
     catch (err) { document.getElementById('ec-lista').innerHTML = `<p style="color:var(--danger)">${e(err.message)}</p>`; return; }
     document.getElementById('ec-btn-novo').style.display = ecDados.pode_mexer ? '' : 'none';
+    const fsel = document.getElementById('ec-filtro-vend');
+    if (fsel) {
+      if (ecDados.filtro_vendedor) {
+        const atual = fsel.value;
+        const vs = {};
+        Object.values(ecDados.vendedor_por_cliente || {}).forEach(v => { vs[v.id] = v.nome; });
+        fsel.innerHTML = '<option value="">👤 Todos os vendedores</option>' +
+          Object.entries(vs).sort((a, b) => a[1].localeCompare(b[1], 'pt-BR')).map(([id, nm]) => `<option value="${id}">${e(nm)}</option>`).join('') +
+          '<option value="sem">— Sem vendedor</option>';
+        fsel.value = [...fsel.options].some(o => o.value === atual) ? atual : '';
+        fsel.style.display = '';
+      } else fsel.style.display = 'none';
+    }
     render();
   };
   window.ecRender = render;
