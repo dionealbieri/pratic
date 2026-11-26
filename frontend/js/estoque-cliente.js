@@ -63,7 +63,7 @@
       </div>
     </div>
     <div class="modal-overlay" id="modal-ec-novo">
-      <div class="modal" style="max-width:560px">
+      <div class="modal" style="max-width:640px;max-height:92vh;overflow-y:auto">
         <div class="modal-title">➕ Saldo inicial no estoque de um cliente</div>
         <div class="form-grid">
           <div class="form-group" style="grid-column:1/-1"><label for="ec-novo-cli-busca">Cliente</label>
@@ -73,9 +73,12 @@
             <input type="hidden" id="ec-novo-cli"></div>
           <div class="form-group" style="grid-column:1/-1"><label for="ec-novo-vend">Vendedor (quem vê este estoque no portal Comercial)</label>
             <select id="ec-novo-vend"><option value="">— escolha o vendedor —</option></select></div>
-          <div class="form-group" style="grid-column:1/-1"><label for="ec-novo-desc">Produto</label><input id="ec-novo-desc" list="ec-novo-prods" placeholder="Escolha um produto do estoque ou escreva como no pedido" autocomplete="off"><datalist id="ec-novo-prods"></datalist></div>
-          <div class="form-group"><label>Quantidade</label><input type="number" id="ec-novo-qtd" min="1" step="1"></div>
-          <div class="form-group"><label>Motivo *</label><input id="ec-novo-obs" value="Saldo inicial"></div>
+          <div id="ec-novo-ja" style="grid-column:1/-1;display:none;font-size:12.5px;color:var(--muted);background:var(--surface2);border-radius:8px;padding:8px 10px"></div>
+          <div class="form-group" style="grid-column:1/-1;margin-bottom:0"><label>Produtos e quantidades</label>
+            <div id="ec-novo-itens"></div><datalist id="ec-novo-prods"></datalist>
+            <button type="button" class="btn btn-secondary" style="width:100%;margin-top:6px" onclick="ecNovoLinha(true)">+ Adicionar produto</button>
+            <div id="ec-novo-total" style="text-align:right;font-size:12.5px;color:var(--muted);margin-top:6px"></div></div>
+          <div class="form-group" style="grid-column:1/-1"><label for="ec-novo-obs">Motivo *</label><input id="ec-novo-obs" value="Saldo inicial"></div>
         </div>
         <div class="modal-footer">
           <button class="btn btn-secondary" onclick="document.getElementById('modal-ec-novo').classList.remove('open')">Cancelar</button>
@@ -283,8 +286,9 @@
       (ecVendInfo.vendedores || []).map(v => `<option value="${v.id}">${e(v.nome)}</option>`).join('');
     document.getElementById('ec-novo-prods').innerHTML = ecProdsCache.map(p => `<option value="${e(p.nome)}">${e(p.marca || '')}</option>`).join('');
     window.ecTrocarCliente();
-    document.getElementById('ec-novo-desc').value = '';
-    document.getElementById('ec-novo-qtd').value = '';
+    document.getElementById('ec-novo-itens').innerHTML = '';
+    window.ecNovoLinha(false);
+    document.getElementById('ec-novo-ja').style.display = 'none';
     document.getElementById('ec-novo-obs').value = 'Saldo inicial';
     document.getElementById('modal-ec-novo').classList.add('open');
     setTimeout(() => document.getElementById('ec-novo-cli-busca').focus(), 50);
@@ -311,8 +315,37 @@
     // vendedor: o do último pedido do cliente (pode trocar)
     const v = (ecVendInfo.ultimo_vendedor || {})[id];
     document.getElementById('ec-novo-vend').value = v ? String(v) : '';
-    document.getElementById('ec-novo-desc').focus();
+    // o que este cliente já tem guardado (para não lançar em dobro)
+    const ja = (ecDados.linhas || []).filter(l => l.cliente_id === id && l.saldo > 0);
+    const box = document.getElementById('ec-novo-ja');
+    box.innerHTML = ja.length ? '⚠️ Já tem no estoque deste cliente: ' + ja.map(l => `<b>${e(l.descricao)}</b> ${n(l.saldo)}`).join(' · ')
+      + '<br><span style="font-size:11.5px">O que você lançar aqui SOMA a esse saldo.</span>' : '';
+    box.style.display = ja.length ? '' : 'none';
+    const p1 = document.querySelector('#ec-novo-itens .ec-ni-desc');
+    if (p1) p1.focus();
   };
+  // Linhas de produto do saldo inicial
+  window.ecNovoLinha = function (foco) {
+    const box = document.getElementById('ec-novo-itens');
+    const div = document.createElement('div');
+    div.className = 'ec-ni';
+    div.style.cssText = 'display:grid;grid-template-columns:1fr 120px auto;gap:6px;margin-bottom:6px';
+    div.innerHTML = `<input class="ec-ni-desc" list="ec-novo-prods" placeholder="Produto do estoque (ou como no pedido)" autocomplete="off" aria-label="Produto">
+      <input class="ec-ni-qtd" type="number" min="1" step="1" placeholder="Qtd" aria-label="Quantidade">
+      <button type="button" class="btn btn-sm btn-danger" title="Tirar esta linha" aria-label="Tirar esta linha">✕</button>`;
+    div.querySelector('button').onclick = () => { div.remove(); if (!box.children.length) window.ecNovoLinha(false); ecNovoTotal(); };
+    div.querySelector('.ec-ni-qtd').addEventListener('input', ecNovoTotal);
+    div.querySelector('.ec-ni-qtd').addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); window.ecNovoLinha(true); } });
+    box.appendChild(div);
+    if (foco) div.querySelector('.ec-ni-desc').focus();
+    ecNovoTotal();
+  };
+  function ecNovoTotal() {
+    const linhas = [...document.querySelectorAll('#ec-novo-itens .ec-ni')];
+    const tot = linhas.reduce((s, d) => s + (parseFloat(d.querySelector('.ec-ni-qtd').value) || 0), 0);
+    const el = document.getElementById('ec-novo-total');
+    if (el) el.textContent = tot ? `${linhas.length} linha(s) · total ${n(tot)} un` : '';
+  }
   window.ecTrocarCliente = function () {
     document.getElementById('ec-novo-cli').value = '';
     document.getElementById('ec-novo-cli-sel').style.display = 'none';
@@ -322,20 +355,31 @@
   };
   window.ecConfirmarNovo = async function () {
     const cid = +document.getElementById('ec-novo-cli').value;
-    const desc = document.getElementById('ec-novo-desc').value.trim();
-    const qtd = parseFloat(document.getElementById('ec-novo-qtd').value) || 0;
     const vend = +document.getElementById('ec-novo-vend').value || null;
     if (!cid) { aviso('Clique no cliente na lista para escolher', 'danger'); return; }
+    const linhas = [...document.querySelectorAll('#ec-novo-itens .ec-ni')].map(d => ({
+      descricao: d.querySelector('.ec-ni-desc').value.trim(), quantidade: parseFloat(d.querySelector('.ec-ni-qtd').value) || 0 }));
+    const meio = linhas.find(l => (l.descricao && !l.quantidade) || (!l.descricao && l.quantidade));
+    if (meio) { aviso(meio.descricao ? `Falta a quantidade de ${meio.descricao}` : 'Tem quantidade sem produto', 'danger'); return; }
+    // mesmo produto em duas linhas: soma
+    const juntos = {};
+    linhas.filter(l => l.descricao && l.quantidade > 0).forEach(l => {
+      const k = l.descricao.toUpperCase();
+      juntos[k] = juntos[k] ? { ...juntos[k], quantidade: juntos[k].quantidade + l.quantidade } : { ...l };
+    });
+    const itens = Object.values(juntos).map(l => {
+      const prod = ecProdsCache.find(p => (p.nome || '').trim().toUpperCase() === l.descricao.toUpperCase());
+      return { descricao: prod ? prod.nome : l.descricao, quantidade: l.quantidade, produto_id: prod ? prod.id : null };
+    });
+    if (!itens.length) { aviso('Informe o produto e a quantidade', 'danger'); return; }
+    const semCadastro = itens.filter(i => !i.produto_id).map(i => i.descricao);
+    if (semCadastro.length && !confirm('Estes produtos não são do cadastro do estoque (ficam só pelo nome):\n• ' + semCadastro.join('\n• ') + '\n\nContinuar?')) return;
     if (!vend && !confirm('Nenhum vendedor escolhido: este estoque só aparece no portal Comercial se o cliente tiver pedido com algum vendedor.\n\nSalvar assim mesmo?')) return;
-    if (!desc) { aviso('Informe o produto', 'danger'); return; }
-    if (qtd <= 0) { aviso('Informe a quantidade', 'danger'); return; }
-    const prod = ecProdsCache.find(p => (p.nome || '').trim().toUpperCase() === desc.toUpperCase());
     try {
-      await chamar('/pedidos/estoque-cliente/ajuste', 'POST', { cliente_id: cid, descricao: desc, quantidade: qtd,
-        produto_id: prod ? prod.id : null, vendedor_usuario_id: vend,
+      const r = await chamar('/pedidos/estoque-cliente/saldo-lote', 'POST', { cliente_id: cid, itens, vendedor_usuario_id: vend,
         observacao: document.getElementById('ec-novo-obs').value.trim() });
       document.getElementById('modal-ec-novo').classList.remove('open');
-      aviso('✅ Saldo lançado');
+      aviso('✅ Saldo lançado — ' + ((r && r.mensagem) || ''));
       window.ecMontar(ecContainer.id);
     } catch (err) { aviso(err.message, 'danger'); }
   };
