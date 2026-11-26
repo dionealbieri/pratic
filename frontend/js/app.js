@@ -2939,17 +2939,36 @@ async function editarProducao(id, colId, maqId, data, meta, producao, produtoEst
   }
 }
 
-async function postProducaoComConfirmacao(payload) {
-  try {
-    return await api('/producao/', 'POST', payload);
-  } catch (e) {
-    if ((e.message || '').includes('pedido_duplicado')) {
-      const ok = confirm('Já existe um lançamento do pedido ' + (payload.pedido_numero || '') + ' nesta data.\n\nDeseja lançar mesmo assim?');
-      if (!ok) throw new Error('__CANCELADO__');
-      return await api('/producao/', 'POST', Object.assign({}, payload, { confirmado: true }));
+// Envia o lançamento e trata as confirmações que o servidor pede:
+//  - pedido_duplicado: mesmo pedido já lançado nesta data;
+//  - excede_pedido:    a produção vai passar da quantidade do pedido;
+//  - fora_do_pedido:   (gestor) produto que não está no pedido -> incluir no pedido e lançar.
+async function _enviarProducao(method, path, payload) {
+  const extra = {};
+  for (let tentativa = 0; tentativa < 4; tentativa++) {
+    try {
+      return await api(path, method, Object.assign({}, payload, extra));
+    } catch (e) {
+      const m = e.message || '';
+      if (m.includes('pedido_duplicado') && !extra.confirmado) {
+        if (!confirm('Já existe um lançamento do pedido ' + (payload.pedido_numero || '') + ' nesta data.\n\nDeseja lançar mesmo assim?')) throw new Error('__CANCELADO__');
+        extra.confirmado = true; continue;
+      }
+      if (m.startsWith('fora_do_pedido::') && !extra.incluir_no_pedido) {
+        if (!confirm('⚠ Produto fora do pedido\n\n' + m.slice(16))) throw new Error('__CANCELADO__');
+        extra.incluir_no_pedido = true; continue;
+      }
+      if (m.startsWith('excede_pedido::') && !extra.confirmar_excesso) {
+        if (!confirm('⚠ Passa da quantidade do pedido\n\n' + m.slice(15))) throw new Error('__CANCELADO__');
+        extra.confirmar_excesso = true; continue;
+      }
+      throw e;
     }
-    throw e;
   }
+}
+
+async function postProducaoComConfirmacao(payload) {
+  return _enviarProducao('POST', '/producao/', payload);
 }
 
 function showConfirmProducao(titulo, html, onConfirm) {
@@ -3049,7 +3068,7 @@ async function executarSalvarProducao() {
     const _validosEdit = prodItens.filter(i => (i.producao || 0) > 0 || _totalPerdaItem(i) > 0 || (i.sobra || 0) > 0);
     if (editId && _validosEdit.length > 1) {
       // edição de lançamento com vários produtos: manda item por item (baixa certa em cada produto)
-      await api('/producao/' + editId, 'PUT', {
+      await _enviarProducao('PUT', '/producao/' + editId, {
         colaborador_id: colId, maquina_id: maqId, data, meta,
         producao: totalProducao,
         produto_estoque_id: null,
@@ -3066,7 +3085,7 @@ async function executarSalvarProducao() {
       showAlert('Produção atualizada!');
     } else if (editId) {
       const item = _validosEdit[0] || prodItens[0];
-      await api('/producao/' + editId, 'PUT', {
+      await _enviarProducao('PUT', '/producao/' + editId, {
         colaborador_id: colId, maquina_id: maqId, data, meta,
         producao: item.producao || 0,
         produto_estoque_id: item.produto_id,
