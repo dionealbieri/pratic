@@ -164,6 +164,7 @@ const pageTitles = {
   'gerencial': 'Painel Gerencial',
   pedidos: 'Pedidos & Fila de Produção',
   programacao: 'Programação da Produção',
+  'pedidos-sac': 'Pedidos SAC',
   backup: 'Backup & Restauração',
   epi: 'Controle de EPI',
   empresa: 'Dados da Empresa',
@@ -226,6 +227,7 @@ const PAGE_META_MAIN = {
   colaboradores: { icon:'👥', label:'Colaboradores', section:'Cadastros' },
   maquinas:      { icon:'⚙️', label:'Máquinas', section:'Cadastros' },
   programacao:   { icon:'📋', label:'Programação', section:'Operações' },
+  'pedidos-sac': { icon:'📥', label:'Pedidos SAC', section:'Operações' },
   pedidos:       { icon:'🧾', label:'Pedidos', section:'Operações' },
   estoque:       { icon:'📦', label:'Estoque', section:'Operações' },
   epi:           { icon:'🦺', label:'EPI', section:'Operações' },
@@ -306,6 +308,15 @@ async function carregarAcessoPrincipal() {
       const iPed = paginasLiberadas.indexOf('pedidos');
       paginasLiberadas.splice(iPed >= 0 ? iPed : paginasLiberadas.length, 0, 'programacao');
     }
+    // Pedidos SAC: caixa de entrada do SAC Varejo — só o gestor
+    if (perfilAtual === 'gestor') {
+      if (!paginasLiberadas.includes('pedidos-sac')) {
+        const iPed2 = paginasLiberadas.indexOf('pedidos');
+        paginasLiberadas.splice(iPed2 >= 0 ? iPed2 + 1 : paginasLiberadas.length, 0, 'pedidos-sac');
+      }
+    } else {
+      paginasLiberadas = paginasLiberadas.filter(p => p !== 'pedidos-sac');
+    }
     if (paginasLiberadas.includes('programacao') && perfilAtual !== 'gestor') {
       const stProg = await _progStatus(true);
       if (!stProg.pode_ver) paginasLiberadas = paginasLiberadas.filter(p => p !== 'programacao');
@@ -379,6 +390,7 @@ function montarMenuPrincipal() {
     ${items.map(item => `
       <a class="nav-item" data-page="${item.key}" onclick="showPage('${item.key}')" style="cursor:pointer">
         <span class="icon">${item.icon}</span> ${item.label}
+        ${item.key === 'pedidos-sac' ? '<span id="nav-sac-badge" title="Vendas do SAC esperando a sua decisão" style="display:none;background:#f5b81c;color:#1a1300;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">0</span>' : ''}
         ${item.key === 'programacao' ? '<span id="nav-prog-badge" title="Prioridades esperando a sua aprovação" style="display:none;background:#8b5cf6;color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">0</span>' : ''}
         ${item.key === 'pedidos' ? '<span id="nav-pedidos-badge" style="display:none;background:var(--danger);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">!</span>' : ''}
         ${item.key === 'estoque' ? '<span id="nav-alerta-badge" style="display:none;background:var(--danger);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">!</span>' : ''}
@@ -431,6 +443,7 @@ function showPage(name) {
     'gerencial': loadGerencial,
     pedidos: loadPedidos_init,
     programacao: loadProgramacao,
+    'pedidos-sac': () => window.sacCarregar && window.sacCarregar(),
     backup: () => { if (typeof carregarInfoBackup === 'function') carregarInfoBackup(); },
     epi: loadEPI,
     comunicacao: loadComunicacao,
