@@ -7432,6 +7432,7 @@ async function importarPedidoArquivo() {
     let obsStr = data.dados_extraidos.observacoes || '';
     obsStr = (obsStr + `\nArquivo importado: ${pedidoArquivoSelecionado.name}`).trim();
     document.getElementById('ped-obs').value = obsStr;
+    if (document.getElementById('ped-info-prod')) document.getElementById('ped-info-prod').value = '';
     
     const clientes = await api('/pedidos/clientes');
     document.getElementById('ped-cliente').innerHTML = clientes.map(c => `<option value="${c.id}">${c.razao_social}${c.nome_fantasia ? ' — ' + c.nome_fantasia : ''}</option>`).join('');
@@ -7555,6 +7556,7 @@ async function openModalPedido() {
   document.getElementById('ped-prazo').value='';
   document.getElementById('ped-vendedor').value='';
   document.getElementById('ped-obs').value='';
+  if (document.getElementById('ped-info-prod')) document.getElementById('ped-info-prod').value='';
   document.getElementById('ped-precisa-pintura').checked = false;
   document.getElementById('ped-precisa-pintura').dataset.original = '0';
   const clientes=await api('/pedidos/clientes');
@@ -7819,6 +7821,8 @@ async function editPedido(id) {
   
   document.getElementById('ped-vendedor').value = p.vendedor || '';
   document.getElementById('ped-obs').value = p.observacoes || '';
+  const _infoProd = document.getElementById('ped-info-prod');
+  if (_infoProd) _infoProd.value = p.info_observacao || '';
   document.getElementById('ped-precisa-pintura').checked = !!p.precisa_pintura;
   document.getElementById('ped-precisa-pintura').dataset.original = p.precisa_pintura ? '1' : '0';
   
@@ -7875,6 +7879,8 @@ async function salvarPedido() {
   const precisaPinturaOriginal = precisaPinturaEl.dataset.original === '1';
 
   const body={numero_pedido:document.getElementById('ped-numero').value,cliente_id:+document.getElementById('ped-cliente').value,prazo_entrega:document.getElementById('ped-prazo').value,vendedor:document.getElementById('ped-vendedor').value,observacoes:document.getElementById('ped-obs').value,itens:pedidoItens.filter(i=>i.descricao.trim()),precisa_pintura:precisaPinturaAgora};
+  const _infoProdEl = document.getElementById('ped-info-prod');
+  if (_infoProdEl) body.info_producao = _infoProdEl.value;
   if(!body.numero_pedido){showPopup('⚠️ Falta o número do pedido', 'O número do pedido não foi preenchido (comum quando a importação não conseguiu identificar automaticamente). Preencha o campo "Número do Pedido" antes de salvar.');return;}
   if(!body.prazo_entrega){showPopup('⚠️ Falta o prazo de entrega', 'Preencha o campo "Prazo de Entrega" antes de salvar.');return;}
   if(!body.itens.length){showPopup('⚠️ Nenhum item no pedido', 'Adicione ao menos um item antes de salvar.');return;}
@@ -14281,12 +14287,12 @@ async function imprimirFichas(ids) {
         <div class="g3">${i.marca ? `<div><div class="mini">Marca do copo</div><div class="v">${esc(i.marca)}</div></div>` : ''}
           ${i.cor_impressao ? `<div><div class="mini">Cor da impressão</div><div class="v">${esc(i.cor_impressao)}</div></div>` : ''}
           <div><div class="mini">Arte</div><div class="v">${arteModo}</div></div></div>
-        ${i.observacao ? `<div class="obs"><b>Observação:</b> ${esc(i.observacao)}</div>` : ''}
+        ${i.observacao ? `<div class="destaque">📌 ${esc(i.observacao).replace(/\n/g, '<br>')}</div>` : ''}
         ${!i.marca && !i.cor_impressao && !i.observacao && !i.arte_modo && !obsPed ? '<div class="obs" style="color:#555">O vendedor não preencheu as informações para a produção.</div>' : ''}
       </div>
       <table class="itens"><thead><tr><th>CÓD.</th><th>PRODUTO</th><th class="r">PEDIDO</th><th class="r">A PRODUZIR</th><th>TIPO</th></tr></thead><tbody>${linhas}</tbody>
         <tfoot><tr><td colspan="3">${f.itens.length} item(ns) · ${prod.length} para produzir</td><td class="r b">${nfmt(totalProd)}</td><td></td></tr></tfoot></table>
-      ${obsPed && !i.observacao ? `<div class="obsped"><b>Obs. do pedido:</b> ${esc(obsPed)}</div>` : ''}
+      ${obsPed && obsPed.trim() !== String(i.observacao || '').trim() ? `<div class="obsped"><b>Obs. do pedido:</b> ${esc(obsPed)}</div>` : ''}
       <div class="anot"><div class="lab">ANOTAÇÕES DA PRODUÇÃO</div></div>
       <div class="rod"><span>Pagamento não sai nesta ficha (fica com o comercial).</span><span>VERSO: arte do pedido →</span></div>
     </section>`;
@@ -14330,6 +14336,7 @@ async function imprimirFichas(ids) {
     .itens th{background:#e5e5e5;text-align:left;padding:5px 7px;font-size:10.5px}.itens td{padding:5px 7px;border-top:1px solid #bbb;vertical-align:top}
     .itens .r{text-align:right}.itens .b{font-weight:800}.itens .t{font-size:10px;font-weight:700}.itens .pn{font-weight:700}.itens .desc{font-weight:400;font-size:10.5px;color:#444}
     .itens tr.rev td{color:#666}.itens tr.rev .pn{font-weight:400}.itens tfoot td{border-top:2px solid #111;font-weight:700;font-size:11px}
+    .destaque{font-size:18px;font-weight:800;line-height:1.4;margin-top:8px;padding:8px 12px;border:2.5px solid #111;border-radius:6px;background:#efefef;-webkit-print-color-adjust:exact;print-color-adjust:exact}
     .obsped{font-size:15px;line-height:1.45;border:1.5px solid #111;border-radius:7px;padding:8px 12px}
     .anot{flex:1;min-height:70px;border:1.5px dashed #111;border-radius:7px;padding:6px 10px}
     .rod{display:flex;justify-content:space-between;font-size:10px;color:#444;border-top:1px solid #bbb;padding-top:5px}
