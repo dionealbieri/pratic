@@ -1208,6 +1208,11 @@ function renderCardsMeus() {
 
 // ── botões e menu ⋯
 const mpBtnPdf = id => `<button class="btn btn-sm mp-b-pdf" title="Abrir o pedido em PDF para conferência" onclick="imprimirPedidoVendedor(${id})">📄 PDF</button>`;
+// 🎨 Arte do pedido: anexar direto na linha (pedidos em aberto / em produção)
+const mpPodeArte = p => ['aberto', 'em_producao'].includes(p.status);
+const mpBtnArte = p => !mpPodeArte(p) ? '' : (Number(p.tem_arte)
+  ? `<button class="btn btn-sm btn-secondary mp-ico" style="color:var(--success);border-color:var(--success)" title="${Number(p.tem_arte)} arte(s) anexada(s) — ver, adicionar ou remover" aria-label="Artes do pedido ${esc(p.numero_pedido)}" onclick="mpArtes(${p.id}, '${esc(p.numero_pedido)}')">🎨${Number(p.tem_arte) > 1 ? ' ' + Number(p.tem_arte) : '✓'}</button>`
+  : `<button class="btn btn-sm btn-secondary mp-ico" style="color:var(--warning,#f59e0b);border-color:var(--warning,#f59e0b)" title="Sem arte — clique para anexar (PDF ou imagem; pode escolher vários arquivos)" aria-label="Anexar arte ao pedido ${esc(p.numero_pedido)}" onclick="mpAnexarArte(${p.id}, '${esc(p.numero_pedido)}')">🎨＋</button>`);
 const mpBtnMais = (t, id) => `<button class="btn btn-sm btn-secondary mp-ico" title="Mais ações" aria-label="Mais ações" onclick="mpAbrirMenu(event,'${t}',${id})">⋯</button>`;
 const mpBtnNf = p => (Number(p.tem_nf_pdf) || p.nf_arquivo) ? `<a class="btn btn-sm btn-secondary" href="${API}/pedidos/${p.id}/nf-arquivo" target="_blank" rel="noopener" style="text-decoration:none" title="Ver a nota fiscal${p.nota_fiscal ? ' ' + esc(p.nota_fiscal) : ''}">🧾 Nota fiscal</a>` : '';
 const mpBtnNfRem = r => r.tem_nf_pdf ? `<a class="btn btn-sm btn-secondary" href="${API}/remessas/${r.id}/nf-arquivo" target="_blank" rel="noopener" style="text-decoration:none" title="Ver a nota fiscal da remessa">🧾 Nota fiscal</a>` : '';
@@ -1242,6 +1247,10 @@ function mpMenuItens(t, id) {
   if (p.status === 'aguardando_nf') it.push({ txt: '✏️ Alterar frete', fn: () => mpAbrirEnvio(p.id, 'transportadora') });
   if (p.status === 'aguardando_retirada') it.push({ txt: '✏️ Alterar retirada', fn: () => mpAbrirEnvio(p.id, 'retirada') });
   if (mpBtnNf(p)) it.push({ txt: '🧾 Nota fiscal', fn: () => window.open(`${API}/pedidos/${p.id}/nf-arquivo`, '_blank') });
+  if (mpPodeArte(p) || Number(p.tem_arte)) {
+    if (Number(p.tem_arte)) it.push({ txt: `🎨 Artes do pedido (${Number(p.tem_arte)})`, fn: () => mpArtes(p.id, p.numero_pedido) });
+    if (mpPodeArte(p)) it.push({ txt: Number(p.tem_arte) ? '🎨 Adicionar outra arte' : '🎨 Anexar a arte', fn: () => mpAnexarArte(p.id, p.numero_pedido) });
+  }
   it.push({ txt: Number(p.tem_original) ? '📎 Trocar o PDF original do pedido' : '📎 Anexar o PDF original do pedido', fn: () => mpAnexarOriginal(p.id, p.numero_pedido) });
   if (mpDados && mpDados.prog) it.push({ txt: ['aberto', 'em_producao'].includes(p.status) ? '🏭 Produção: arte, informações, pagamento e prioridade' : '🏭 Informações para a produção e pagamento', fn: () => { window.location.href = '/?prog=' + p.id; } });
   if (mpPodeEditar(p)) {
@@ -1342,9 +1351,9 @@ function mpAcoesLinha(it) {
     `<button class="btn btn-sm mp-b-parcial" title="Enviar agora só uma parte (o resto sai depois)" onclick="mpAbrirRemessa(${p.id})">✂️ Envio parcial</button>` +
     `<button class="btn btn-sm mp-b-retira" title="O cliente vai buscar: vai direto para a Expedição" onclick="mpAbrirEnvio(${p.id},'retirada')">🙋 Cliente retira</button>` +
     `<button class="btn btn-sm btn-primary" title="Caixas, peso e cubagem para cotar + transportadora e valor do frete — o pedido espera o cliente autorizar" onclick="mpAbrirEnvio(${p.id},'transportadora')">📨 ${mpTemRemessa(p) ? 'Cotação do restante' : 'Cotação de frete'}</button>`);
-  if (et === 'cliente') return mpAcoes(`<button class="btn btn-sm btn-primary" title="O cliente aprovou o frete: o pedido vai para a Expedição" onclick="mpAutorizarCotacao(${p.id}, '${esc(p.numero_pedido)}')">✅ Cliente autorizou</button>` + mpBtnMais('p', p.id));
-  if (et === 'producao') return mpAcoes(`<button class="btn btn-sm btn-secondary" onclick="verDetalhe(${p.id})">Ver</button>` + mpBtnMais('p', p.id));
-  return mpAcoes(mpBtnNf(p) + mpBtnMais('p', p.id));
+  if (et === 'cliente') return mpAcoes(`<button class="btn btn-sm btn-primary" title="O cliente aprovou o frete: o pedido vai para a Expedição" onclick="mpAutorizarCotacao(${p.id}, '${esc(p.numero_pedido)}')">✅ Cliente autorizou</button>` + mpBtnArte(p) + mpBtnMais('p', p.id));
+  if (et === 'producao') return mpAcoes(`<button class="btn btn-sm btn-secondary" onclick="verDetalhe(${p.id})">Ver</button>` + mpBtnArte(p) + mpBtnMais('p', p.id));
+  return mpAcoes(mpBtnNf(p) + mpBtnArte(p) + mpBtnMais('p', p.id));
 }
 
 function mpPaginar(chave, itens) {
@@ -1470,7 +1479,7 @@ function renderSecoesMeus() {
       }
       linhas.push(`<tr><td>${mpCelPedido(it)}</td><td>${mpNomeCli(p)}${mpChaveNf(p.nf_chave)}</td><td>${fmtDate(String(p.created_at || '').slice(0, 10))}</td>
         <td><span class="pill ${STATUS_PILL_PEDIDO[p.status] || ''}">${(p.status === 'produzido' && Number(p.revenda_bloqueado)) ? '📦 Aguardando separação' : (STATUS_LABEL_PEDIDO[p.status] || esc(p.status))}</span></td>
-        <td>${mpAcoes((et === 'producao' ? `<button class="btn btn-sm btn-secondary" onclick="verDetalhe(${p.id})">Ver</button>` : '') + mpBtnNf(p) + mpBtnMais('p', p.id))}</td></tr>`);
+        <td>${mpAcoes((et === 'producao' ? `<button class="btn btn-sm btn-secondary" onclick="verDetalhe(${p.id})">Ver</button>` : '') + mpBtnNf(p) + mpBtnArte(p) + mpBtnMais('p', p.id))}</td></tr>`);
     });
     html = mpTabela('📋 Todos os meus pedidos', `${mpTodosMes === '3m' ? 'Lançados nos últimos 3 meses, agrupados por mês' : 'Lançados em ' + mpNomeMes(mpTodosMes)}${ht ? ' · ' + ht.total + ' pedido(s) · ' + fmtBRL(ht.valor_total) : ''} · mais antigos: escolha o mês ou use a busca`,
       ['Pedido', 'Cliente', 'Lançado em', 'Etapa', ''], linhas, ht ? 'Nenhum pedido neste período' : 'Carregando...', rodape, filtros);
@@ -1534,6 +1543,73 @@ function mpRenderMes() {
 }
 
 // ── PDF original do pedido (para pedidos importados antes de o sistema guardar o arquivo)
+function mpAnexarArte(id, num, depois) {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.multiple = true; inp.accept = '.pdf,application/pdf,.png,.jpg,.jpeg,.webp,image/*';
+  inp.onchange = async () => {
+    const arqs = Array.from(inp.files || []); if (!arqs.length) return;
+    showAlert('Enviando ' + (arqs.length > 1 ? arqs.length + ' artes' : 'a arte') + ' do pedido ' + num + '…');
+    try {
+      let d = {};
+      for (const f of arqs) {
+        const fd = new FormData(); fd.append('arquivo', f);
+        const r = await fetch(API + '/programacao/pedido/' + id + '/arte', { method: 'POST', body: fd, credentials: 'same-origin' });
+        d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error((arqs.length > 1 ? f.name + ': ' : '') + (d.detail || 'Erro ao anexar a arte'));
+      }
+      showAlert('🎨 Pedido ' + num + ': ' + (d.mensagem || 'Arte anexada'));
+      loadMeusPedidos(); if (typeof loadPedidosCom === 'function') loadPedidosCom();
+      if (depois) depois();
+    } catch (e) { showAlert(e.message, 'danger'); }
+  };
+  inp.click();
+}
+// Janela com as artes do pedido: ver, adicionar mais e remover
+async function mpArtes(id, num) {
+  mpFecharMenu && mpFecharMenu();
+  let m = document.getElementById('modal-mp-artes');
+  if (!m) {
+    m = document.createElement('div'); m.className = 'modal-overlay'; m.id = 'modal-mp-artes';
+    m.innerHTML = `<div class="modal" style="max-width:760px;width:94vw;max-height:90vh;overflow-y:auto">
+      <div class="modal-title" id="mp-artes-tit">Artes</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:10px">Todas as artes saem juntas no verso da ficha de produção (até 4 por folha). Cada arte já deve trazer copo, cor da impressão e quantidade.</div>
+      <div id="mp-artes-corpo">Carregando…</div>
+      <div class="modal-footer"><button class="btn btn-secondary" onclick="closeModal('modal-mp-artes')">Fechar</button>
+        <button class="btn btn-primary" id="mp-artes-add">🎨 Adicionar arte</button></div></div>`;
+    document.body.appendChild(m);
+  }
+  document.getElementById('mp-artes-tit').textContent = '🎨 Artes do pedido ' + num;
+  const recarregar = () => mpArtes(id, num);
+  document.getElementById('mp-artes-add').onclick = () => mpAnexarArte(id, num, recarregar);
+  openModal('modal-mp-artes');
+  const corpo = document.getElementById('mp-artes-corpo');
+  try {
+    const r = await fetch(API + '/programacao/pedido/' + id + '/artes', { credentials: 'same-origin' });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Erro');
+    const artes = d.artes || [];
+    corpo.innerHTML = !artes.length ? '<p style="color:var(--muted)">Nenhuma arte anexada.</p>' :
+      `<div style="display:flex;gap:12px;flex-wrap:wrap">${artes.map(a => `
+        <div style="width:160px;display:flex;flex-direction:column;gap:5px;align-items:center;border:1px solid var(--border);border-radius:8px;padding:8px">
+          <a href="${API}/programacao/pedido/${id}/artes/${a.id}" target="_blank" title="Abrir">${a.paginas
+            ? `<img src="${API}/programacao/pedido/${id}/artes/${a.id}/pagina/1" alt="Arte ${esc(a.nome || '')}" style="height:120px;max-width:140px;object-fit:contain;background:#fff;border-radius:6px">`
+            : '<div style="height:120px;width:120px;display:flex;align-items:center;justify-content:center">📄 PDF</div>'}</a>
+          <div style="font-size:11.5px;text-align:center;word-break:break-all">${esc(a.nome || 'arte')}${a.paginas > 1 ? ` · ${a.paginas} pág.` : ''}</div>
+          ${d.pode_editar ? `<button class="btn btn-sm btn-danger" onclick="mpRemoverArte(${id}, ${a.id}, '${esc(num)}')">Remover</button>` : ''}
+        </div>`).join('')}</div>`;
+  } catch (e) { corpo.innerHTML = `<p style="color:var(--danger)">${esc(e.message)}</p>`; }
+}
+async function mpRemoverArte(id, aid, num) {
+  if (!confirm('Remover esta arte do pedido ' + num + '?')) return;
+  try {
+    const r = await fetch(API + '/programacao/pedido/' + id + '/artes/' + aid, { method: 'DELETE', credentials: 'same-origin' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || 'Erro ao remover');
+    showAlert(d.mensagem || 'Arte removida');
+    loadMeusPedidos(); if (typeof loadPedidosCom === 'function') loadPedidosCom();
+    mpArtes(id, num);
+  } catch (e) { showAlert(e.message, 'danger'); }
+}
 function mpAnexarOriginal(id, num) {
   const inp = document.createElement('input');
   inp.type = 'file'; inp.accept = '.pdf,application/pdf,.png,.jpg,.jpeg,.xlsx,.xls';
