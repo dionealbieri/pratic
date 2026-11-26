@@ -308,15 +308,8 @@ async function carregarAcessoPrincipal() {
       const iPed = paginasLiberadas.indexOf('pedidos');
       paginasLiberadas.splice(iPed >= 0 ? iPed : paginasLiberadas.length, 0, 'programacao');
     }
-    // Pedidos SAC: caixa de entrada do SAC Varejo — só o gestor
-    if (perfilAtual === 'gestor') {
-      if (!paginasLiberadas.includes('pedidos-sac')) {
-        const iPed2 = paginasLiberadas.indexOf('pedidos');
-        paginasLiberadas.splice(iPed2 >= 0 ? iPed2 + 1 : paginasLiberadas.length, 0, 'pedidos-sac');
-      }
-    } else {
-      paginasLiberadas = paginasLiberadas.filter(p => p !== 'pedidos-sac');
-    }
+    // Pedidos SAC agora é uma aba dentro de Pedidos (ao lado de Acompanhamento), não item do menu
+    paginasLiberadas = paginasLiberadas.filter(p => p !== 'pedidos-sac');
     if (paginasLiberadas.includes('programacao') && perfilAtual !== 'gestor') {
       const stProg = await _progStatus(true);
       if (!stProg.pode_ver) paginasLiberadas = paginasLiberadas.filter(p => p !== 'programacao');
@@ -390,7 +383,7 @@ function montarMenuPrincipal() {
     ${items.map(item => `
       <a class="nav-item" data-page="${item.key}" onclick="showPage('${item.key}')" style="cursor:pointer">
         <span class="icon">${item.icon}</span> ${item.label}
-        ${item.key === 'pedidos-sac' ? '<span id="nav-sac-badge" title="Vendas do SAC esperando a sua decisão" style="display:none;background:#f5b81c;color:#1a1300;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">0</span>' : ''}
+        ${item.key === 'pedidos' ? '<span id="nav-sac-badge" title="Vendas do SAC esperando a sua decisão (aba Pedidos SAC)" style="display:none;background:#f5b81c;color:#1a1300;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">0</span>' : ''}
         ${item.key === 'programacao' ? '<span id="nav-prog-badge" title="Prioridades esperando a sua aprovação" style="display:none;background:#8b5cf6;color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">0</span>' : ''}
         ${item.key === 'pedidos' ? '<span id="nav-pedidos-badge" style="display:none;background:var(--danger);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">!</span>' : ''}
         ${item.key === 'estoque' ? '<span id="nav-alerta-badge" style="display:none;background:var(--danger);color:#fff;font-size:10px;font-weight:700;padding:2px 6px;border-radius:20px;margin-left:4px">!</span>' : ''}
@@ -405,6 +398,12 @@ function paginaPermitida(name) {
 }
 
 function showPage(name) {
+  // Pedidos SAC virou aba de Pedidos: links/atalhos antigos caem na aba certa
+  if (name === 'pedidos-sac') {
+    showPage('pedidos');
+    setTimeout(() => switchPedidosTab('sac'), 50);
+    return;
+  }
   // Vendedor (Comercial) trabalha os pedidos no portal /comercial (Meus Pedidos)
   if (name === 'pedidos' && window.usuarioLogado && window.usuarioLogado.role === 'comercial' && !window._modoImportarVendedor) {
     window.location.href = '/comercial';
@@ -4971,7 +4970,7 @@ const _itemProduzido = i => (((i.qtd_produzida||0) >= i.quantidade) && i.quantid
 const _itemStatusEf = i => i.status==='entregue' ? 'produzido' : (_itemProduzido(i) ? 'produzido' : (((i.qtd_produzida||0)>0 || i.status==='em_producao') ? 'em_producao' : 'aberto'));
 
 function switchPedidosTab(tab) {
-  ['fila','programacao','pedidos','clientes','transportadora','acompanhamento'].forEach(t=>{
+  ['fila','programacao','pedidos','clientes','transportadora','acompanhamento','sac'].forEach(t=>{
     const el=document.getElementById('ped-tab-'+t);
     const btn=document.getElementById('ptab-'+t);
     if(el) el.style.display=t===tab?'':'none';
@@ -4981,6 +4980,7 @@ function switchPedidosTab(tab) {
   if(tab==='pedidos') loadPedidos();
   if(tab==='clientes') loadClientes();
   if(tab==='acompanhamento') loadAcompanhamento();
+  if(tab==='sac' && window.sacCarregar) window.sacCarregar();
   if(tab==='transportadora') {
     switchTranspTab('fila');
     loadTransportadora();
@@ -6209,6 +6209,8 @@ window.exportarRelatorioTransp = exportarRelatorioTransp;
 async function loadPedidos_init() {
   const btnAcomp = document.getElementById('ptab-acompanhamento');
   if (btnAcomp) btnAcomp.style.display = (window.usuarioLogado && window.usuarioLogado.role === 'gestor') ? '' : 'none';
+  const btnSac = document.getElementById('ptab-sac');
+  if (btnSac) btnSac.style.display = (window.usuarioLogado && window.usuarioLogado.role === 'gestor') ? '' : 'none';
   if (window.usuarioLogado && window.usuarioLogado.role === 'expedicao') {
     ['fila', 'programacao', 'pedidos', 'clientes'].forEach(t => {
       const b = document.getElementById('ptab-' + t);
@@ -6980,6 +6982,7 @@ async function verDetalhesPedido(id) {
           const feito = i.status === 'entregue' || i.status === 'produzido';
           return `<tr style="background:rgba(59,130,246,.05)">
             <td>${i.descricao} <span style="margin-left:6px;font-size:11px;padding:1px 7px;border-radius:9px;background:rgba(59,130,246,.15);color:#3b82f6">🛒 Revenda</span></td>
+            <td><span style="font-size:12.5px">${i.produto_nome || ''}</span></td>
             <td>${fmtNum(i.quantidade)} ${i.unidade||''}</td>
             <td><span style="color:var(--muted);font-size:12px">Não produzido — separar do estoque</span></td>
             <td><span class="pill ${feito?STATUS_PILL_PED['entregue']:''}">${feito?'Separado / Entregue':'Pendente'}</span></td>
@@ -6990,7 +6993,9 @@ async function verDetalhesPedido(id) {
         }
         const pct=Math.min(100,Math.round((i.qtd_produzida/i.quantidade)*100));
         const prox=STATUS_NEXT_PED[i.status];
-        return `<tr><td>${i.descricao}</td><td>${fmtNum(i.quantidade)}</td>
+        return `<tr><td>${i.descricao}</td>
+          <td>${i.produto_nome ? `<span style="font-size:12.5px">${i.produto_nome}</span>` : '<span style="color:var(--warn);font-size:12px">sem vínculo</span>'}</td>
+          <td>${fmtNum(i.quantidade)}</td>
           <td><div>${fmtNum(i.qtd_produzida)} (${pct}%)</div><div style="height:4px;background:var(--surface2);border-radius:2px;margin-top:4px;width:80px"><div style="height:100%;width:${pct}%;background:${pct>=100?'var(--success)':'var(--accent)'};border-radius:2px"></div></div></td>
           <td><span class="pill ${STATUS_PILL_PED[i.status]}">${STATUS_LABEL_PED[i.status]}</span></td>
           <td>${prox?`<button class="btn btn-sm btn-secondary" onclick="avancarItemStatus(${i.id},'${prox}',${i.quantidade});closeModal('modal-ped-detalhe');loadPedidos()">${STATUS_NEXT_LABEL_PED[i.status]}</button>`:''}</td>

@@ -151,7 +151,8 @@
     return v.itens.map((it, i) => {
       const esq = `<div class="sac-sac">${it.codigo ? '<b>' + esc(it.codigo) + '</b> · ' : ''}${esc(it.descricao)} — ${Number(it.quantidade || 0).toLocaleString('pt-BR')} ${esc(it.unidade || '')}</div>`;
       let dir;
-      if (it.vinculo === 'produto') dir = `<div style="color:var(--success)">→ ${esc(it.produto_nome)}</div>`;
+      if (it.vinculo === 'produto') dir = `<div style="color:var(--success)">→ ${esc(it.produto_nome)}${it.do_pedido ? ' <span style="color:var(--muted);font-size:11px">(no pedido)</span>' : ''}</div>`;
+      else if (it.vinculo === 'pedido_sem_produto') dir = `<div style="color:var(--warn)">no pedido sem produto do estoque — ajuste em Pedidos</div>`;
       else if (it.vinculo === 'terceirizado') dir = `<div style="color:var(--accent2)">→ 🤝 não é da fábrica (fica fora do pedido)</div>`;
       else if (!it.chave) dir = `<div style="color:var(--muted)">não deu para ler o nome do produto</div>`;
       else if (!editavel) dir = `<div style="color:var(--warn)">sem vínculo</div>`;
@@ -329,13 +330,17 @@
   }
 
   function atualizarBadge(c) {
-    const b = document.getElementById('nav-sac-badge');
-    if (!b || !c) return;
+    if (!c) return;
     const n = (c.aguardando || 0) + (c.cancelados_pendentes || c.cancelados || 0);
-    b.textContent = n;
-    b.style.display = n ? '' : 'none';
-    b.style.background = (c.cancelados_pendentes || c.cancelados) ? 'var(--danger)' : '#f5b81c';
-    b.style.color = (c.cancelados_pendentes || c.cancelados) ? '#fff' : '#1a1300';
+    const alerta = !!(c.cancelados_pendentes || c.cancelados);
+    ['nav-sac-badge', 'ptab-sac-badge'].forEach(id => {
+      const b = document.getElementById(id);
+      if (!b) return;
+      b.textContent = n;
+      b.style.display = n ? '' : 'none';
+      b.style.background = alerta ? 'var(--danger)' : '#f5b81c';
+      b.style.color = alerta ? '#fff' : '#1a1300';
+    });
   }
   async function sacBadge() {
     try { atualizarBadge(await api('/sac/resumo')); } catch (e) {}
