@@ -2108,6 +2108,21 @@ def _migrar_programacao(conn):
     for col, tipo in novas.items():
         if col not in cols:
             conn.execute(f"ALTER TABLE pedidos ADD COLUMN {col} {tipo}")
+    # Várias artes por pedido (cada arquivo; PDF com várias páginas vira várias imagens).
+    # As colunas arte_* do pedido continuam espelhando a 1ª arte (compatibilidade).
+    conn.execute("""CREATE TABLE IF NOT EXISTS pedidos_artes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        pedido_id INTEGER NOT NULL,
+        arquivo TEXT NOT NULL,
+        nome TEXT,
+        paginas_json TEXT,          -- [{"img": "...png", "w": 1200, "h": 1700}, ...] (gerado na 1ª vez)
+        criado_por TEXT,
+        criado_em TEXT DEFAULT (datetime('now','localtime')))""")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pedidos_artes_ped ON pedidos_artes(pedido_id)")
+    conn.execute("""INSERT INTO pedidos_artes (pedido_id, arquivo, nome)
+                    SELECT p.id, p.arte_arquivo, p.arte_arquivo_nome FROM pedidos p
+                    WHERE p.arte_arquivo IS NOT NULL AND p.arte_arquivo <> ''
+                      AND NOT EXISTS (SELECT 1 FROM pedidos_artes a WHERE a.pedido_id = p.id)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS programacao_ordem (
         data TEXT NOT NULL, pedido_id INTEGER NOT NULL, posicao INTEGER NOT NULL,
         PRIMARY KEY (data, pedido_id))""")
