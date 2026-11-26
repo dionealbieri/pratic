@@ -2058,7 +2058,8 @@ def listar_estoque_cliente(cliente_id: Optional[int] = None, com_zerados: bool =
             WHERE COALESCE(p.para_estoque_cliente,0) = 1 AND p.status IN ('aberto','em_producao') {filtro}
             ORDER BY p.id
         """, params).fetchall()]
-        return {"linhas": linhas, "a_caminho": a_caminho, "pode_mexer": _pode_mexer_estoque_cliente(current_user)}
+        return {"linhas": linhas, "a_caminho": a_caminho, "pode_mexer": _pode_mexer_estoque_cliente(current_user),
+                "pode_excluir": current_user.get("role") == "gestor"}
     finally:
         conn.close()
 
@@ -2182,6 +2183,42 @@ def ajustar_estoque_cliente(body: AjusteEstoqueClienteIn, current_user: dict = D
                       body.quantidade, _nome_usuario(current_user), body.observacao.strip()))
         conn.commit()
         return {"mensagem": "Estoque do cliente atualizado"}
+    finally:
+        conn.close()
+
+
+class ExcluirEstoqueClienteIn(BaseModel):
+    cliente_id: int
+    produto_id: Optional[int] = None
+    descricao: str
+    motivo: str
+
+
+@router.post("/estoque-cliente/excluir")
+def excluir_item_estoque_cliente(body: ExcluirEstoqueClienteIn, current_user: dict = Depends(get_current_user)):
+    """Gestor: tira o item do estoque do cliente (lançado errado, em dobro, já resolvido por fora).
+    Não apaga nada: grava uma saída do saldo inteiro com o motivo — a linha some da lista e o
+    histórico (📜) mostra quem excluiu, quando e por quê."""
+    if current_user.get("role") != "gestor":
+        raise HTTPException(403, "Só o gestor pode excluir item do estoque do cliente.")
+    motivo = (body.motivo or "").strip()
+    if len(motivo) < 3:
+        raise HTTPException(400, "Informe o motivo da exclusão.")
+    conn = get_conn()
+    try:
+        desc = _desc_estoque(body.descricao)
+        saldo = _saldo_linha(conn, body.cliente_id, body.produto_id, desc)
+        if abs(saldo) < 1e-9:
+            raise HTTPException(400, "Este item já está zerado.")
+        usuario = _nome_usuario(current_user)
+        conn.execute("""INSERT INTO estoque_cliente_mov (cliente_id, produto_id, descricao, tipo, quantidade, usuario, observacao)
+                        VALUES (?, ?, ?, 'exclusao', ?, ?, ?)""",
+                     (body.cliente_id, body.produto_id, desc, -saldo, usuario, "Excluído pelo gestor: " + motivo))
+        conn.execute("""INSERT INTO auditoria (usuario, acao, entidade, entidade_id, descricao, valor_anterior, valor_novo)
+                        VALUES (?, 'excluir_estoque_cliente', 'pedidos_clientes', ?, ?, ?, '0')""",
+                     (usuario, body.cliente_id, f"{desc}: {motivo}", f"{saldo:g}"))
+        conn.commit()
+        return {"mensagem": f"Item excluído do estoque do cliente ({saldo:g} un)."}
     finally:
         conn.close()
 
