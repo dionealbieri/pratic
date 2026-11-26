@@ -374,7 +374,12 @@ async def upload(files: List[UploadFile] = File(...), current_user: dict = Depen
                 with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(nome)[1].lower() or ".pdf") as t:
                     t.write(await f.read())
                     tmp = t.name
-                res.append(registrar_pdf(conn, tmp, nome, origem="manual"))
+                rr = registrar_pdf(conn, tmp, nome, origem="manual")
+                if rr.get("status") == "registrada" and rr.get("venda"):
+                    auto = await decidir_automatico(conn, str(rr["venda"]))
+                    if auto:
+                        rr["automatico"] = auto
+                res.append(rr)
             except Exception as e:
                 conn.rollback()
                 res.append({"status": "erro", "arquivo": nome, "motivo": str(e)})
@@ -455,11 +460,106 @@ class FabricaIn(BaseModel):
     vinculos: List[VinculoIn] = []
 
 
+class ErroFabrica(Exception):
+    pass
+
+
+async def _criar_na_fabrica(conn, r, current_user: dict, quem: str) -> dict:
+    """Cria o pedido da venda com os itens ligados pelo de-para (itens 'não é da fábrica' ficam de fora).
+    Não faz commit. Levanta ErroFabrica se falta vínculo ou se a importação falhar."""
+    from rotas.pedidos import criar_pedido_de_arquivo
+    venda = r["venda"]
+    dados = json.loads(r["dados_json"] or "{}")
+    depara = {d["chave"]: d for d in conn.execute("SELECT * FROM sac_depara")}
+    faltam = [it.get("descricao") for it in dados.get("itens") or []
+              if chave_produto(it.get("descricao")) and chave_produto(it.get("descricao")) not in depara]
+    if faltam:
+        raise ErroFabrica("Escolha o produto do estoque para: " + "; ".join(faltam[:5]))
+    nomes_est = {x["id"]: x["nome"] for x in conn.execute("SELECT id, nome FROM estoque_produtos")}
+
+    def resolver(it):
+        d = depara.get(chave_produto(it.get("descricao")))
+        if not d:
+            return None
+        if d["terceirizado"]:
+            return "pular"
+        # no pedido vai o nome limpo do estoque (o texto da arte continua no PDF e nas observações)
+        return (d["produto_id"], nomes_est.get(d["produto_id"]))
+    caminho = os.path.join(_pasta_pdfs(), os.path.basename(r["arquivo"] or ""))
+    res = await criar_pedido_de_arquivo(conn, caminho, f"venda_{venda}.pdf", current_user,
+                                        resolver_item=resolver, parsed=dados)
+    if res["status"] == "erro":
+        raise ErroFabrica(res.get("motivo") or "Não foi possível criar o pedido")
+    pid = res.get("pedido_id")
+    # o item ganhou o nome limpo do estoque; os detalhes de arte/cor vão para as observações do pedido
+    detalhes = []
+    for it in dados.get("itens") or []:
+        if resolver(it) == "pular":
+            continue
+        desc = str(it.get("descricao") or "").strip()
+        base = chave_produto(desc)
+        if desc and len(re.sub(r"[^A-Z0-9]", "", desc.upper())) > len(re.sub(r"[^A-Z0-9]", "", base)) + 8:
+            q = it.get("quantidade")
+            qtxt = (f"{q:,.0f}".replace(",", ".") + " un · ") if isinstance(q, (int, float)) else ""
+            detalhes.append(f"• {qtxt}{desc}")
+    if pid and detalhes:
+        obs_atual = (conn.execute("SELECT observacoes FROM pedidos WHERE id=?", (pid,)).fetchone() or {"observacoes": ""})["observacoes"] or ""
+        novo = (obs_atual.rstrip() + "\n\n" if obs_atual.strip() else "") + "Detalhes dos itens (SAC):\n" + "\n".join(detalhes)
+        conn.execute("UPDATE pedidos SET observacoes=? WHERE id=?", (novo, pid))
+    conn.execute("""UPDATE sac_vendas SET destino='fabrica', pedido_id=?, decidido_por=?, decidido_em=?, atualizado_em=?
+                    WHERE venda=?""", (pid, quem, _agora(), _agora(), venda))
+    return res
+
+
+def auto_fabrica_ligado(conn) -> bool:
+    r = conn.execute("SELECT valor FROM configuracoes WHERE chave='sac_auto_fabrica'").fetchone()
+    return (r["valor"] if r else "1") != "0"
+
+
+async def decidir_automatico(conn, venda: str) -> str:
+    """Venda nova cujos itens JÁ têm vínculo confirmado no de-para não espera o gestor:
+    - todos os itens ligados a produto da fábrica (ou parte 'não é da fábrica') -> cria o pedido;
+    - todos os itens marcados 'não é da fábrica' -> vai para Terceirizados.
+    Item sem vínculo (produto novo) -> continua em Aguardando decisão. Faz commit."""
+    if not auto_fabrica_ligado(conn):
+        return ""
+    r = conn.execute("SELECT * FROM sac_vendas WHERE venda=?", (venda,)).fetchone()
+    if not r or r["destino"] != "aguardando" or r["pedido_id"] or (r["situacao"] or "A") != "A":
+        return ""
+    dados = json.loads(r["dados_json"] or "{}")
+    itens = [it for it in dados.get("itens") or [] if chave_produto(it.get("descricao"))]
+    if not itens:
+        return ""
+    depara = {d["chave"]: d for d in conn.execute("SELECT * FROM sac_depara")}
+    ds = [depara.get(chave_produto(it.get("descricao"))) for it in itens]
+    if any(d is None for d in ds):
+        return ""
+    if all(d["terceirizado"] for d in ds):
+        conn.execute("""UPDATE sac_vendas SET destino='terceirizado', decidido_por='automático', decidido_em=?, atualizado_em=?
+                        WHERE venda=?""", (_agora(), _agora(), venda))
+        conn.commit()
+        return "terceirizado"
+    try:
+        await _criar_na_fabrica(conn, r, {"id": None, "nome": "Pedidos SAC (automático)", "role": "gestor"}, "automático")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[sac] venda {venda} não foi automática para a fábrica:", e)
+        return ""
+    try:
+        from rotas.pedidos import _auto_vincular_itens
+        _auto_vincular_itens(conn)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+    return "fabrica"
+
+
 @router.post("/vendas/{venda}/fabrica")
 async def enviar_fabrica(venda: str, body: FabricaIn, current_user: dict = Depends(_so_gestor)):
     """Cria o pedido no PRATIC (mesma importação de sempre) com os itens já ligados ao estoque
     pelo de-para. Itens marcados 'não é da fábrica' ficam de fora do pedido."""
-    from rotas.pedidos import criar_pedido_de_arquivo, _auto_vincular_itens
+    from rotas.pedidos import _auto_vincular_itens
     conn = get_conn()
     try:
         tabelas(conn)
@@ -472,54 +572,21 @@ async def enviar_fabrica(venda: str, body: FabricaIn, current_user: dict = Depen
             raise HTTPException(400, "Esta venda está cancelada no SAC.")
         for v in body.vinculos:
             _gravar_vinculo(conn, v, current_user.get("nome"))
-        dados = json.loads(r["dados_json"] or "{}")
-        depara = {d["chave"]: d for d in conn.execute("SELECT * FROM sac_depara")}
-        faltam = [it.get("descricao") for it in dados.get("itens") or []
-                  if chave_produto(it.get("descricao")) and chave_produto(it.get("descricao")) not in depara]
-        if faltam:
+        try:
+            res = await _criar_na_fabrica(conn, r, current_user, current_user.get("nome"))
+        except ErroFabrica as e:
             conn.rollback()
-            raise HTTPException(400, "Escolha o produto do estoque para: " + "; ".join(faltam[:5]))
-
-        nomes_est = {x["id"]: x["nome"] for x in conn.execute("SELECT id, nome FROM estoque_produtos")}
-
-        def resolver(it):
-            d = depara.get(chave_produto(it.get("descricao")))
-            if not d:
-                return None
-            if d["terceirizado"]:
-                return "pular"
-            # no pedido vai o nome limpo do estoque (o texto da arte continua no PDF e nas observações)
-            return (d["produto_id"], nomes_est.get(d["produto_id"]))
-        caminho = os.path.join(_pasta_pdfs(), os.path.basename(r["arquivo"] or ""))
-        res = await criar_pedido_de_arquivo(conn, caminho, f"venda_{venda}.pdf", current_user,
-                                            resolver_item=resolver, parsed=dados)
-        if res["status"] == "erro":
-            conn.rollback()
-            raise HTTPException(400, res.get("motivo") or "Não foi possível criar o pedido")
+            raise HTTPException(400, str(e))
         pid = res.get("pedido_id")
-        # o item ganhou o nome limpo do estoque; os detalhes de arte/cor vão para as observações do pedido
-        detalhes = []
-        for it in dados.get("itens") or []:
-            if resolver(it) == "pular":
-                continue
-            desc = str(it.get("descricao") or "").strip()
-            base = chave_produto(desc)
-            if desc and len(re.sub(r"[^A-Z0-9]", "", desc.upper())) > len(re.sub(r"[^A-Z0-9]", "", base)) + 8:
-                q = it.get("quantidade")
-                qtxt = (f"{q:,.0f}".replace(",", ".") + " un · ") if isinstance(q, (int, float)) else ""
-                detalhes.append(f"• {qtxt}{desc}")
-        if pid and detalhes:
-            obs_atual = (conn.execute("SELECT observacoes FROM pedidos WHERE id=?", (pid,)).fetchone() or {"observacoes": ""})["observacoes"] or ""
-            novo = (obs_atual.rstrip() + "\n\n" if obs_atual.strip() else "") + "Detalhes dos itens (SAC):\n" + "\n".join(detalhes)
-            conn.execute("UPDATE pedidos SET observacoes=? WHERE id=?", (novo, pid))
-        conn.execute("""UPDATE sac_vendas SET destino='fabrica', pedido_id=?, decidido_por=?, decidido_em=?, atualizado_em=?
-                        WHERE venda=?""", (pid, current_user.get("nome"), _agora(), _agora(), venda))
         conn.commit()
         try:
             _auto_vincular_itens(conn)   # itens sem código (raro) ainda tentam pelo nome
             conn.commit()
         except Exception:
             conn.rollback()
+        # outras vendas que esperavam só por estes vínculos seguem sozinhas
+        for o in conn.execute("SELECT venda FROM sac_vendas WHERE destino='aguardando'").fetchall():
+            await decidir_automatico(conn, o["venda"])
     finally:
         conn.close()
     return {"status": res["status"], "pedido_id": pid, "qtd_itens": res.get("qtd_itens")}
@@ -603,27 +670,40 @@ def status_robo() -> dict:
     return {"configurado": configurado, "disponivel": disponivel, "desligado": desligado, "automatico": automatico,
             "importar_desde": cfg.get("sac_importar_desde") or datetime.date.today().isoformat(),
             "ultima_leitura": cfg.get("sac_ultima_leitura"), "ultimo_erro": cfg.get("sac_ultimo_erro"),
-            "ultimo_resumo": resumo, "intervalo_min": 15}
+            "ultimo_resumo": resumo, "intervalo_min": 15,
+            "auto_fabrica": (cfg.get("sac_auto_fabrica") or "1") != "0"}
 
 
 class ConfigIn(BaseModel):
-    importar_desde: str
+    importar_desde: Optional[str] = None
+    auto_fabrica: Optional[bool] = None
 
 
 @router.post("/config")
-def salvar_config(body: ConfigIn, current_user: dict = Depends(_so_gestor)):
-    try:
-        datetime.date.fromisoformat(body.importar_desde)
-    except ValueError:
-        raise HTTPException(400, "Data inválida")
+async def salvar_config(body: ConfigIn, current_user: dict = Depends(_so_gestor)):
+    if body.importar_desde is not None:
+        try:
+            datetime.date.fromisoformat(body.importar_desde)
+        except ValueError:
+            raise HTTPException(400, "Data inválida")
     conn = get_conn()
+    enviadas = 0
     try:
-        conn.execute("""INSERT INTO configuracoes (chave, valor, descricao) VALUES ('sac_importar_desde', ?, 'Pedidos SAC: importar vendas a partir desta data')
-                        ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor""", (body.importar_desde,))
+        if body.importar_desde is not None:
+            conn.execute("""INSERT INTO configuracoes (chave, valor, descricao) VALUES ('sac_importar_desde', ?, 'Pedidos SAC: importar vendas a partir desta data')
+                            ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor""", (body.importar_desde,))
+        if body.auto_fabrica is not None:
+            conn.execute("""INSERT INTO configuracoes (chave, valor, descricao) VALUES ('sac_auto_fabrica', ?, 'Pedidos SAC: venda com todos os produtos vinculados vai direto para a fábrica')
+                            ON CONFLICT(chave) DO UPDATE SET valor=excluded.valor""", ("1" if body.auto_fabrica else "0",))
         conn.commit()
+        if body.auto_fabrica:
+            tabelas(conn)
+            for o in conn.execute("SELECT venda FROM sac_vendas WHERE destino='aguardando'").fetchall():
+                if await decidir_automatico(conn, o["venda"]) == "fabrica":
+                    enviadas += 1
     finally:
         conn.close()
-    return {"ok": True}
+    return {"ok": True, "enviadas": enviadas}
 
 
 @router.post("/sincronizar")
