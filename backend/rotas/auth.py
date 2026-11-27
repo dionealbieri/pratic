@@ -334,6 +334,7 @@ MODULOS_ACOES = {
     'permissoes':     ['ver','editar'],
     'empresa':        ['ver','editar'],
     'expedicao':      ['ver','despachar','desfazer'],
+    'pedidos_sac':    ['ver','buscar','decidir'],
 }
 
 PERMISSOES_GESTOR = {modulo: acoes for modulo, acoes in MODULOS_ACOES.items()}
