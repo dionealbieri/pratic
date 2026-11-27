@@ -1992,9 +1992,23 @@ def _clientes_do_vendedor(conn, uid: int) -> set:
     try:
         ids |= {r[0] for r in conn.execute(
             "SELECT DISTINCT cliente_id FROM estoque_cliente_mov WHERE vendedor_usuario_id = ?", (uid,)).fetchall()}
+        ids |= {r[0] for r in conn.execute(
+            "SELECT cliente_id FROM estoque_cliente_vendedor WHERE vendedor_usuario_id = ?", (uid,)).fetchall()}
+        # cliente passado pelo gestor para outro vendedor sai da lista deste
+        ids -= {r[0] for r in conn.execute(
+            "SELECT cliente_id FROM estoque_cliente_vendedor WHERE vendedor_usuario_id IS NOT NULL AND vendedor_usuario_id <> ?",
+            (uid,)).fetchall()}
     except Exception:
         pass
     return ids
+
+
+def _definir_vendedor_cliente(conn, cliente_id: int, vendedor_id: Optional[int], quem: str):
+    conn.execute("""INSERT INTO estoque_cliente_vendedor (cliente_id, vendedor_usuario_id, alterado_por, alterado_em)
+                    VALUES (?, ?, ?, datetime('now','localtime'))
+                    ON CONFLICT(cliente_id) DO UPDATE SET vendedor_usuario_id=excluded.vendedor_usuario_id,
+                        alterado_por=excluded.alterado_por, alterado_em=excluded.alterado_em""",
+                 (cliente_id, vendedor_id, quem))
 
 
 def _saldos_estoque_cliente(conn, cliente_ids=None) -> list:
@@ -2092,6 +2106,12 @@ def listar_estoque_cliente(cliente_id: Optional[int] = None, com_zerados: bool =
                                         WHERE vendedor_usuario_id IS NOT NULL AND cliente_id IN ({marc}) GROUP BY cliente_id)""",
                                   list(cids)):
                 vend_cli[r["cliente_id"]] = r["vendedor_usuario_id"]
+            for r in conn.execute(f"""SELECT cliente_id, vendedor_usuario_id FROM estoque_cliente_vendedor
+                                      WHERE cliente_id IN ({marc})""", list(cids)):
+                if r["vendedor_usuario_id"]:
+                    vend_cli[r["cliente_id"]] = r["vendedor_usuario_id"]
+                else:
+                    vend_cli.pop(r["cliente_id"], None)
         nomes_v = {r["id"]: r["nome"] for r in conn.execute("SELECT id, nome FROM usuarios")}
         vendedores = {}
         for cid, uid in vend_cli.items():
@@ -2256,6 +2276,8 @@ def saldo_lote_estoque_cliente(body: SaldoLoteIn, current_user: dict = Depends(g
         if not conn.execute("SELECT 1 FROM pedidos_clientes WHERE id=?", (body.cliente_id,)).fetchone():
             raise HTTPException(404, "Cliente não encontrado")
         usuario = _nome_usuario(current_user)
+        if body.vendedor_usuario_id:
+            _definir_vendedor_cliente(conn, body.cliente_id, body.vendedor_usuario_id, usuario)
         for i in itens:
             conn.execute("""INSERT INTO estoque_cliente_mov (cliente_id, produto_id, descricao, tipo, quantidade, usuario,
                                                              observacao, vendedor_usuario_id)
@@ -2265,6 +2287,38 @@ def saldo_lote_estoque_cliente(body: SaldoLoteIn, current_user: dict = Depends(g
         conn.commit()
         total = sum(i.quantidade for i in itens)
         return {"mensagem": f"{len(itens)} produto(s) lançado(s) · {total:,.0f} un".replace(",", ".")}
+    finally:
+        conn.close()
+
+
+class VendedorClienteIn(BaseModel):
+    cliente_id: int
+    vendedor_usuario_id: Optional[int] = None
+
+
+@router.post("/estoque-cliente/vendedor")
+def trocar_vendedor_estoque_cliente(body: VendedorClienteIn, current_user: dict = Depends(get_current_user)):
+    """Gestor/Estoque: define qual vendedor cuida do estoque deste cliente (quem vê no portal Comercial)."""
+    if not _pode_mexer_estoque_cliente(current_user):
+        raise HTTPException(403, "Sem permissão.")
+    conn = get_conn()
+    try:
+        cli = conn.execute("SELECT razao_social FROM pedidos_clientes WHERE id=?", (body.cliente_id,)).fetchone()
+        if not cli:
+            raise HTTPException(404, "Cliente não encontrado")
+        nome_v = None
+        if body.vendedor_usuario_id:
+            v = conn.execute("SELECT nome FROM usuarios WHERE id=?", (body.vendedor_usuario_id,)).fetchone()
+            if not v:
+                raise HTTPException(404, "Vendedor não encontrado")
+            nome_v = v["nome"]
+        quem = _nome_usuario(current_user)
+        _definir_vendedor_cliente(conn, body.cliente_id, body.vendedor_usuario_id, quem)
+        conn.execute("""INSERT INTO auditoria (usuario, acao, entidade, entidade_id, descricao, valor_anterior, valor_novo)
+                        VALUES (?, 'vendedor_estoque_cliente', 'pedidos_clientes', ?, ?, '', ?)""",
+                     (quem, body.cliente_id, f"Estoque de {cli['razao_social']}: vendedor", nome_v or "sem vendedor"))
+        conn.commit()
+        return {"mensagem": f"Vendedor do estoque de {cli['razao_social']}: {nome_v or 'nenhum'}"}
     finally:
         conn.close()
 

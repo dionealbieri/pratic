@@ -373,6 +373,98 @@ async def sincronizar(origem: str = "manual") -> dict:
             await cli.fechar()
 
 
+async def importar_numeros(numeros: list) -> dict:
+    """Busca no SAC vendas pelo número e põe na caixa (mesmas regras da leitura automática:
+    só situação A, sem duplicar, direto p/ fábrica quando tudo já tem vínculo). Ignora a data
+    "importar a partir de" — quem digitou o número quer aquela venda."""
+    if motivo_desligado():
+        return {"ok": False, "mensagem": motivo_desligado(), "resultados": []}
+    if not configurado():
+        return {"ok": False, "mensagem": "Falta o login do SAC (SAC_USUARIO / SAC_SENHA).", "resultados": []}
+    from rotas import sac as sacmod
+    res = []
+    async with _lock:
+        cli = SacCliente()
+        try:
+            await cli.login()
+            for venda in numeros:
+                c = get_conn()
+                try:
+                    sacmod.tabelas(c)
+                    ja = c.execute("SELECT destino, pedido_id FROM sac_vendas WHERE venda=?", (venda,)).fetchone()
+                finally:
+                    c.close()
+                if ja:
+                    nomes = {"aguardando": "Aguardando decisão", "fabrica": "Enviados à fábrica", "terceirizado": "Terceirizados",
+                             "ignorado": "Ignorados", "cancelado": "Cancelados"}
+                    res.append({"venda": venda, "status": "ja_existe",
+                                "mensagem": f"já está na caixa ({nomes.get(ja['destino'], ja['destino'])})"})
+                    continue
+                try:
+                    filtro = {"Criterios": [{"Nome": "ID_VENDA", "Valor": str(venda), "Conector": "AND", "Tipo": "EQUALS"}],
+                              "Orders": [], "PagesNavigation": {}, "MaxPages": 1, "PageCount": 0, "CurrentBlock": 0,
+                              "CurrentPage": 1, "ItensPorPagina": 5, "HavePagination": True, "CacheLocal": False,
+                              "Cache": False, "CarregaVinculadaUmParaMuitos": False, "CarregaVinculadaUmParaUm": True,
+                              "FonteDado": "", "LimiteRetorno": 0, "QtdRegistrosBusca": 0, "SubProcesso": "", "Distinct": False}
+                    col = (await cli._find("ListaVendasBEC", filtro)).get("COL") or []
+                    reg = next((r for r in col if str(_campo(r, "IdVenda", "ID_VENDA")) == str(venda)), None)
+                    if not reg:
+                        res.append({"venda": venda, "status": "nao_encontrada", "mensagem": "não encontrada no SAC"})
+                        continue
+                    sit = str(_campo(reg, "Situacao", "SITUACAO") or "").strip().upper()[:1]
+                    if sit == "L":
+                        res.append({"venda": venda, "status": "orcamento", "mensagem": "é orçamento (L) — não entra"})
+                        continue
+                    if sit == "C":
+                        res.append({"venda": venda, "status": "cancelada", "mensagem": "está cancelada no SAC (C) — não entra"})
+                        continue
+                    lanc = _data_sac(_campo(reg, "DtLancamento", "DT_LANCAMENTO"))
+                    meta = {"venda": str(venda),
+                            "cliente": _campo(reg, "CliFor.NomeCliFor", "NomeCliFor", "CliFor.NOME_CLIFOR"),
+                            "total": _num(_campo(reg, "ValorTotal", "VALOR_TOTAL")),
+                            "lancamento": lanc.isoformat() if lanc else None}
+                    tmp = os.path.join(tempfile.gettempdir(), f"sac_busca_{venda}.pdf")
+                    try:
+                        await cli.baixar_pdf(str(venda), tmp)
+
+                        def _registrar(caminho=tmp, m=meta):
+                            c2 = get_conn()
+                            try:
+                                return sacmod.registrar_pdf(c2, caminho, f"venda_{m['venda']}.pdf", "busca", "A", m)
+                            finally:
+                                c2.close()
+                        r = await asyncio.to_thread(_registrar)
+                    finally:
+                        try:
+                            os.remove(tmp)
+                        except OSError:
+                            pass
+                    if r.get("status") != "registrada":
+                        res.append({"venda": venda, "status": r.get("status") or "erro",
+                                    "mensagem": r.get("motivo") or "não foi possível ler o PDF"})
+                        continue
+                    c3 = get_conn()
+                    try:
+                        auto = await sacmod.decidir_automatico(c3, str(venda))
+                        dest = c3.execute("SELECT destino FROM sac_vendas WHERE venda=?", (str(venda),)).fetchone()
+                    finally:
+                        c3.close()
+                    msg = {"fabrica": "importada e enviada à fábrica (todos os produtos já vinculados)",
+                           "terceirizado": "importada como terceirizada"}.get(auto)
+                    if not msg:
+                        msg = ("importada — já existia o pedido no PRATIC" if dest and dest["destino"] == "fabrica"
+                               else "importada — aguardando a sua decisão")
+                    res.append({"venda": venda, "status": "importada", "destino": dest["destino"] if dest else "", "mensagem": msg})
+                except ErroSac as e:
+                    res.append({"venda": venda, "status": "erro", "mensagem": str(e)})
+        except ErroSac as e:
+            return {"ok": False, "mensagem": str(e), "resultados": res}
+        finally:
+            await cli.fechar()
+    return {"ok": True, "resultados": res,
+            "mensagem": f"{sum(1 for r in res if r['status'] == 'importada')} de {len(res)} venda(s) importada(s)"}
+
+
 async def _loop():
     await asyncio.sleep(90)
     while True:
