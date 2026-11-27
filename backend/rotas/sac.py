@@ -38,6 +38,41 @@ def _so_gestor(current_user: dict = Depends(get_current_user)):
     return current_user
 
 
+# Permissão "Pedidos SAC" (Controle de Acesso), para liberar a caixa a outros usuários:
+#   ver     -> caixa, vendas e PDFs
+#   buscar  -> + buscar venda pelo número / enviar PDFs / sincronizar agora
+#   decidir -> + enviar à fábrica, terceirizado, ignorar e escolher o produto (de-para)
+# Só o gestor: configurações do robô, preencher de-para pelo histórico e cancelamentos.
+def perms_sac(u: dict) -> set:
+    if u.get("role") == "gestor":
+        return {"ver", "buscar", "decidir"}
+    conn = get_conn()
+    try:
+        rows = conn.execute("""SELECT acao FROM usuario_permissoes
+                               WHERE usuario_id=? AND modulo='pedidos_sac' AND permitido=1""", (u.get("id"),)).fetchall()
+    except Exception:
+        rows = []
+    finally:
+        conn.close()
+    acoes = {r["acao"] for r in rows}
+    if acoes:
+        acoes.add("ver")
+    return acoes
+
+
+def _exigir_sac(acao: str):
+    def dep(current_user: dict = Depends(get_current_user)):
+        if acao not in perms_sac(current_user):
+            raise HTTPException(403, "Pedidos SAC: sem permissão para esta ação (Controle de Acesso).")
+        return current_user
+    return dep
+
+
+_sac_ver = _exigir_sac("ver")
+_sac_buscar = _exigir_sac("buscar")
+_sac_decidir = _exigir_sac("decidir")
+
+
 def _agora() -> str:
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -323,7 +358,7 @@ _DATA_DECISAO = "COALESCE(decidido_em, atualizado_em, criado_em)"
 
 @router.get("/caixa")
 def caixa(aba: str = "aguardando", periodo: int = 7, busca: str = "",
-          current_user: dict = Depends(_so_gestor)):
+          current_user: dict = Depends(_sac_ver)):
     if periodo not in PERIODOS:
         periodo = 7
     busca = (busca or "").strip()
@@ -372,13 +407,14 @@ def caixa(aba: str = "aguardando", periodo: int = 7, busca: str = "",
     finally:
         conn.close()
     return {"aba": aba, "contagem": cont, "vendas": vendas, "cancelamentos": alertas, "robo": status_robo(),
-            "periodo": periodo, "busca": busca}
+            "periodo": periodo, "busca": busca, "permissoes": sorted(perms_sac(current_user)),
+            "gestor": current_user.get("role") == "gestor"}
 
 
 @router.get("/resumo")
 def resumo(current_user: dict = Depends(get_current_user)):
     """Contador do menu (só o gestor vê a página)."""
-    if current_user.get("role") != "gestor":
+    if "ver" not in perms_sac(current_user):
         return {"aguardando": 0, "cancelados": 0}
     conn = get_conn()
     try:
@@ -391,7 +427,7 @@ def resumo(current_user: dict = Depends(get_current_user)):
 
 
 @router.post("/upload")
-async def upload(files: List[UploadFile] = File(...), current_user: dict = Depends(_so_gestor)):
+async def upload(files: List[UploadFile] = File(...), current_user: dict = Depends(_sac_buscar)):
     """Envia PDFs de pedido do SAC para a caixa de entrada (enquanto o robô não lê sozinho)."""
     res = []
     conn = get_conn()
@@ -421,7 +457,7 @@ async def upload(files: List[UploadFile] = File(...), current_user: dict = Depen
 
 
 @router.get("/vendas/{venda}/pdf")
-def pdf_venda(venda: str, current_user: dict = Depends(_so_gestor)):
+def pdf_venda(venda: str, current_user: dict = Depends(_sac_ver)):
     conn = get_conn()
     try:
         tabelas(conn)
@@ -462,7 +498,7 @@ def _gravar_vinculo(conn, v: VinculoIn, quem: str):
 
 
 @router.get("/depara")
-def listar_depara(current_user: dict = Depends(_so_gestor)):
+def listar_depara(current_user: dict = Depends(_sac_ver)):
     conn = get_conn()
     try:
         tabelas(conn)
@@ -539,7 +575,7 @@ async def aplicar_depara_historico(body: AplicarHistIn, current_user: dict = Dep
 
 
 @router.post("/depara")
-def salvar_depara(v: VinculoIn, current_user: dict = Depends(_so_gestor)):
+def salvar_depara(v: VinculoIn, current_user: dict = Depends(_sac_decidir)):
     conn = get_conn()
     try:
         tabelas(conn)
@@ -650,7 +686,7 @@ async def decidir_automatico(conn, venda: str) -> str:
 
 
 @router.post("/vendas/{venda}/fabrica")
-async def enviar_fabrica(venda: str, body: FabricaIn, current_user: dict = Depends(_so_gestor)):
+async def enviar_fabrica(venda: str, body: FabricaIn, current_user: dict = Depends(_sac_decidir)):
     """Cria o pedido no PRATIC (mesma importação de sempre) com os itens já ligados ao estoque
     pelo de-para. Itens marcados 'não é da fábrica' ficam de fora do pedido."""
     from rotas.pedidos import _auto_vincular_itens
@@ -691,7 +727,7 @@ class DestinoIn(BaseModel):
 
 
 @router.post("/vendas/{venda}/destino")
-def definir_destino(venda: str, body: DestinoIn, current_user: dict = Depends(_so_gestor)):
+def definir_destino(venda: str, body: DestinoIn, current_user: dict = Depends(_sac_decidir)):
     """terceirizado | ignorado | aguardando (voltar para a caixa)."""
     if body.destino not in ("terceirizado", "ignorado", "aguardando"):
         raise HTTPException(400, "Destino inválido")
@@ -801,7 +837,7 @@ async def salvar_config(body: ConfigIn, current_user: dict = Depends(_so_gestor)
 
 
 @router.post("/sincronizar")
-async def sincronizar_agora(current_user: dict = Depends(_so_gestor)):
+async def sincronizar_agora(current_user: dict = Depends(_sac_buscar)):
     st = status_robo()
     if not st["disponivel"]:
         raise HTTPException(400, "A leitura automática do SAC ainda está sendo preparada. Por enquanto, envie os PDFs pelo botão “Enviar PDFs do SAC”.")
@@ -821,7 +857,7 @@ class BuscarIn(BaseModel):
 
 
 @router.post("/buscar")
-async def buscar_vendas(body: BuscarIn, current_user: dict = Depends(_so_gestor)):
+async def buscar_vendas(body: BuscarIn, current_user: dict = Depends(_sac_buscar)):
     """Importa vendas do SAC pelo número, na hora (não espera o robô nem a data inicial)."""
     nums = []
     for x in re.split(r"[\s,;]+", body.vendas or ""):
