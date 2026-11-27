@@ -314,25 +314,53 @@ def _sincronizar_com_pedidos(conn):
 
 
 # ─── rotas ───────────────────────────────────────────────────────────────────
+# Abas de histórico (fábrica, terceirizados, ignorados, cancelados) mostram só um período,
+# senão a contagem e a lista crescem sem parar. "Aguardando" e cancelamentos pendentes
+# são o que precisa de ação: esses contam sempre tudo.
+PERIODOS = (7, 30, 90, 0)          # dias; 0 = tudo
+_DATA_DECISAO = "COALESCE(decidido_em, atualizado_em, criado_em)"
+
+
 @router.get("/caixa")
-def caixa(aba: str = "aguardando", current_user: dict = Depends(_so_gestor)):
+def caixa(aba: str = "aguardando", periodo: int = 7, busca: str = "",
+          current_user: dict = Depends(_so_gestor)):
+    if periodo not in PERIODOS:
+        periodo = 7
+    busca = (busca or "").strip()
     conn = get_conn()
     try:
         tabelas(conn)
         _sincronizar_com_pedidos(conn)
+        filtro, params = "", []
+        if busca:
+            filtro = " AND (venda LIKE ? OR cliente LIKE ? OR CAST(pedido_id AS TEXT) = ?)"
+            params = [f"%{busca}%", f"%{busca}%", busca]
+        elif periodo:
+            desde = (datetime.datetime.now() - datetime.timedelta(days=periodo)).strftime("%Y-%m-%d 00:00:00")
+            filtro = f" AND {_DATA_DECISAO} >= ?"
+            params = [desde]
         cont = {d: 0 for d in DESTINOS}
-        for x in conn.execute("SELECT destino, COUNT(*) n FROM sac_vendas GROUP BY destino"):
+        cont["aguardando"] = conn.execute("SELECT COUNT(*) FROM sac_vendas WHERE destino='aguardando'").fetchone()[0]
+        for x in conn.execute(f"""SELECT destino, COUNT(*) n FROM sac_vendas WHERE destino <> 'aguardando' {filtro}
+                                  GROUP BY destino""", params):
             cont[x["destino"]] = x["n"]
         cont["cancelados_pendentes"] = conn.execute(
             "SELECT COUNT(*) FROM sac_vendas WHERE situacao='C' AND cancel_resolvido=0 AND cancelado_em IS NOT NULL").fetchone()[0]
         if aba == "cancelados":
-            rows = conn.execute("""SELECT * FROM sac_vendas WHERE cancelado_em IS NOT NULL
-                                   ORDER BY cancel_resolvido, cancelado_em DESC LIMIT 200""").fetchall()
+            filtro_c = filtro.replace(_DATA_DECISAO, "cancelado_em")
+            rows = conn.execute(f"""SELECT * FROM sac_vendas WHERE cancelado_em IS NOT NULL
+                                    AND (cancel_resolvido = 0 OR (1=1 {filtro_c}))
+                                    ORDER BY cancel_resolvido, cancelado_em DESC LIMIT 200""", params).fetchall()
         else:
             if aba not in DESTINOS:
                 aba = "aguardando"
-            rows = conn.execute("""SELECT * FROM sac_vendas WHERE destino = ?
-                                   ORDER BY CAST(venda AS INTEGER) DESC LIMIT 300""", (aba,)).fetchall()
+            if aba == "aguardando":
+                rows = conn.execute("""SELECT * FROM sac_vendas WHERE destino = 'aguardando'
+                                       ORDER BY CAST(venda AS INTEGER) DESC LIMIT 300""").fetchall()
+            else:
+                rows = conn.execute(f"""SELECT * FROM sac_vendas WHERE destino = ? {filtro}
+                                        ORDER BY {_DATA_DECISAO} DESC, CAST(venda AS INTEGER) DESC LIMIT 200""",
+                                    [aba] + params).fetchall()
         depara = {d["chave"]: d for d in conn.execute("SELECT * FROM sac_depara")}
         produtos = conn.execute("SELECT id, nome, marca FROM estoque_produtos WHERE ativo = 1").fetchall()
         nomes = {p["id"]: p["nome"] for p in produtos}
@@ -343,7 +371,8 @@ def caixa(aba: str = "aguardando", current_user: dict = Depends(_so_gestor)):
                ORDER BY cancelado_em DESC""")]
     finally:
         conn.close()
-    return {"aba": aba, "contagem": cont, "vendas": vendas, "cancelamentos": alertas, "robo": status_robo()}
+    return {"aba": aba, "contagem": cont, "vendas": vendas, "cancelamentos": alertas, "robo": status_robo(),
+            "periodo": periodo, "busca": busca}
 
 
 @router.get("/resumo")
@@ -442,6 +471,71 @@ def listar_depara(current_user: dict = Depends(_so_gestor)):
     finally:
         conn.close()
     return [dict(r) for r in rows]
+
+
+def _sugestoes_historico(conn) -> list:
+    """Vínculos seguros tirados dos pedidos já feitos: o mesmo produto do SAC ligado
+    pelo menos 2 vezes, e SEMPRE ao mesmo produto do estoque (ativo). Só o que ainda não está no de-para."""
+    ativos = {r["id"]: r["nome"] for r in conn.execute("SELECT id, nome FROM estoque_produtos WHERE ativo = 1")}
+    ja = {r["chave"] for r in conn.execute("SELECT chave FROM sac_depara")}
+    cont, exemplo = {}, {}
+    for row in conn.execute("SELECT descricao, produto_id FROM pedidos_itens WHERE produto_id IS NOT NULL"):
+        ch = chave_produto(row["descricao"])
+        if not ch or ch in ja:
+            continue
+        cont.setdefault(ch, {}).setdefault(row["produto_id"], 0)
+        cont[ch][row["produto_id"]] += 1
+        exemplo.setdefault(ch, row["descricao"])
+    out = []
+    for ch, c in cont.items():
+        if len(c) != 1:
+            continue                       # já foi ligado a produtos diferentes: fica para o gestor
+        pid, n = next(iter(c.items()))
+        if n < 2 or pid not in ativos:
+            continue
+        out.append({"chave": ch, "produto_id": pid, "produto_nome": ativos[pid], "vezes": n,
+                    "exemplo": (exemplo.get(ch) or "")[:120]})
+    return sorted(out, key=lambda x: (-x["vezes"], x["chave"]))
+
+
+@router.get("/depara/historico")
+def depara_historico(current_user: dict = Depends(_so_gestor)):
+    conn = get_conn()
+    try:
+        tabelas(conn)
+        return {"sugestoes": _sugestoes_historico(conn)}
+    finally:
+        conn.close()
+
+
+class AplicarHistIn(BaseModel):
+    chaves: List[str]
+
+
+@router.post("/depara/historico")
+async def aplicar_depara_historico(body: AplicarHistIn, current_user: dict = Depends(_so_gestor)):
+    """Grava os vínculos do histórico que o gestor confirmou e libera as vendas que só esperavam por eles."""
+    conn = get_conn()
+    enviadas = 0
+    try:
+        tabelas(conn)
+        sug = {s["chave"]: s for s in _sugestoes_historico(conn)}
+        n = 0
+        for ch in body.chaves:
+            sgt = sug.get(ch)
+            if not sgt:
+                continue
+            _gravar_vinculo(conn, VinculoIn(chave=ch, descricao=sgt["exemplo"], produto_id=sgt["produto_id"],
+                                            terceirizado=False), (current_user.get("nome") or "") + " (histórico)")
+            n += 1
+        conn.commit()
+        for o in conn.execute("SELECT venda FROM sac_vendas WHERE destino='aguardando'").fetchall():
+            if await decidir_automatico(conn, o["venda"]) == "fabrica":
+                enviadas += 1
+    finally:
+        conn.close()
+    return {"gravados": n, "enviadas": enviadas,
+            "mensagem": f"{n} vínculo(s) gravado(s)" + (f" · {enviadas} venda(s) seguiram para a fábrica" if enviadas else "")}
 
 
 @router.post("/depara")
@@ -719,6 +813,29 @@ async def sincronizar_agora(current_user: dict = Depends(_so_gestor)):
     r = await sac_robo.sincronizar("manual")
     if not r.get("ok"):
         raise HTTPException(400, r.get("mensagem") or "Não consegui ler o SAC.")
+    return r
+
+
+class BuscarIn(BaseModel):
+    vendas: str      # "15811, 15812 15813"
+
+
+@router.post("/buscar")
+async def buscar_vendas(body: BuscarIn, current_user: dict = Depends(_so_gestor)):
+    """Importa vendas do SAC pelo número, na hora (não espera o robô nem a data inicial)."""
+    nums = []
+    for x in re.split(r"[\s,;]+", body.vendas or ""):
+        x = re.sub(r"\D", "", x)
+        if x and x not in nums:
+            nums.append(x)
+    if not nums:
+        raise HTTPException(400, "Digite o número da venda do SAC.")
+    if len(nums) > 20:
+        raise HTTPException(400, "No máximo 20 vendas por vez.")
+    from rotas import sac_robo
+    r = await sac_robo.importar_numeros(nums)
+    if not r.get("ok") and not r.get("resultados"):
+        raise HTTPException(400, r.get("mensagem") or "Não consegui buscar no SAC.")
     return r
 
 
