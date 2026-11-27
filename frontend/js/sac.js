@@ -12,6 +12,7 @@
   let periodo = 7;          // dias das abas de histórico (0 = tudo)
   let busca = '';
   let dados = null;
+  const pode = (a) => !!dados && (dados.gestor || (dados.permissoes || []).includes(a));
   let produtos = null;      // estoque para os seletores do de-para
   const esc = (v) => (typeof _escHtml === 'function' ? _escHtml(v) : String(v == null ? '' : v));
   const brl = (v) => (v == null ? '—' : 'R$ ' + Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
@@ -101,12 +102,18 @@
     if (inp && document.activeElement !== inp) inp.value = r.importar_desde || '';
     const chk = document.getElementById('sac-auto-fabrica');
     if (chk) chk.checked = r.auto_fabrica !== false;
+    // configurações do robô: só o gestor (quem foi liberado vê o status, a busca e as decisões)
+    const ehGestor = !!dados.gestor;
+    if (inp) { inp.disabled = !ehGestor; inp.title = ehGestor ? '' : 'Só o gestor muda esta data'; }
+    if (chk) { chk.disabled = !ehGestor; chk.parentElement.style.opacity = ehGestor ? '' : '.6'; }
+    const env = document.querySelector('label.btn input[onchange^="sacEnviarPdfs"]');
+    if (env) env.parentElement.style.display = pode('buscar') ? '' : 'none';
     if (!st) return;
     st.title = '';
     const btn = document.getElementById('sac-btn-sync');
-    if (btn) btn.style.display = (r.disponivel && r.configurado && !r.desligado) ? '' : 'none';
+    if (btn) btn.style.display = (r.disponivel && r.configurado && !r.desligado && pode('buscar')) ? '' : 'none';
     const bn = document.getElementById('sac-busca-num');
-    if (bn) bn.style.display = (r.disponivel && r.configurado && !r.desligado) ? 'flex' : 'none';
+    if (bn) bn.style.display = (r.disponivel && r.configurado && !r.desligado && pode('buscar')) ? 'flex' : 'none';
     if (!r.disponivel) {
       st.innerHTML = '<span class="sac-dot" style="background:var(--warn)"></span>Leitura automática em preparação — envie os PDFs';
     } else if (r.desligado) {
@@ -157,10 +164,10 @@
             ? (comProd ? 'no PRATIC <b>já tem produção lançada</b> — confira estoque e produção antes de excluir.' : 'no PRATIC está <b>sem produção lançada</b> — pode excluir sem mexer no estoque.')
             : 'o pedido não existe mais no PRATIC.'}</div>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <div style="display:flex;gap:8px;flex-wrap:wrap">${!dados.gestor ? '<span style="font-size:12.5px;color:var(--muted)">O gestor decide se exclui o pedido.</span>' : `
           ${v.pedido ? `<button class="btn btn-danger" onclick="sacExcluirPedido('${esc(v.venda)}', ${v.pedido.id}, ${comProd ? 'true' : 'false'})">Excluir do PRATIC</button>` : ''}
           ${v.pedido ? `<button class="btn btn-secondary" onclick="sacCancelamento('${esc(v.venda)}','mantido')">Manter</button>`
-                     : `<button class="btn btn-secondary" onclick="sacCancelamento('${esc(v.venda)}','excluido')">Ok, resolvido</button>`}
+                     : `<button class="btn btn-secondary" onclick="sacCancelamento('${esc(v.venda)}','excluido')">Ok, resolvido</button>`}`}
         </div></div>`;
     }).join('');
   }
@@ -191,7 +198,7 @@
       return;
     }
     el.innerHTML = '<div style="display:flex;flex-direction:column;gap:12px">' + vs.map(v => {
-      const editavel = aba === 'aguardando';
+      const editavel = aba === 'aguardando' && pode('decidir');
       const tags = [`<span class="sac-tag ${v.situacao === 'C' ? 'sac-err' : 'sac-ok'}">Situação ${esc(v.situacao || '?')}</span>`];
       if (editavel) tags.push(v.itens_sem_vinculo ? `<span class="sac-tag sac-av">${v.itens_sem_vinculo} item(ns) sem vínculo</span>` : '<span class="sac-tag sac-ok">Todos os itens vinculados</span>');
       if (v.origem === 'manual') tags.push('<span class="sac-tag" style="background:var(--surface2);color:var(--muted)">PDF enviado à mão</span>');
@@ -201,7 +208,9 @@
           <button class="btn btn-secondary" onclick="sacDestino('${esc(v.venda)}','terceirizado')">🤝 Terceirizado</button>
           <button class="btn btn-secondary" style="opacity:.85" onclick="sacDestino('${esc(v.venda)}','ignorado')">🚫 Ignorar</button>
           <span id="sac-aviso-${esc(v.venda)}" style="color:var(--muted);font-size:12px"></span>`;
-      } else if (aba === 'terceirizado' || aba === 'ignorado') {
+      } else if (aba === 'aguardando') {
+        acoes = '<span style="color:var(--muted);font-size:13px">Aguardando a decisão do gestor.</span>';
+      } else if ((aba === 'terceirizado' || aba === 'ignorado') && pode('decidir')) {
         acoes = `<button class="btn btn-secondary" onclick="sacDestino('${esc(v.venda)}','aguardando')">↩ Voltar para a caixa</button>`;
       } else if (aba === 'fabrica' && v.pedido) {
         acoes = `<span style="color:var(--muted);font-size:13px">Pedido no PRATIC: <b style="color:var(--text)">${esc(v.venda)}</b> · ${esc(v.pedido.status)}${v.decidido_por ? ' · por ' + esc(v.decidido_por) : ''}</span>`;
@@ -366,7 +375,7 @@
       </tbody></table>` : '<p style="color:var(--muted)">Nenhum vínculo ainda — eles são criados ao enviar vendas para a fábrica.</p>'}
       </div>
       <div id="sac-dp-hist"></div>
-      <div class="modal-footer"><button class="btn btn-secondary" data-hist title="Vínculos seguros dos pedidos já feitos: mesmo produto ligado 2+ vezes, sempre ao mesmo produto do estoque">📚 Preencher com o histórico</button>
+      <div class="modal-footer"><button class="btn btn-secondary" data-hist${dados && dados.gestor ? '' : ' style="display:none"'} title="Vínculos seguros dos pedidos já feitos: mesmo produto ligado 2+ vezes, sempre ao mesmo produto do estoque">📚 Preencher com o histórico</button>
         <button class="btn btn-secondary" data-x>Fechar</button></div></div>`;
     document.body.appendChild(ov);
     ov.querySelector('[data-x]').onclick = () => ov.remove();
@@ -395,6 +404,7 @@
       };
     };
     ov.addEventListener('click', (e) => { if (e.target === ov) ov.remove(); });
+    if (!pode('decidir')) ov.querySelectorAll('select[data-chave]').forEach(s => { s.disabled = true; });
     ov.querySelectorAll('select[data-chave]').forEach(s => s.addEventListener('change', async () => {
       try {
         await api('/sac/depara', 'POST', { chave: s.dataset.chave, codigo: s.dataset.codigo, descricao: s.dataset.desc,

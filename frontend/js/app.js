@@ -6229,7 +6229,10 @@ async function loadPedidos_init() {
   const btnAcomp = document.getElementById('ptab-acompanhamento');
   if (btnAcomp) btnAcomp.style.display = (window.usuarioLogado && window.usuarioLogado.role === 'gestor') ? '' : 'none';
   const btnSac = document.getElementById('ptab-sac');
-  if (btnSac) btnSac.style.display = (window.usuarioLogado && window.usuarioLogado.role === 'gestor') ? '' : 'none';
+  // Pedidos SAC: gestor, ou quem tem a permissão "Pedidos SAC" no Controle de Acesso
+  const _podeSac = (window.usuarioLogado && window.usuarioLogado.role === 'gestor')
+    || ['ver', 'buscar', 'decidir'].some(a => typeof minhasPermissoes === 'object' && minhasPermissoes && minhasPermissoes.pedidos_sac && minhasPermissoes.pedidos_sac[a]);
+  if (btnSac) btnSac.style.display = _podeSac ? '' : 'none';
   if (window.usuarioLogado && window.usuarioLogado.role === 'expedicao') {
     ['fila', 'programacao', 'pedidos', 'clientes'].forEach(t => {
       const b = document.getElementById('ptab-' + t);
@@ -7088,6 +7091,19 @@ async function incluirProdutoProduzido(pedidoId, produtoId, nome, qtd) {
 }
 window.incluirProdutoProduzido = incluirProdutoProduzido;
 
+// Coluna ML do histórico: só o tamanho ("330 ml", "440/550 ml", "1 L"), nunca o nome inteiro do produto
+function _mlDoProduto(l) {
+  const t = String(l.produto_tamanho || '').trim();
+  if (t && t.length <= 14) return _escHtml(t);
+  const nome = String(l.produto_nome || t || '').toUpperCase();
+  const m = nome.match(/(\d+(?:[.,]\d+)?(?:\s*\/\s*\d+)*)\s*(MLS?|M\b|LITROS?|LTS?|L\b)/);
+  if (m) {
+    const num = m[1].replace(/\s+/g, '');
+    return /^L/.test(m[2]) ? `${num} L` : `${num} ml`;
+  }
+  return '—';
+}
+
 // Quem produziu e quando: lançamentos de produção vinculados a este pedido
 // (um pedido pode ser atendido em vários dias por operadores diferentes).
 async function _carregarHistoricoProducaoPedido(id) {
@@ -7169,7 +7185,7 @@ async function _carregarHistoricoProducaoPedido(id) {
             <td>${fmtDate(l.data)}</td>
             <td>${l.colaborador_nome}</td>
             <td>${l.maquina_nome}</td>
-            <td title="${l.produto_nome || ''}" style="color:var(--accent2);font-weight:600">${l.produto_tamanho || l.produto_nome || '—'}</td>
+            <td title="${_escHtml(l.produto_nome || '')}" style="color:var(--accent2);font-weight:600;white-space:nowrap">${_mlDoProduto(l)}</td>
             <td style="color:var(--accent);font-weight:600">${l.produto_marca || '—'}</td>
             <td>${fmtNum(l.producao)}</td>
             <td style="color:${l.perda_quantidade > 0 ? 'var(--danger)' : 'inherit'}">${fmtNum(l.perda_quantidade)}</td>
@@ -13243,13 +13259,15 @@ const MODULOS_CONFIG = {
   permissoes:     { label:'🔐 Controle de Acesso',acoes:['ver','editar'] },
   empresa:        { label:'🏢 Dados da Empresa',  acoes:['ver','editar'] },
   expedicao:      { label:'🚚 Expedição',          acoes:['ver','despachar','desfazer'] },
+  pedidos_sac:    { label:'📥 Pedidos SAC',        acoes:['ver','buscar','decidir'] },
 };
 
 const ACAO_LABEL = {
   ver:'Ver', criar:'Criar', editar:'Editar', deletar:'Deletar',
   importar:'Importar', movimentar:'Movimentar', exportar:'Exportar',
   backup:'Backup', restaurar:'Restaurar', limpar:'Limpar',
-  despachar:'Despachar', desfazer:'Desfazer'
+  despachar:'Despachar', desfazer:'Desfazer',
+  buscar:'Buscar no SAC', decidir:'Decidir'
 };
 
 let permUsuarioAtual = {};
@@ -13291,7 +13309,7 @@ function renderPermUsuarioGrid(perms) {
   if (!el) return;
 
   // Todas as ações possíveis para montar colunas fixas
-  const todasAcoes = ['ver','criar','editar','deletar','importar','movimentar','exportar','backup','restaurar','limpar','despachar','desfazer'];
+  const todasAcoes = ['ver','criar','editar','deletar','importar','movimentar','exportar','backup','restaurar','limpar','despachar','desfazer','buscar','decidir'];
 
   // Cabeçalho
   let html = `
