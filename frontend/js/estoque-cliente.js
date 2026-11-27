@@ -28,13 +28,24 @@
   }
 
   function garantirModais() {
+    if (!document.getElementById('ec-estilos')) {
+      const st = document.createElement('style');
+      st.id = 'ec-estilos';
+      st.textContent = `
+        .ec-vend{display:inline-block;font-size:14px;font-weight:700;border-radius:14px;padding:4px 12px;margin-left:8px;
+          background:rgba(59,130,246,.16);color:#93c5fd;border:1px solid rgba(59,130,246,.45);vertical-align:middle}
+        .ec-vend.sem{background:rgba(239,68,68,.14);color:#fca5a5;border-color:rgba(239,68,68,.45)}
+        [data-theme="light"] .ec-vend{background:#dbeafe;color:#1d4ed8;border-color:#93c5fd}
+        [data-theme="light"] .ec-vend.sem{background:#fee2e2;color:#b91c1c;border-color:#fca5a5}`;
+      document.head.appendChild(st);
+    }
     if (document.getElementById('modal-ec-entrega')) return;
     const wrap = document.createElement('div');
     wrap.innerHTML = `
     <div class="modal-overlay" id="modal-ec-entrega">
       <div class="modal" style="max-width:760px;width:96vw">
         <div class="modal-title">🚚 Entregar do estoque do cliente</div>
-        <div id="ec-ent-cab" style="font-size:14px;margin-bottom:12px;background:rgba(255,255,255,0.05);padding:10px 12px;border-radius:8px;border-left:4px solid var(--accent)"></div>
+        <div id="ec-ent-cab" style="font-size:14px;margin-bottom:12px;background:var(--surface2);padding:10px 12px;border-radius:8px;border-left:4px solid var(--accent)"></div>
         <div style="overflow-x:auto"><table style="width:100%">
           <thead><tr><th>Produto</th><th style="text-align:right">Saldo</th><th style="width:160px">Entregar agora</th></tr></thead>
           <tbody id="ec-ent-itens"></tbody>
@@ -125,6 +136,8 @@
     (ecDados.a_caminho || []).filter(p => passaVend(p.cliente_id)).forEach(p => { (caminho[p.cliente_id] = caminho[p.cliente_id] || { nome: p.cliente_nome, pedidos: [] }).pedidos.push(p); });
     Object.keys(caminho).forEach(cid => { if (!porCliente[cid] && !busca) porCliente[cid] = { nome: caminho[cid].nome, linhas: [] }; });
 
+    ecVisiveis = Object.entries(porCliente).map(([cid, c]) => ({ cid: +cid, nome: c.nome, fantasia: c.fantasia,
+      vendedor: (vpc[cid] || {}).nome || '', linhas: c.linhas.filter(l => l.saldo > 0) })).filter(c => c.linhas.length);
     const blocos = Object.entries(porCliente).map(([cid, c]) => {
       const total = c.linhas.reduce((s, l) => s + (l.saldo || 0), 0);
       const temSaldo = c.linhas.some(l => l.saldo > 0);
@@ -132,8 +145,12 @@
       return `<div class="table-wrap" style="margin-bottom:14px">
         <div class="table-head" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
           <span class="table-head-title">🏷️ ${e(c.nome)}${c.fantasia && c.fantasia !== c.nome ? ` <span style="font-size:12px;color:var(--muted);font-weight:400">${e(c.fantasia)}</span>` : ''} <span style="font-size:12px;background:var(--surface2);border-radius:10px;padding:2px 8px;margin-left:6px">${n(total)} un</span>
-            ${ecDados.filtro_vendedor ? `<span style="font-size:12px;border-radius:10px;padding:2px 9px;margin-left:6px;${vpc[cid] ? 'background:rgba(59,130,246,.15);color:#60a5fa' : 'background:rgba(239,68,68,.12);color:var(--danger)'}">👤 ${vpc[cid] ? e(vpc[cid].nome) : 'sem vendedor'}</span>` : ''}</span>
-          <span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">${prod}${temSaldo ? `<button class="btn btn-sm btn-primary" onclick="ecAbrirEntrega(${cid})">🚚 Entregar</button>` : ''}</span>
+            ${ecDados.filtro_vendedor ? `<span class="ec-vend ${vpc[cid] ? '' : 'sem'}">👤 ${vpc[cid] ? e(vpc[cid].nome) : 'sem vendedor'}</span>` : ''}</span>
+          <span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">${prod}
+            ${temSaldo ? `<button class="btn btn-sm btn-secondary" title="Ver em texto para copiar e mandar (WhatsApp, e-mail)" onclick="ecCopiar([${cid}])">📋 Copiar</button>
+            <button class="btn btn-sm btn-secondary" title="Imprimir o estoque deste cliente" onclick="ecImprimir([${cid}])">🖨️</button>` : ''}
+            ${ecDados.pode_mexer && ecDados.filtro_vendedor ? `<button class="btn btn-sm btn-secondary" title="Trocar o vendedor deste cliente" onclick="ecTrocarVendedor(${cid})">👤 Vendedor</button>` : ''}
+            ${temSaldo ? `<button class="btn btn-sm btn-primary" onclick="ecAbrirEntrega(${cid})">🚚 Entregar</button>` : ''}</span>
         </div>
         <table>
           <thead><tr><th>Produto</th><th style="text-align:right">Saldo</th><th style="text-align:right">Consumo/mês</th><th>Dura</th><th>Última entrega</th><th>Situação</th><th></th></tr></thead>
@@ -172,7 +189,9 @@
           <div style="display:flex;gap:8px;flex-wrap:wrap">
             <select id="ec-filtro-vend" onchange="ecRender()" style="display:none;min-width:190px" aria-label="Filtrar por vendedor"></select>
             <input type="text" id="ec-busca" placeholder="Buscar cliente ou produto..." oninput="ecRender()" style="min-width:220px">
-            <button class="btn btn-sm btn-secondary" onclick="ecMontar('${containerId}')">↻</button>
+            <button class="btn btn-sm btn-secondary" onclick="ecMontar('${containerId}')" title="Atualizar">↻</button>
+            <button class="btn btn-sm btn-secondary" onclick="ecCopiar()" title="Copiar em texto os clientes da tela (com o filtro atual)">📋 Copiar lista</button>
+            <button class="btn btn-sm btn-secondary" onclick="ecImprimir()" title="Imprimir os clientes da tela (com o filtro atual)">🖨️ Imprimir</button>
             <button class="btn btn-sm btn-secondary" id="ec-btn-novo" style="display:none" onclick="ecAbrirNovo()">➕ Saldo inicial</button>
           </div>
         </div>
@@ -197,6 +216,101 @@
     render();
   };
   window.ecRender = render;
+
+  // ── Copiar / imprimir o estoque (o que está na tela, ou só um cliente) ──
+  let ecVisiveis = [];
+  const hoje = () => new Date().toLocaleDateString('pt-BR');
+  function escolher(ids) { return ids ? ecVisiveis.filter(c => ids.includes(c.cid)) : ecVisiveis; }
+  function textoEstoque(lista) {
+    return lista.map(c => {
+      const tot = c.linhas.reduce((s, l) => s + (l.saldo || 0), 0);
+      return `*Estoque de copos — ${c.nome}*\n` + (c.vendedor ? `Vendedor: ${c.vendedor}\n` : '')
+        + c.linhas.map(l => `• ${l.descricao}: *${n(l.saldo)} un*`).join('\n')
+        + (c.linhas.length > 1 ? `\nTotal: ${n(tot)} un` : '');
+    }).join('\n\n') + `\n\n_Posição em ${hoje()} — Pratic Rio Preto_`;
+  }
+  window.ecCopiar = function (ids) {
+    const lista = escolher(ids);
+    if (!lista.length) { aviso('Nada com saldo para copiar', 'danger'); return; }
+    let m = document.getElementById('modal-ec-copiar');
+    if (!m) {
+      m = document.createElement('div'); m.className = 'modal-overlay'; m.id = 'modal-ec-copiar';
+      m.innerHTML = `<div class="modal" style="max-width:620px;width:94vw">
+        <div class="modal-title">📋 Estoque para enviar</div>
+        <div style="font-size:12.5px;color:var(--muted);margin-bottom:8px">Os *asteriscos* viram negrito no WhatsApp. Pode editar antes de copiar.</div>
+        <label for="ec-copiar-txt" style="position:absolute;left:-9999px">Texto do estoque</label>
+        <textarea id="ec-copiar-txt" rows="14" style="width:100%;font-family:inherit;font-size:13.5px"></textarea>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="document.getElementById('modal-ec-copiar').classList.remove('open')">Fechar</button>
+          <button class="btn btn-primary" id="ec-copiar-btn">📋 Copiar texto</button></div></div>`;
+      document.body.appendChild(m);
+      m.addEventListener('click', ev => { if (ev.target === m) m.classList.remove('open'); });
+      document.getElementById('ec-copiar-btn').onclick = async () => {
+        const ta = document.getElementById('ec-copiar-txt');
+        try { await navigator.clipboard.writeText(ta.value); }
+        catch (_) { ta.select(); document.execCommand && document.execCommand('copy'); }
+        aviso('📋 Texto copiado — é só colar no WhatsApp ou no e-mail');
+      };
+    }
+    document.getElementById('ec-copiar-txt').value = textoEstoque(lista);
+    m.classList.add('open');
+  };
+  window.ecImprimir = function (ids) {
+    const lista = escolher(ids);
+    if (!lista.length) { aviso('Nada com saldo para imprimir', 'danger'); return; }
+    const w = window.open('', '_blank');
+    if (!w) { aviso('O navegador bloqueou a janela de impressão', 'danger'); return; }
+    const filtro = document.getElementById('ec-filtro-vend');
+    const fTxt = !ids && filtro && filtro.value ? ' · ' + filtro.selectedOptions[0].text.replace('👤 ', '') : '';
+    w.document.write(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>Estoque de clientes ${hoje()}</title>
+      <style>@page{size:A4;margin:12mm}body{font-family:Arial,Helvetica,sans-serif;color:#111;font-size:13px}
+      h1{font-size:18px;margin:0 0 2px}.sub{color:#555;font-size:12px;margin-bottom:14px}
+      .cli{border:1.5px solid #222;border-radius:6px;margin-bottom:12px;page-break-inside:avoid}
+      .cab{display:flex;justify-content:space-between;gap:10px;padding:7px 10px;background:#eee;border-bottom:1px solid #222;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      .vend{font-weight:600}table{width:100%;border-collapse:collapse}td{padding:6px 10px;border-top:1px solid #ccc}
+      td.q{text-align:right;font-weight:700;white-space:nowrap}tr.tot td{border-top:1.5px solid #222;font-weight:700}</style></head><body>
+      <h1>Estoque de clientes — Pratic Rio Preto</h1><div class="sub">Posição em ${hoje()}${fTxt} · ${lista.length} cliente(s)</div>
+      ${lista.map(c => {
+        const tot = c.linhas.reduce((s, l) => s + (l.saldo || 0), 0);
+        return `<div class="cli"><div class="cab"><span>${e(c.nome)}</span><span class="vend">${c.vendedor ? 'Vendedor: ' + e(c.vendedor) : ''}</span></div>
+          <table>${c.linhas.map(l => `<tr><td>${e(l.descricao)}</td><td class="q">${n(l.saldo)} un</td></tr>`).join('')}
+          ${c.linhas.length > 1 ? `<tr class="tot"><td>Total</td><td class="q">${n(tot)} un</td></tr>` : ''}</table></div>`;
+      }).join('')}
+      <script>window.onload=()=>setTimeout(()=>window.print(),300)<\/script></body></html>`);
+    w.document.close();
+  };
+
+  // ── Trocar o vendedor do cliente ──
+  window.ecTrocarVendedor = async function (cid) {
+    let vend = [];
+    try { vend = ((await chamar('/pedidos/estoque-cliente/vendedores')) || {}).vendedores || []; } catch (err) { aviso(err.message, 'danger'); return; }
+    const atual = (ecDados.vendedor_por_cliente || {})[cid];
+    const nomeCli = ((ecDados.linhas || []).find(l => l.cliente_id === cid) || {}).cliente_nome || '';
+    let m = document.getElementById('modal-ec-vend');
+    if (!m) {
+      m = document.createElement('div'); m.className = 'modal-overlay'; m.id = 'modal-ec-vend';
+      m.innerHTML = `<div class="modal" style="max-width:460px">
+        <div class="modal-title">👤 Vendedor do estoque do cliente</div>
+        <div id="ec-vend-cli" style="font-weight:700;margin-bottom:10px"></div>
+        <div class="form-group"><label for="ec-vend-sel">Vendedor (vê este estoque no portal Comercial)</label><select id="ec-vend-sel"></select></div>
+        <div class="modal-footer"><button class="btn btn-secondary" onclick="document.getElementById('modal-ec-vend').classList.remove('open')">Cancelar</button>
+          <button class="btn btn-primary" id="ec-vend-ok">Salvar</button></div></div>`;
+      document.body.appendChild(m);
+      m.addEventListener('click', ev => { if (ev.target === m) m.classList.remove('open'); });
+    }
+    document.getElementById('ec-vend-cli').textContent = nomeCli;
+    document.getElementById('ec-vend-sel').innerHTML = '<option value="">— sem vendedor —</option>'
+      + vend.map(v => `<option value="${v.id}"${atual && atual.id === v.id ? ' selected' : ''}>${e(v.nome)}</option>`).join('');
+    document.getElementById('ec-vend-ok').onclick = async () => {
+      const v = +document.getElementById('ec-vend-sel').value || null;
+      try {
+        const r = await chamar('/pedidos/estoque-cliente/vendedor', 'POST', { cliente_id: cid, vendedor_usuario_id: v });
+        m.classList.remove('open');
+        aviso('👤 ' + ((r && r.mensagem) || 'Vendedor atualizado'));
+        window.ecMontar(ecContainer.id);
+      } catch (err) { aviso(err.message, 'danger'); }
+    };
+    m.classList.add('open');
+  };
 
   function linhaPorChave(k) {
     const [cid, pid, desc] = JSON.parse(decodeURIComponent(k));
