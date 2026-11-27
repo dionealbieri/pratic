@@ -589,6 +589,11 @@
               <label for="sac-auto-fabrica" style="display:flex;align-items:center;gap:6px;margin:0;cursor:pointer;font-size:12.5px" title="Venda em que todos os produtos já têm vínculo no de-para vai direto para a fábrica. Produto novo continua esperando a sua escolha.">
                 <input type="checkbox" id="sac-auto-fabrica" onchange="sacAutoFabrica(this.checked)"> Direto p/ fábrica quando já vinculado
               </label>
+              <span id="sac-busca-num" style="display:flex;gap:6px;align-items:center">
+                <label for="sac-num" style="position:absolute;left:-9999px">Número da venda no SAC</label>
+                <input id="sac-num" placeholder="Nº da venda no SAC" title="Um ou vários números (separados por vírgula ou espaço). O robô busca no SAC e importa na hora." style="width:170px" onkeydown="if(event.key==='Enter')sacBuscarNoSac()">
+                <button class="btn btn-secondary" id="sac-btn-num" onclick="sacBuscarNoSac()">🔎 Buscar no SAC</button>
+              </span>
               <button class="btn btn-primary" id="sac-btn-sync" onclick="sacSincronizar()">↻ Sincronizar agora</button>
               <label class="btn btn-secondary" style="margin:0;cursor:pointer" title="Enquanto o robô não lê sozinho: envie os PDFs baixados da impressora do SAC">
                 📄 Enviar PDFs do SAC<input type="file" accept=".pdf" multiple style="display:none" onchange="sacEnviarPdfs(this)">
@@ -3453,9 +3458,9 @@
 </div>
 
 <script src="js/cotacao.js?v=20261117-cubado2"></script>
-<script src="js/estoque-cliente.js?v=20261126-estcli5"></script>
-<script src="js/app.js?v=20261126-sac10"></script>
-<script src="js/sac.js?v=20261126-sac10"></script>
+<script src="js/estoque-cliente.js?v=20261126-estcli6"></script>
+<script src="js/app.js?v=20261127-sac11"></script>
+<script src="js/sac.js?v=20261127-sac11"></script>
 <script src="js/autorefresh.js?v=20261126b"></script>
 <script>
 function toggleSidebar() {
