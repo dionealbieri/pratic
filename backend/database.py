@@ -1632,6 +1632,12 @@ def _migrar_estoque_cliente(conn):
         # vendedor responsável por um saldo lançado à mão (cliente que ainda não tem pedido com ele)
         conn.execute("ALTER TABLE estoque_cliente_mov ADD COLUMN vendedor_usuario_id INTEGER")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_estcli_cliente ON estoque_cliente_mov(cliente_id)")
+    # Vendedor responsável pelo estoque do cliente (escolhido pelo gestor; vale mais que o do último pedido)
+    conn.execute("""CREATE TABLE IF NOT EXISTS estoque_cliente_vendedor (
+        cliente_id INTEGER PRIMARY KEY,
+        vendedor_usuario_id INTEGER,
+        alterado_por TEXT,
+        alterado_em TEXT DEFAULT (datetime('now','localtime')))""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_estcli_pedido ON estoque_cliente_mov(pedido_id)")
     conn.commit()
 
