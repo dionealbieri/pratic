@@ -9,6 +9,8 @@
     { id: 'cancelados', rot: 'Cancelados no SAC', perigo: true },
   ];
   let aba = 'aguardando';
+  let periodo = 7;          // dias das abas de histórico (0 = tudo)
+  let busca = '';
   let dados = null;
   let produtos = null;      // estoque para os seletores do de-para
   const esc = (v) => (typeof _escHtml === 'function' ? _escHtml(v) : String(v == null ? '' : v));
@@ -79,7 +81,8 @@
     const lista = document.getElementById('sac-lista');
     if (!lista) return;
     try {
-      [dados] = await Promise.all([api('/sac/caixa?aba=' + encodeURIComponent(aba)), carregarProdutos()]);
+      const q = '/sac/caixa?aba=' + encodeURIComponent(aba) + '&periodo=' + periodo + '&busca=' + encodeURIComponent(busca);
+      [dados] = await Promise.all([api(q), carregarProdutos()]);
     } catch (e) {
       lista.innerHTML = `<p style="color:var(--danger)">${esc(e.message)}</p>`;
       return;
@@ -102,6 +105,8 @@
     st.title = '';
     const btn = document.getElementById('sac-btn-sync');
     if (btn) btn.style.display = (r.disponivel && r.configurado && !r.desligado) ? '' : 'none';
+    const bn = document.getElementById('sac-busca-num');
+    if (bn) bn.style.display = (r.disponivel && r.configurado && !r.desligado) ? 'flex' : 'none';
     if (!r.disponivel) {
       st.innerHTML = '<span class="sac-dot" style="background:var(--warn)"></span>Leitura automática em preparação — envie os PDFs';
     } else if (r.desligado) {
@@ -123,8 +128,20 @@
   function desenharAbas() {
     const c = dados.contagem || {};
     const n = { aguardando: c.aguardando, fabrica: c.fabrica, terceirizado: c.terceirizado, ignorado: c.ignorado, cancelados: c.cancelados_pendentes };
+    const rotPer = { 7: 'últimos 7 dias', 30: 'últimos 30 dias', 90: 'últimos 90 dias', 0: 'tudo' };
+    const historico = aba !== 'aguardando';
     document.getElementById('sac-abas').innerHTML = ABAS.map(a =>
-      `<button type="button" class="sac-aba${a.id === aba ? ' on' : ''}${a.perigo ? ' perigo' : ''}" onclick="sacCarregar('${a.id}')">${a.rot} · ${n[a.id] || 0}</button>`).join('');
+      `<button type="button" class="sac-aba${a.id === aba ? ' on' : ''}${a.perigo ? ' perigo' : ''}" onclick="sacCarregar('${a.id}')">${a.rot} · ${n[a.id] || 0}</button>`).join('')
+      + `<span style="display:flex;gap:6px;align-items:center;margin-left:auto;flex-wrap:wrap">
+          <label for="sac-periodo" style="font-size:12px;color:var(--muted);margin:0">Histórico:</label>
+          <select id="sac-periodo" onchange="sacPeriodo(this.value)" style="width:auto;padding:6px 10px;font-size:13px">
+            ${[7, 30, 90, 0].map(d => `<option value="${d}"${d === periodo ? ' selected' : ''}>${rotPer[d]}</option>`).join('')}
+          </select>
+          <input id="sac-busca" type="search" placeholder="Buscar nº da venda ou cliente" value="${esc(busca)}" aria-label="Buscar venda ou cliente"
+            style="width:230px;padding:6px 10px;font-size:13px" onkeydown="if(event.key==='Enter')sacBuscar(this.value)" onsearch="sacBuscar(this.value)">
+        </span>`
+      + (busca ? `<div style="width:100%;font-size:12px;color:var(--muted)">Buscando "${esc(busca)}" em todo o histórico · <a href="#" onclick="sacBuscar('');return false">limpar busca</a></div>`
+         : historico ? `<div style="width:100%;font-size:12px;color:var(--muted)">Contagens de Enviados, Terceirizados e Ignorados: ${rotPer[periodo]}. Aguardando decisão conta sempre tudo.</div>` : '');
   }
 
   function desenharCancelamentos() {
@@ -269,6 +286,26 @@
     catch (e) { showAlert(e.message, 'danger'); }
   }
 
+  async function sacBuscarNoSac() {
+    const inp = document.getElementById('sac-num');
+    const btn = document.getElementById('sac-btn-num');
+    const v = (inp.value || '').trim();
+    if (!v) { inp.focus(); showAlert('Digite o número da venda do SAC', 'warn'); return; }
+    btn.disabled = true; const txt = btn.textContent; btn.textContent = '⏳ Buscando…';
+    try {
+      const r = await api('/sac/buscar', 'POST', { vendas: v });
+      const linhas = (r.resultados || []).map(x => `Venda ${x.venda}: ${x.mensagem}`);
+      const algumaOk = (r.resultados || []).some(x => x.status === 'importada');
+      showAlert(linhas.join(' · ') || r.mensagem, algumaOk ? 'success' : 'warn');
+      if (algumaOk) inp.value = '';
+      sacCarregar();
+    } catch (e) { showAlert(e.message, 'danger'); }
+    finally { btn.disabled = false; btn.textContent = txt; }
+  }
+
+  function sacPeriodo(v) { periodo = +v || 0; sacCarregar(); }
+  function sacBuscar(v) { busca = (v || '').trim(); if (busca && aba === 'aguardando') aba = 'fabrica'; sacCarregar(); }
+
   async function sacAutoFabrica(lig) {
     try {
       const r = await api('/sac/config', 'POST', { auto_fabrica: !!lig });
@@ -328,9 +365,35 @@
           <select id="sac-dp-${i}" data-chave="${esc(r.chave)}" data-codigo="${esc(r.codigo || '')}" data-desc="${esc(r.descricao || '')}" style="max-width:340px">${opcoesProduto(r.terceirizado ? 'terc' : (r.produto_id || ''))}</select></td></tr>`).join('')}
       </tbody></table>` : '<p style="color:var(--muted)">Nenhum vínculo ainda — eles são criados ao enviar vendas para a fábrica.</p>'}
       </div>
-      <div class="modal-footer"><button class="btn btn-secondary" data-x>Fechar</button></div></div>`;
+      <div id="sac-dp-hist"></div>
+      <div class="modal-footer"><button class="btn btn-secondary" data-hist title="Vínculos seguros dos pedidos já feitos: mesmo produto ligado 2+ vezes, sempre ao mesmo produto do estoque">📚 Preencher com o histórico</button>
+        <button class="btn btn-secondary" data-x>Fechar</button></div></div>`;
     document.body.appendChild(ov);
     ov.querySelector('[data-x]').onclick = () => ov.remove();
+    ov.querySelector('[data-hist]').onclick = async () => {
+      const box = ov.querySelector('#sac-dp-hist');
+      box.innerHTML = '<p style="color:var(--muted)">Procurando no histórico…</p>';
+      let sug = [];
+      try { sug = (await api('/sac/depara/historico')).sugestoes || []; } catch (e) { box.innerHTML = `<p style="color:var(--danger)">${esc(e.message)}</p>`; return; }
+      if (!sug.length) { box.innerHTML = '<p style="color:var(--muted);margin-top:10px">Nada novo e seguro no histórico — os produtos restantes já foram ligados a produtos diferentes ou apareceram só uma vez.</p>'; return; }
+      box.innerHTML = `<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:10px">
+        <div style="font-weight:700;margin-bottom:4px">📚 Do histórico: ${sug.length} vínculo(s) seguro(s)</div>
+        <div style="font-size:12.5px;color:var(--muted);margin-bottom:8px">Produto que vocês já ligaram 2 vezes ou mais, sempre ao mesmo produto do estoque. Desmarque o que não quiser.</div>
+        <div style="max-height:40vh;overflow:auto"><table style="width:100%"><thead><tr><th></th><th>Produto no SAC</th><th>Vai para</th><th>Vezes</th></tr></thead><tbody>
+        ${sug.map((x, i) => `<tr><td><input type="checkbox" id="sac-h-${i}" data-chave="${esc(x.chave)}" checked aria-label="Usar ${esc(x.chave)}"></td>
+          <td><label for="sac-h-${i}" style="margin:0;cursor:pointer;font-weight:600">${esc(x.chave)}</label></td><td>${esc(x.produto_nome)}</td><td>${x.vezes}×</td></tr>`).join('')}
+        </tbody></table></div>
+        <div style="text-align:right;margin-top:8px"><button class="btn btn-primary" data-aplicar>Gravar os marcados</button></div></div>`;
+      box.querySelector('[data-aplicar]').onclick = async () => {
+        const chaves = [...box.querySelectorAll('input[data-chave]:checked')].map(c => c.dataset.chave);
+        if (!chaves.length) { showAlert('Nenhum marcado', 'warn'); return; }
+        try {
+          const r = await api('/sac/depara/historico', 'POST', { chaves });
+          showAlert('📚 ' + r.mensagem);
+          ov.remove(); sacAbrirDepara(); sacCarregar();
+        } catch (e) { showAlert(e.message, 'danger'); }
+      };
+    };
     ov.addEventListener('click', (e) => { if (e.target === ov) ov.remove(); });
     ov.querySelectorAll('select[data-chave]').forEach(s => s.addEventListener('change', async () => {
       try {
@@ -363,5 +426,5 @@
   }
 
   Object.assign(window, { sacCarregar, sacChecar, sacFabrica, sacDestino, sacExcluirPedido, sacCancelamento,
-                          sacSalvarData, sacSincronizar, sacEnviarPdfs, sacAbrirDepara, sacAutoFabrica });
+                          sacSalvarData, sacSincronizar, sacEnviarPdfs, sacAbrirDepara, sacAutoFabrica, sacPeriodo, sacBuscar, sacBuscarNoSac });
 })();
